@@ -269,15 +269,23 @@ Navigate to `http://localhost:3000/backend` and sign in with the default credent
 
 ### One-Click Local Setup
 
-For a fully automated native setup (macOS/Linux), run the setup script. It checks prerequisites, starts Docker infrastructure, generates `.env`, installs dependencies, builds packages, and initializes the database - all in one command:
+Automated setup script with two modes - pick whichever fits your machine:
 
 ```bash
+# Docker-only (no Node/nvm/corepack needed - just Docker Desktop)
+./scripts/setup-local.sh --docker
+
+# Native (faster hot reload, requires Node 24 + Docker Desktop)
 ./scripts/setup-local.sh
 ```
 
-**Prerequisites:** Node.js 24.x, Docker Desktop, corepack (`corepack enable`).
+| | `--docker` | native (default) |
+|---|---|---|
+| **Prerequisites** | Docker Desktop only | Node 24.x, corepack, Docker Desktop |
+| **Hot reload** | Polling-based (slower) | Native filesystem (faster) |
+| **Dev server** | Runs inside container | Runs on host |
 
-Re-running is safe (idempotent) - it skips `.env` if it already exists and runs migrations instead of a full re-seed. Use `--skip-infra` if your Docker services are already running.
+Both modes are idempotent - safe to re-run. Use `--skip-infra` (native mode) if Docker services are already running.
 
 Full installation guide (including prerequisites, Docker setup, and cloud deployment): [docs.openmercato.com/installation/setup](https://docs.openmercato.com/installation/setup)
 

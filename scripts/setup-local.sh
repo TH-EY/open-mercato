@@ -4,23 +4,25 @@ set -euo pipefail
 # =============================================================================
 # Open Mercato - Local Setup Script (macOS / Linux)
 # =============================================================================
-# One-click installer for native development.
+# One-click installer for development.
 # Idempotent: safe to re-run at any time.
 #
 # Usage:
-#   ./scripts/setup-local.sh              # full setup
-#   ./scripts/setup-local.sh --skip-infra # skip Docker (if services already running)
+#   ./scripts/setup-local.sh              # native setup (requires Node 24)
+#   ./scripts/setup-local.sh --docker     # Docker-only setup (no Node required)
+#   ./scripts/setup-local.sh --skip-infra # native setup, skip Docker infra
 #
-# Prerequisites (checked, not auto-installed):
-#   - Node.js 24.x (via nvm, fnm, or brew)
-#   - Corepack (ships with Node 18+)
-#   - Docker Desktop with Docker Compose v2
+# Prerequisites:
+#   Native mode: Node.js 24.x, corepack, Docker Desktop
+#   Docker mode:  Docker Desktop only
 # =============================================================================
 
 SKIP_INFRA=false
+DOCKER_MODE=false
 for arg in "$@"; do
   case "$arg" in
     --skip-infra) SKIP_INFRA=true ;;
+    --docker)     DOCKER_MODE=true ;;
   esac
 done
 
@@ -57,6 +59,96 @@ if [ ! -f "package.json" ] || ! grep -q '"open-mercato"' package.json 2>/dev/nul
   fail "Must be run from the Open Mercato project root (where package.json is)."
 fi
 
+# =============================================================================
+# Docker-only mode: everything runs inside containers
+# =============================================================================
+if [ "$DOCKER_MODE" = true ]; then
+  info "Docker-only mode - no Node.js required on host"
+  echo ""
+
+  # Check Docker
+  if ! command -v docker &>/dev/null; then
+    fail "Docker not found. Install Docker Desktop: https://docker.com/products/docker-desktop"
+  fi
+  ok "Docker $(docker --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+
+  if ! docker compose version &>/dev/null; then
+    fail "Docker Compose v2 not found. Update Docker Desktop."
+  fi
+  ok "Docker Compose $(docker compose version --short)"
+
+  if ! docker info &>/dev/null 2>&1; then
+    fail "Docker daemon is not running. Start Docker Desktop and try again."
+  fi
+  ok "Docker daemon running"
+  echo ""
+
+  info "Building and starting full stack (this may take a few minutes on first run)..."
+  echo ""
+  echo "  This will:"
+  echo "    - Build a Node 24 container with all dependencies"
+  echo "    - Start PostgreSQL, Redis, and Meilisearch"
+  echo "    - Install deps, build packages, run generators"
+  echo "    - Initialize/migrate the database"
+  echo "    - Start the dev server with hot reload"
+  echo ""
+
+  docker compose -f docker-compose.fullapp.dev.yml up --build -d
+  ok "Containers started"
+  echo ""
+
+  info "Waiting for app to be ready (watching logs)..."
+  echo "  (This takes 2-5 minutes on first run while packages build)"
+  echo ""
+
+  # Wait for the app to be ready by watching for the Next.js ready message
+  TIMEOUT=600
+  ELAPSED=0
+  while [ $ELAPSED -lt $TIMEOUT ]; do
+    if docker compose -f docker-compose.fullapp.dev.yml logs app 2>/dev/null | grep -q "Ready in"; then
+      ok "App is ready!"
+      echo ""
+      break
+    fi
+    # Also check if container exited with error
+    APP_STATUS=$(docker compose -f docker-compose.fullapp.dev.yml ps app --format '{{.State}}' 2>/dev/null || echo "unknown")
+    if [ "$APP_STATUS" = "exited" ]; then
+      echo ""
+      warn "App container exited. Showing last 30 lines of logs:"
+      docker compose -f docker-compose.fullapp.dev.yml logs app --tail 30
+      fail "App failed to start. Check logs above."
+    fi
+    sleep 5
+    ELAPSED=$((ELAPSED + 5))
+    # Print progress every 30 seconds
+    if [ $((ELAPSED % 30)) -eq 0 ]; then
+      info "  Still building... (${ELAPSED}s elapsed)"
+    fi
+  done
+
+  if [ $ELAPSED -ge $TIMEOUT ]; then
+    fail "App did not become ready within ${TIMEOUT}s. Run: docker compose -f docker-compose.fullapp.dev.yml logs app"
+  fi
+
+  echo "============================================"
+  echo "  Setup complete! (Docker mode)"
+  echo ""
+  echo "  App URL:         http://localhost:3000"
+  echo "  Admin panel:     http://localhost:3000/backend"
+  echo "  Default login:   superadmin@acme.com / secret"
+  echo ""
+  echo "  Useful commands:"
+  echo "    docker compose -f docker-compose.fullapp.dev.yml logs -f app  # watch logs"
+  echo "    docker compose -f docker-compose.fullapp.dev.yml down         # stop"
+  echo "    docker compose -f docker-compose.fullapp.dev.yml up -d        # restart"
+  echo "============================================"
+  exit 0
+fi
+
+# =============================================================================
+# Native mode: Node.js + Docker infra
+# =============================================================================
+
 # ---------------------------------------------------------------------------
 # Phase 1: Prerequisite checks
 # ---------------------------------------------------------------------------
@@ -64,7 +156,14 @@ info "[1/11] Checking prerequisites..."
 
 # Node.js
 if ! command -v node &>/dev/null; then
-  fail "Node.js not found. Install Node 24.x via nvm, fnm, or brew."
+  echo ""
+  warn "Node.js not found."
+  echo "  Options:"
+  echo "    1. Install Node 24.x (nvm install 24 && nvm use 24)"
+  echo "    2. Run with --docker flag (no Node required):"
+  echo "       ./scripts/setup-local.sh --docker"
+  echo ""
+  fail "Node.js is required for native mode."
 fi
 NODE_MAJOR=$(node -e "console.log(process.versions.node.split('.')[0])")
 if [ "$NODE_MAJOR" -lt 20 ]; then
