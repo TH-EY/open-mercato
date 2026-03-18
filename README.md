@@ -267,6 +267,18 @@ yarn dev:ephemeral
 
 Navigate to `http://localhost:3000/backend` and sign in with the default credentials printed by `yarn initialize`.
 
+### One-Click Local Setup
+
+For a fully automated native setup (macOS/Linux), run the setup script. It checks prerequisites, starts Docker infrastructure, generates `.env`, installs dependencies, builds packages, and initializes the database - all in one command:
+
+```bash
+./scripts/setup-local.sh
+```
+
+**Prerequisites:** Node.js 24.x, Docker Desktop, corepack (`corepack enable`).
+
+Re-running is safe (idempotent) - it skips `.env` if it already exists and runs migrations instead of a full re-seed. Use `--skip-infra` if your Docker services are already running.
+
 Full installation guide (including prerequisites, Docker setup, and cloud deployment): [docs.openmercato.com/installation/setup](https://docs.openmercato.com/installation/setup)
 
 ## Release Channels

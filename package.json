@@ -11,6 +11,7 @@
     "packages/*"
   ],
   "scripts": {
+    "setup": "./scripts/setup-local.sh",
     "dev": "yarn build:packages && yarn watch:packages & sleep 3 && yarn dev:app",
     "dev:ephemeral": "tsx scripts/dev-ephemeral.ts",
     "dev:greenfield": "yarn build:packages && yarn generate && yarn build:packages && yarn initialize -- --reinstall && yarn dev",
