@@ -1,0 +1,118 @@
+name: Deploy to AWS ECS
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - production
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-2
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY_NAME }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker build \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            -t "${IMAGE_URI}" \
+            -t "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
+            .
+          docker push "${IMAGE_URI}"
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+          echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+      - name: Download current web task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ vars.ECS_WEB_TASK_FAMILY }} \
+            --query taskDefinition \
+            > web-task-def.json
+
+      - name: Update web task definition with new image
+        id: web-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: web-task-def.json
+          container-name: app
+          image: ${{ steps.build.outputs.image }}
+
+      - name: Deploy web service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.web-task-def.outputs.task-definition }}
+          service: ${{ vars.ECS_WEB_SERVICE_NAME }}
+          cluster: ${{ vars.ECS_CLUSTER_NAME }}
+          wait-for-service-stability: true
+          wait-for-minutes: 10
+
+      - name: Download current worker task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ vars.ECS_WORKER_TASK_FAMILY }} \
+            --query taskDefinition \
+            > worker-task-def.json
+
+      - name: Update worker task definition with new image
+        id: worker-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: worker-task-def.json
+          container-name: worker
+          image: ${{ steps.build.outputs.image }}
+
+      - name: Deploy worker service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.worker-task-def.outputs.task-definition }}
+          service: ${{ vars.ECS_WORKER_SERVICE_NAME }}
+          cluster: ${{ vars.ECS_CLUSTER_NAME }}
+          wait-for-service-stability: true
+          wait-for-minutes: 10
+
+      - name: Post deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "Deployment to ${{ github.event.inputs.environment }} succeeded"
+            echo "Image: ${{ steps.build.outputs.image }}"
+          else
+            echo "Deployment to ${{ github.event.inputs.environment }} failed"
+            exit 1
+          fi

@@ -1,0 +1,59 @@
+name: Terraform CI
+
+on:
+  pull_request:
+    paths:
+      - "infra/terraform/**"
+
+jobs:
+  validate:
+    name: Validate Terraform
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform/modules/openmercato-ecs
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8"
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive -diff
+        working-directory: infra/terraform
+
+      - name: Terraform Init (module)
+        run: terraform init -backend=false
+
+      - name: Terraform Validate (module)
+        run: terraform validate
+
+      - name: Terraform Init (example - minimal-managed)
+        run: terraform init -backend=false
+        working-directory: infra/terraform/examples/minimal-managed
+
+      - name: Terraform Validate (example - minimal-managed)
+        run: terraform validate
+        working-directory: infra/terraform/examples/minimal-managed
+
+  tflint:
+    name: TFLint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+
+      - name: Init TFLint
+        run: tflint --init
+        working-directory: infra/terraform/modules/openmercato-ecs
+
+      - name: Run TFLint
+        run: tflint --recursive
+        working-directory: infra/terraform

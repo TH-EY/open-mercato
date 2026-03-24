@@ -120,3 +120,6 @@ docker/opencode/opencode.jsonc
 .ai/qa/ephemeral*
 .ai/dev-ephemeral-envs.json
 .agents/
+infra/terraform/environments/*/terraform.tfvars
+infra/terraform/**/.terraform/
+infra/terraform/**/.terraform.lock.hcl

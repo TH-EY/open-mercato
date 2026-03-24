@@ -1,0 +1,30 @@
+# Required - update before applying
+image                     = "062648047691.dkr.ecr.eu-west-2.amazonaws.com/openmercato-app:latest"
+jwt_secret_arn            = "arn:aws:secretsmanager:eu-west-2:062648047691:secret:openmercato/jwt-secret-XXXXXX"
+encryption_key_secret_arn = "arn:aws:secretsmanager:eu-west-2:062648047691:secret:openmercato/encryption-key-XXXXXX"
+
+# Sizing
+db_instance_class    = "db.t4g.medium"
+db_allocated_storage = 50
+db_multi_az          = false
+redis_node_type      = "cache.t4g.micro"
+
+# Scaling
+web_desired_count  = 1
+web_min_capacity   = 1
+web_max_capacity   = 6
+worker_desired_count = 1
+worker_max_capacity  = 4
+
+# DNS (uncomment to enable HTTPS + custom domain)
+# domain_name    = "app.openmercato.com"
+# hosted_zone_id = "Z1234567890ABC"
+# app_url        = "https://app.openmercato.com"
+
+# Email (optional)
+# resend_api_key = "re_..."
+# email_from     = "noreply@openmercato.com"
+
+# Monitoring (optional)
+# new_relic_app_name    = "openmercato-production"
+# new_relic_license_key = "..."
