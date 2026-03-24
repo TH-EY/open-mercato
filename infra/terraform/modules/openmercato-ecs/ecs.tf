@@ -91,9 +91,9 @@ resource "aws_ecs_service" "web" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = local.private_subnet_ids
+    subnets          = local.ecs_subnet_ids
     security_groups  = [aws_security_group.app.id]
-    assign_public_ip = false
+    assign_public_ip = local.ecs_assign_public_ip
   }
 
   load_balancer {
@@ -162,9 +162,9 @@ resource "aws_ecs_service" "worker" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = local.private_subnet_ids
+    subnets          = local.ecs_subnet_ids
     security_groups  = [aws_security_group.app.id]
-    assign_public_ip = false
+    assign_public_ip = local.ecs_assign_public_ip
   }
 
   tags = local.common_tags

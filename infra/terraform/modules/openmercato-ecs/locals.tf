@@ -24,6 +24,11 @@ locals {
   private_subnet_ids = local.create_managed_networking ? aws_subnet.private[*].id : var.private_subnet_ids
 
   az_names = local.create_managed_networking ? data.aws_availability_zones.available[0].names : []
+
+  # ECS tasks use public subnets when use_public_subnets is true (saves NAT Gateway cost)
+  ecs_subnet_ids       = var.use_public_subnets ? local.public_subnet_ids : local.private_subnet_ids
+  ecs_assign_public_ip = var.use_public_subnets
+  create_nat_gateway   = local.create_managed_networking && !var.use_public_subnets
 }
 
 # -----------------------------------------------------------------------------
@@ -95,7 +100,7 @@ locals {
     {
       NODE_ENV                   = "production"
       PORT                       = tostring(var.container_port)
-      NODE_OPTIONS               = "--max-old-space-size=4096"
+      NODE_OPTIONS               = "--max-old-space-size=${var.web_service.memory - 512}"
       CACHE_STRATEGY             = "redis"
       DB_SSL                     = "true"
       DB_SSL_REJECT_UNAUTHORIZED = "false"

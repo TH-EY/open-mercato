@@ -75,7 +75,7 @@ resource "aws_internet_gateway" "this" {
 # -----------------------------------------------------------------------------
 
 resource "aws_eip" "nat" {
-  count = local.create_managed_networking ? 1 : 0
+  count = local.create_nat_gateway ? 1 : 0
 
   domain = "vpc"
 
@@ -87,7 +87,7 @@ resource "aws_eip" "nat" {
 }
 
 resource "aws_nat_gateway" "this" {
-  count = local.create_managed_networking ? 1 : 0
+  count = local.create_nat_gateway ? 1 : 0
 
   allocation_id = aws_eip.nat[0].id
   subnet_id     = aws_subnet.public[0].id
@@ -133,7 +133,7 @@ resource "aws_route_table_association" "public" {
 # -----------------------------------------------------------------------------
 
 resource "aws_route_table" "private" {
-  count = local.create_managed_networking ? 1 : 0
+  count = local.create_nat_gateway ? 1 : 0
 
   vpc_id = aws_vpc.this[0].id
 
@@ -143,7 +143,7 @@ resource "aws_route_table" "private" {
 }
 
 resource "aws_route" "private_nat" {
-  count = local.create_managed_networking ? 1 : 0
+  count = local.create_nat_gateway ? 1 : 0
 
   route_table_id         = aws_route_table.private[0].id
   destination_cidr_block = "0.0.0.0/0"
@@ -151,7 +151,7 @@ resource "aws_route" "private_nat" {
 }
 
 resource "aws_route_table_association" "private" {
-  count = local.create_managed_networking ? length(var.private_subnet_cidrs) : 0
+  count = local.create_nat_gateway ? length(var.private_subnet_cidrs) : 0
 
   subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private[0].id

@@ -25,10 +25,11 @@ module "openmercato" {
   dns_mode         = var.domain_name != null ? "route53" : "none"
   runtime_mode     = "split_workers"
 
-  # --- Networking (managed) ---
+  # --- Networking (managed, cost-optimized: public subnets, no NAT) ---
   vpc_cidr             = "10.1.0.0/16"
   public_subnet_cidrs  = ["10.1.1.0/24", "10.1.2.0/24"]
   private_subnet_cidrs = ["10.1.10.0/24", "10.1.11.0/24"]
+  use_public_subnets   = true
 
   # --- Database ---
   db_engine_version        = "18.3"
@@ -45,10 +46,16 @@ module "openmercato" {
   redis_node_type       = var.redis_node_type
   redis_engine_version  = "7.1"
 
+  # --- Meilisearch (cost-optimized) ---
+  meilisearch_service = {
+    cpu    = 256
+    memory = 512
+  }
+
   # --- Web service ---
   web_service = {
-    cpu           = 1024
-    memory        = 4096
+    cpu           = 512
+    memory        = 2048
     desired_count = var.web_desired_count
     command       = ["/bin/sh", "/app/docker/scripts/railway-entrypoint.sh"]
     autoscaling = {
@@ -57,11 +64,11 @@ module "openmercato" {
     }
   }
 
-  # --- Worker services ---
+  # --- Worker services (cost-optimized) ---
   worker_services = {
     worker = {
-      cpu           = 512
-      memory        = 1024
+      cpu           = 256
+      memory        = 512
       desired_count = var.worker_desired_count
       command       = ["sh", "-c", "yarn mercato queue worker --all"]
       autoscaling = {

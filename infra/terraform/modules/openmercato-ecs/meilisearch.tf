@@ -161,9 +161,9 @@ resource "aws_ecs_service" "meilisearch" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = local.private_subnet_ids
+    subnets          = local.ecs_subnet_ids
     security_groups  = [aws_security_group.meilisearch[0].id]
-    assign_public_ip = false
+    assign_public_ip = local.ecs_assign_public_ip
   }
 
   service_registries {
