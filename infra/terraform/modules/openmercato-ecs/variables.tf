@@ -441,6 +441,16 @@ variable "create_ecr_repository" {
 # Logging
 # -----------------------------------------------------------------------------
 
+variable "use_public_subnets" {
+  description = "Place ECS tasks in public subnets with public IPs (eliminates NAT Gateway cost). Tasks are still protected by security groups."
+  type        = bool
+  default     = false
+}
+
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+
 variable "log_retention_days" {
   description = "CloudWatch log group retention in days."
   type        = number
