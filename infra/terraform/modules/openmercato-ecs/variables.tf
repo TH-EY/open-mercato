@@ -441,6 +441,17 @@ variable "create_ecr_repository" {
 # Logging
 # -----------------------------------------------------------------------------
 
+variable "cpu_architecture" {
+  description = "CPU architecture for ECS Fargate tasks. ARM64 uses Graviton (~20% cheaper)."
+  type        = string
+  default     = "ARM64"
+
+  validation {
+    condition     = contains(["X86_64", "ARM64"], var.cpu_architecture)
+    error_message = "cpu_architecture must be 'X86_64' or 'ARM64'."
+  }
+}
+
 variable "use_public_subnets" {
   description = "Place ECS tasks in public subnets with public IPs (eliminates NAT Gateway cost). Tasks are still protected by security groups."
   type        = bool

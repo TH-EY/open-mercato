@@ -24,6 +24,7 @@ module "openmercato" {
   meilisearch_mode = "managed"
   dns_mode         = var.domain_name != null ? "route53" : "none"
   runtime_mode     = "split_workers"
+  cpu_architecture = "ARM64"
 
   # --- Networking (managed, cost-optimized: public subnets, no NAT) ---
   vpc_cidr             = "10.1.0.0/16"
