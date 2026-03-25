@@ -1,0 +1,1223 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Open Mercato - ECS Fargate deployment with RDS, ElastiCache, Meilisearch
+
+# -----------------------------------------------------------------------------
+# Parameters
+# -----------------------------------------------------------------------------
+Parameters:
+  AppImage:
+    Type: String
+    Description: Full ECR image URI (e.g. 062648047691.dkr.ecr.eu-west-2.amazonaws.com/openmercato-app:latest)
+
+  JwtSecretArn:
+    Type: String
+    Description: Secrets Manager ARN for JWT_SECRET
+
+  EncryptionKeyArn:
+    Type: String
+    Description: Secrets Manager ARN for TENANT_DATA_ENCRYPTION_KEY
+
+  DomainName:
+    Type: String
+    Default: openmercato.they.dev
+
+  HostedZoneId:
+    Type: String
+    Default: Z05995411RZM1GDPTHOZ6
+
+  AppUrl:
+    Type: String
+    Default: https://openmercato.they.dev
+
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+
+  DbAllocatedStorage:
+    Type: Number
+    Default: 20
+
+  RedisNodeType:
+    Type: String
+    Default: cache.t4g.micro
+
+  WebCpu:
+    Type: Number
+    Default: 512
+
+  WebMemory:
+    Type: Number
+    Default: 2048
+
+  WorkerCpu:
+    Type: Number
+    Default: 256
+
+  WorkerMemory:
+    Type: Number
+    Default: 512
+
+  MeilisearchCpu:
+    Type: Number
+    Default: 256
+
+  MeilisearchMemory:
+    Type: Number
+    Default: 512
+
+Resources:
+
+  # ---------------------------------------------------------------------------
+  # VPC + Networking
+  # ---------------------------------------------------------------------------
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: openmercato-vpc
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: openmercato-igw
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.1.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: openmercato-public-1
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.1.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: openmercato-public-2
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.1.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: openmercato-private-1
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.1.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: openmercato-private-2
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: openmercato-public-rt
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  # ---------------------------------------------------------------------------
+  # Security Groups
+  # ---------------------------------------------------------------------------
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: openmercato-alb
+      GroupDescription: ALB security group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: openmercato-alb
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: openmercato-app
+      GroupDescription: ECS app tasks security group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+      Tags:
+        - Key: Name
+          Value: openmercato-app
+
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: openmercato-db
+      GroupDescription: RDS security group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+      Tags:
+        - Key: Name
+          Value: openmercato-db
+
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: openmercato-redis
+      GroupDescription: ElastiCache security group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+      Tags:
+        - Key: Name
+          Value: openmercato-redis
+
+  MeilisearchSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: openmercato-meilisearch
+      GroupDescription: Meilisearch security group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 7700
+          ToPort: 7700
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+      Tags:
+        - Key: Name
+          Value: openmercato-meilisearch
+
+  EfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: openmercato-efs
+      GroupDescription: EFS security group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref MeilisearchSecurityGroup
+      Tags:
+        - Key: Name
+          Value: openmercato-efs
+
+  # ---------------------------------------------------------------------------
+  # IAM Roles
+  # ---------------------------------------------------------------------------
+  EcsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: openmercato-ecs-execution
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: secrets-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: '*'
+
+  EcsTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: openmercato-ecs-task
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: efs-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                  - elasticfilesystem:ClientRootAccess
+                Resource: '*'
+
+  # ---------------------------------------------------------------------------
+  # CloudWatch Logs
+  # ---------------------------------------------------------------------------
+  WebLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/openmercato/web
+      RetentionInDays: 30
+
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/openmercato/worker-worker
+      RetentionInDays: 30
+
+  MeilisearchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/openmercato/meilisearch
+      RetentionInDays: 30
+
+  SchedulerSyncLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/openmercato/scheduler-sync
+      RetentionInDays: 30
+
+  # ---------------------------------------------------------------------------
+  # EFS - Meilisearch Data
+  # ---------------------------------------------------------------------------
+  MeilisearchEfs:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      LifecyclePolicies:
+        - TransitionToIA: AFTER_30_DAYS
+
+  MeilisearchEfsMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref MeilisearchEfs
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  MeilisearchEfsMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref MeilisearchEfs
+      SubnetId: !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  MeilisearchEfsAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref MeilisearchEfs
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        Path: /meili_data
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+
+  # ---------------------------------------------------------------------------
+  # EFS - App Storage
+  # ---------------------------------------------------------------------------
+  AppStorageEfs:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      LifecyclePolicies:
+        - TransitionToIA: AFTER_30_DAYS
+
+  AppStorageEfsMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref AppStorageEfs
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  AppStorageEfsMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref AppStorageEfs
+      SubnetId: !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  AppStorageEfsAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref AppStorageEfs
+      PosixUser:
+        Uid: '1001'
+        Gid: '1001'
+      RootDirectory:
+        Path: /app-storage
+        CreationInfo:
+          OwnerUid: '1001'
+          OwnerGid: '1001'
+          Permissions: '755'
+
+  # ---------------------------------------------------------------------------
+  # RDS PostgreSQL
+  # ---------------------------------------------------------------------------
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: openmercato private subnets
+      DBSubnetGroupName: openmercato-db-subnets
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  DbParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      DBParameterGroupName: openmercato-postgres18
+      Family: postgres18
+      Description: OpenMercato PostgreSQL 18 parameters
+
+  DbInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: openmercato-postgres
+      Engine: postgres
+      EngineVersion: '18.3'
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      DBName: openmercato
+      MasterUsername: openmercato
+      ManageMasterUserPassword: true
+      PubliclyAccessible: false
+      DeletionProtection: true
+      BackupRetentionPeriod: 7
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      DBParameterGroupName: !Ref DbParameterGroup
+      VPCSecurityGroups:
+        - !Ref DbSecurityGroup
+      Tags:
+        - Key: Name
+          Value: openmercato-postgres
+
+  # ---------------------------------------------------------------------------
+  # Secrets - Database URL, Redis URL, Meilisearch Key
+  # ---------------------------------------------------------------------------
+  DatabaseUrlSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: openmercato/prod/database-url
+      Description: Composed DATABASE_URL for Open Mercato
+
+  MeilisearchApiKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: openmercato/prod/meilisearch-api-key
+      Description: Meilisearch master key
+      GenerateSecretString:
+        ExcludePunctuation: true
+        PasswordLength: 32
+
+  RedisAuthTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: openmercato/prod/redis-auth-token
+      Description: ElastiCache Redis auth token
+      GenerateSecretString:
+        ExcludePunctuation: true
+        PasswordLength: 32
+
+  RedisUrlSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: openmercato/prod/redis-url
+      Description: Composed Redis URL
+
+  # ---------------------------------------------------------------------------
+  # ElastiCache Redis
+  # ---------------------------------------------------------------------------
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: openmercato-redis-subnets
+      Description: openmercato private subnets for Redis
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  RedisReplicationGroup:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupId: openmercato-redis
+      ReplicationGroupDescription: OpenMercato Redis
+      Engine: redis
+      EngineVersion: '7.1'
+      CacheNodeType: !Ref RedisNodeType
+      NumCacheClusters: 1
+      AutomaticFailoverEnabled: false
+      AtRestEncryptionEnabled: true
+      TransitEncryptionEnabled: true
+      AuthToken: !Sub '{{resolve:secretsmanager:${RedisAuthTokenSecret}:SecretString}}'
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      SecurityGroupIds:
+        - !Ref RedisSecurityGroup
+      Tags:
+        - Key: Name
+          Value: openmercato-redis
+
+  # ---------------------------------------------------------------------------
+  # Lambda - Compose Database URL + Redis URL
+  # ---------------------------------------------------------------------------
+  ComposeUrlsLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: openmercato-compose-urls-lambda
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: secrets-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:PutSecretValue
+                Resource: '*'
+
+  ComposeUrlsLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: openmercato-compose-urls
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt ComposeUrlsLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import urllib.parse
+          import cfnresponse
+
+          secrets = boto3.client('secretsmanager')
+
+          def handler(event, context):
+              try:
+                  if event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+
+                  props = event['ResourceProperties']
+                  action = props['Action']
+
+                  if action == 'ComposeDatabaseUrl':
+                      rds_secret_arn = props['RdsSecretArn']
+                      db_endpoint = props['DbEndpoint']
+                      db_port = props['DbPort']
+                      db_name = props['DbName']
+                      target_secret_id = props['TargetSecretId']
+
+                      rds_secret = secrets.get_secret_value(SecretId=rds_secret_arn)
+                      creds = json.loads(rds_secret['SecretString'])
+                      password = urllib.parse.quote_plus(creds['password'])
+                      username = creds['username']
+
+                      url = f"postgres://{username}:{password}@{db_endpoint}:{db_port}/{db_name}"
+                      secrets.put_secret_value(SecretId=target_secret_id, SecretString=url)
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {'DatabaseUrl': 'composed'})
+
+                  elif action == 'ComposeRedisUrl':
+                      auth_token_secret_id = props['AuthTokenSecretId']
+                      redis_endpoint = props['RedisEndpoint']
+                      redis_port = props['RedisPort']
+                      target_secret_id = props['TargetSecretId']
+
+                      token_resp = secrets.get_secret_value(SecretId=auth_token_secret_id)
+                      token = token_resp['SecretString']
+
+                      url = f"rediss://:{token}@{redis_endpoint}:{redis_port}"
+                      secrets.put_secret_value(SecretId=target_secret_id, SecretString=url)
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {'RedisUrl': 'composed'})
+
+              except Exception as e:
+                  print(f"Error: {e}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+
+  ComposeDatabaseUrl:
+    Type: Custom::ComposeDatabaseUrl
+    DependsOn: DbInstance
+    Properties:
+      ServiceToken: !GetAtt ComposeUrlsLambda.Arn
+      Action: ComposeDatabaseUrl
+      RdsSecretArn: !GetAtt DbInstance.MasterUserSecret.SecretArn
+      DbEndpoint: !GetAtt DbInstance.Endpoint.Address
+      DbPort: !GetAtt DbInstance.Endpoint.Port
+      DbName: openmercato
+      TargetSecretId: !Ref DatabaseUrlSecret
+
+  ComposeRedisUrl:
+    Type: Custom::ComposeRedisUrl
+    DependsOn: RedisReplicationGroup
+    Properties:
+      ServiceToken: !GetAtt ComposeUrlsLambda.Arn
+      Action: ComposeRedisUrl
+      AuthTokenSecretId: !Ref RedisAuthTokenSecret
+      RedisEndpoint: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Address
+      RedisPort: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Port
+      TargetSecretId: !Ref RedisUrlSecret
+
+  # ---------------------------------------------------------------------------
+  # Meilisearch - Service Discovery + ECS
+  # ---------------------------------------------------------------------------
+  ServiceDiscoveryNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: openmercato.internal
+      Vpc: !Ref VPC
+
+  MeilisearchServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: meilisearch
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+
+  MeilisearchTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: openmercato-meilisearch
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref MeilisearchCpu
+      Memory: !Ref MeilisearchMemory
+      ExecutionRoleArn: !GetAtt EcsExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      Volumes:
+        - Name: meili-data
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref MeilisearchEfs
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref MeilisearchEfsAccessPoint
+              IAM: ENABLED
+      ContainerDefinitions:
+        - Name: meilisearch
+          Image: getmeili/meilisearch:v1.11
+          Essential: true
+          PortMappings:
+            - ContainerPort: 7700
+              Protocol: tcp
+          MountPoints:
+            - SourceVolume: meili-data
+              ContainerPath: /meili_data
+          Environment:
+            - Name: MEILI_ENV
+              Value: production
+            - Name: MEILI_NO_ANALYTICS
+              Value: 'true'
+            - Name: MEILI_HTTP_ADDR
+              Value: 0.0.0.0:7700
+          Secrets:
+            - Name: MEILI_MASTER_KEY
+              ValueFrom: !Ref MeilisearchApiKeySecret
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - curl -f http://localhost:7700/health || exit 1
+            Interval: 10
+            Timeout: 5
+            Retries: 3
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref MeilisearchLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: meilisearch
+
+  # ---------------------------------------------------------------------------
+  # ECR
+  # ---------------------------------------------------------------------------
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: openmercato-app
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: KMS
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 tagged images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["v", "latest", "arm64"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": { "type": "expire" }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Expire untagged after 7 days",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 7
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+
+  # ---------------------------------------------------------------------------
+  # ACM Certificate + DNS
+  # ---------------------------------------------------------------------------
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+
+  DnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt Alb.DNSName
+        HostedZoneId: !GetAtt Alb.CanonicalHostedZoneID
+        EvaluateTargetHealth: true
+
+  # ---------------------------------------------------------------------------
+  # ALB
+  # ---------------------------------------------------------------------------
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: openmercato-alb
+      Scheme: internet-facing
+      Type: application
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: openmercato-alb
+
+  WebTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: openmercato-web-tg
+      Port: 3000
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      TargetType: ip
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: '443'
+            StatusCode: HTTP_301
+
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn: Certificate
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref Certificate
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref WebTargetGroup
+
+  # ---------------------------------------------------------------------------
+  # ECS Cluster
+  # ---------------------------------------------------------------------------
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: openmercato-cluster
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+
+  # ---------------------------------------------------------------------------
+  # ECS - Web Service
+  # ---------------------------------------------------------------------------
+  WebTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn:
+      - ComposeDatabaseUrl
+      - ComposeRedisUrl
+    Properties:
+      Family: openmercato-web
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref WebCpu
+      Memory: !Ref WebMemory
+      ExecutionRoleArn: !GetAtt EcsExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      Volumes:
+        - Name: app-storage
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref AppStorageEfs
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref AppStorageEfsAccessPoint
+              IAM: ENABLED
+      ContainerDefinitions:
+        - Name: app
+          Image: !Ref AppImage
+          Essential: true
+          Command:
+            - /bin/sh
+            - /app/docker/scripts/railway-entrypoint.sh
+          PortMappings:
+            - ContainerPort: 3000
+          MountPoints:
+            - SourceVolume: app-storage
+              ContainerPath: /app/apps/mercato/storage
+          Environment:
+            - Name: NODE_ENV
+              Value: production
+            - Name: PORT
+              Value: '3000'
+            - Name: NODE_OPTIONS
+              Value: !Sub '--max-old-space-size=${WebMemory}'
+            - Name: CACHE_STRATEGY
+              Value: redis
+            - Name: DB_SSL
+              Value: 'true'
+            - Name: DB_SSL_REJECT_UNAUTHORIZED
+              Value: 'false'
+            - Name: AUTO_SPAWN_WORKERS
+              Value: 'false'
+            - Name: AUTO_SPAWN_SCHEDULER
+              Value: 'false'
+            - Name: MEILISEARCH_HOST
+              Value: http://meilisearch.openmercato.internal:7700
+            - Name: APP_URL
+              Value: !Ref AppUrl
+            - Name: SELF_SERVICE_ONBOARDING_ENABLED
+              Value: 'true'
+            - Name: TENANT_DATA_ENCRYPTION
+              Value: 'true'
+          Secrets:
+            - Name: DATABASE_URL
+              ValueFrom: !Ref DatabaseUrlSecret
+            - Name: CACHE_REDIS_URL
+              ValueFrom: !Ref RedisUrlSecret
+            - Name: JWT_SECRET
+              ValueFrom: !Ref JwtSecretArn
+            - Name: TENANT_DATA_ENCRYPTION_KEY
+              ValueFrom: !Ref EncryptionKeyArn
+            - Name: MEILISEARCH_API_KEY
+              ValueFrom: !Ref MeilisearchApiKeySecret
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref WebLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: web
+
+  WebService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - HttpsListener
+      - MeilisearchEfsMountTarget1
+      - MeilisearchEfsMountTarget2
+      - AppStorageEfsMountTarget1
+      - AppStorageEfsMountTarget2
+    Properties:
+      ServiceName: openmercato-web
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref WebTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          SecurityGroups:
+            - !Ref AppSecurityGroup
+          AssignPublicIp: ENABLED
+      LoadBalancers:
+        - TargetGroupArn: !Ref WebTargetGroup
+          ContainerName: app
+          ContainerPort: 3000
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+      EnableExecuteCommand: true
+
+  # ---------------------------------------------------------------------------
+  # ECS - Worker Service
+  # ---------------------------------------------------------------------------
+  WorkerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn:
+      - ComposeDatabaseUrl
+      - ComposeRedisUrl
+    Properties:
+      Family: openmercato-worker-worker
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref WorkerCpu
+      Memory: !Ref WorkerMemory
+      ExecutionRoleArn: !GetAtt EcsExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: worker
+          Image: !Ref AppImage
+          Essential: true
+          Command:
+            - sh
+            - -c
+            - yarn mercato queue worker --all
+          Environment:
+            - Name: NODE_ENV
+              Value: production
+            - Name: PORT
+              Value: '3000'
+            - Name: NODE_OPTIONS
+              Value: !Sub '--max-old-space-size=${WorkerMemory}'
+            - Name: CACHE_STRATEGY
+              Value: redis
+            - Name: QUEUE_STRATEGY
+              Value: async
+            - Name: DB_SSL
+              Value: 'true'
+            - Name: DB_SSL_REJECT_UNAUTHORIZED
+              Value: 'false'
+            - Name: MEILISEARCH_HOST
+              Value: http://meilisearch.openmercato.internal:7700
+          Secrets:
+            - Name: DATABASE_URL
+              ValueFrom: !Ref DatabaseUrlSecret
+            - Name: CACHE_REDIS_URL
+              ValueFrom: !Ref RedisUrlSecret
+            - Name: JWT_SECRET
+              ValueFrom: !Ref JwtSecretArn
+            - Name: TENANT_DATA_ENCRYPTION_KEY
+              ValueFrom: !Ref EncryptionKeyArn
+            - Name: MEILISEARCH_API_KEY
+              ValueFrom: !Ref MeilisearchApiKeySecret
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref WorkerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: worker
+
+  WorkerService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: openmercato-worker-worker
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref WorkerTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          SecurityGroups:
+            - !Ref AppSecurityGroup
+          AssignPublicIp: ENABLED
+
+  # ---------------------------------------------------------------------------
+  # ECS - Meilisearch Service
+  # ---------------------------------------------------------------------------
+  MeilisearchService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - MeilisearchEfsMountTarget1
+      - MeilisearchEfsMountTarget2
+    Properties:
+      ServiceName: openmercato-meilisearch
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref MeilisearchTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          SecurityGroups:
+            - !Ref MeilisearchSecurityGroup
+          AssignPublicIp: ENABLED
+      ServiceRegistries:
+        - RegistryArn: !GetAtt MeilisearchServiceDiscovery.Arn
+
+  # ---------------------------------------------------------------------------
+  # ECS - Scheduler Sync Task Definition (one-shot)
+  # ---------------------------------------------------------------------------
+  SchedulerSyncTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn:
+      - ComposeDatabaseUrl
+      - ComposeRedisUrl
+    Properties:
+      Family: openmercato-scheduler-sync
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: 256
+      Memory: 512
+      ExecutionRoleArn: !GetAtt EcsExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: scheduler-sync
+          Image: !Ref AppImage
+          Essential: true
+          Command:
+            - sh
+            - -c
+            - yarn mercato scheduler start
+          Environment:
+            - Name: NODE_ENV
+              Value: production
+            - Name: CACHE_STRATEGY
+              Value: redis
+            - Name: QUEUE_STRATEGY
+              Value: async
+            - Name: DB_SSL
+              Value: 'true'
+            - Name: DB_SSL_REJECT_UNAUTHORIZED
+              Value: 'false'
+          Secrets:
+            - Name: DATABASE_URL
+              ValueFrom: !Ref DatabaseUrlSecret
+            - Name: CACHE_REDIS_URL
+              ValueFrom: !Ref RedisUrlSecret
+            - Name: JWT_SECRET
+              ValueFrom: !Ref JwtSecretArn
+            - Name: TENANT_DATA_ENCRYPTION_KEY
+              ValueFrom: !Ref EncryptionKeyArn
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref SchedulerSyncLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: scheduler-sync
+
+  # ---------------------------------------------------------------------------
+  # Autoscaling - Web
+  # ---------------------------------------------------------------------------
+  WebScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: ecs
+      ResourceId: !Sub service/${EcsCluster}/${WebService.Name}
+      ScalableDimension: ecs:service:DesiredCount
+      MinCapacity: 1
+      MaxCapacity: 4
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+
+  WebCpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: openmercato-web-cpu-scaling
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref WebScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+  WebMemoryScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: openmercato-web-memory-scaling
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref WebScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 80
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+  # ---------------------------------------------------------------------------
+  # Autoscaling - Worker
+  # ---------------------------------------------------------------------------
+  WorkerScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: ecs
+      ResourceId: !Sub service/${EcsCluster}/${WorkerService.Name}
+      ScalableDimension: ecs:service:DesiredCount
+      MinCapacity: 1
+      MaxCapacity: 2
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+
+  WorkerCpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: openmercato-worker-cpu-scaling
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref WorkerScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+  WorkerMemoryScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: openmercato-worker-memory-scaling
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref WorkerScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 80
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+# -----------------------------------------------------------------------------
+# Outputs
+# -----------------------------------------------------------------------------
+Outputs:
+  ApplicationUrl:
+    Value: !Sub https://${DomainName}
+
+  AlbDnsName:
+    Value: !GetAtt Alb.DNSName
+
+  ClusterName:
+    Value: !Ref EcsCluster
+
+  WebServiceName:
+    Value: !GetAtt WebService.Name
+
+  WorkerServiceName:
+    Value: !GetAtt WorkerService.Name
+
+  EcrRepositoryUrl:
+    Value: !GetAtt EcrRepository.RepositoryUri
+
+  DatabaseEndpoint:
+    Value: !GetAtt DbInstance.Endpoint.Address
