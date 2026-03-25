@@ -6,6 +6,17 @@
 
 Deployed Open Mercato on AWS from scratch, iterated through cost optimizations, and migrated from Terraform to CloudFormation.
 
+### Reconciliation update (2026-03-25)
+
+- Migrated production ingress from the dedicated `openmercato-alb` to the shared
+  `they-lb`
+- Reconciled the `openmercato` CloudFormation stack so it no longer tries to
+  recreate the dedicated ALB
+- Documented that `they-lb`, its HTTPS listener/certificate, the shared target
+  group, and cross-VPC networking are external shared dependencies rather than
+  stack-owned resources
+- Verified post-update stack drift status is `IN_SYNC`
+
 ### Commits
 
 | Commit | Description |
@@ -34,7 +45,7 @@ Deployed Open Mercato on AWS from scratch, iterated through cost optimizations, 
 | ECS Meilisearch (ARM64 Graviton) | 0.25 vCPU / 0.5 GB | $8.29 |
 | RDS PostgreSQL 18.3 + pgvector | db.t4g.micro, 20 GB gp3 | $15.50 |
 | ElastiCache Redis 7.1 | cache.t4g.micro, TLS + auth | $13.14 |
-| ALB + HTTPS (ACM) | HTTP/HTTPS listeners | $18.48 |
+| Shared they-lb ingress | External shared dependency, not stack-owned | Included outside this stack |
 | Other (EFS, ECR, Logs, Secrets, DNS) | | $8.07 |
 | **Total** | | **~$91/mo** |
 
