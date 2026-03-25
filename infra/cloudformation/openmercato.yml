@@ -1,6 +1,24 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Open Mercato - ECS Fargate deployment with RDS, ElastiCache, Meilisearch
 
+# IMPORTANT:
+# This stack no longer owns a dedicated ALB. Open Mercato is exposed through the
+# shared they.dev ingress load balancer (`they-lb`). The parameters below point
+# at shared infrastructure that is managed outside this application stack.
+#
+# This stack is responsible for:
+# - the Route53 alias for openmercato.they.dev
+# - the ECS service attachment to the shared target group
+# - the host-header rule on the shared HTTPS listener
+# - keeping ECS task IP targets normalized for cross-VPC routing
+#
+# This stack does NOT create or own:
+# - the shared load balancer itself
+# - the shared HTTPS listener / ACM certificate
+# - the shared target group ARN passed in below
+# - the VPC peering and route-table entries required between the shared LB VPC
+#   and the Open Mercato VPC
+
 # -----------------------------------------------------------------------------
 # Parameters
 # -----------------------------------------------------------------------------
@@ -28,6 +46,36 @@ Parameters:
   AppUrl:
     Type: String
     Default: https://openmercato.they.dev
+
+  ExistingLoadBalancerDnsName:
+    Type: String
+    Description: Shared they-lb DNS name. Managed outside this stack.
+    Default: they-lb-1760303051.eu-west-2.elb.amazonaws.com
+
+  ExistingLoadBalancerCanonicalHostedZoneId:
+    Type: String
+    Description: Canonical hosted zone ID for the shared they-lb. Managed outside this stack.
+    Default: ZHURV8PSTC4K8
+
+  ExistingLoadBalancerVpcCidr:
+    Type: String
+    Description: CIDR of the VPC that hosts the shared they-lb. Used for app SG ingress.
+    Default: 172.31.0.0/16
+
+  ExistingLoadBalancerHttpsListenerArn:
+    Type: String
+    Description: Shared they-lb HTTPS listener ARN where the openmercato host rule is managed.
+    Default: arn:aws:elasticloadbalancing:eu-west-2:062648047691:listener/app/they-lb/fe10e6ccedf3d536/15478d3e1d97aedc
+
+  ExistingLoadBalancerRulePriority:
+    Type: Number
+    Description: Listener rule priority reserved on the shared they-lb for openmercato.they.dev.
+    Default: 5
+
+  ExistingWebTargetGroupArn:
+    Type: String
+    Description: Shared target group ARN used by the Open Mercato web service. Managed outside this stack.
+    Default: arn:aws:elasticloadbalancing:eu-west-2:062648047691:targetgroup/openmercato-they-tg/151040b5443efa2c
 
   DbInstanceClass:
     Type: String
@@ -166,25 +214,6 @@ Resources:
   # ---------------------------------------------------------------------------
   # Security Groups
   # ---------------------------------------------------------------------------
-  AlbSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupName: openmercato-alb
-      GroupDescription: ALB security group
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 0.0.0.0/0
-      Tags:
-        - Key: Name
-          Value: openmercato-alb
-
   AppSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -195,7 +224,7 @@ Resources:
         - IpProtocol: tcp
           FromPort: 3000
           ToPort: 3000
-          SourceSecurityGroupId: !Ref AlbSecurityGroup
+          CidrIp: !Ref ExistingLoadBalancerVpcCidr
       Tags:
         - Key: Name
           Value: openmercato-app
@@ -752,18 +781,6 @@ Resources:
             ]
           }
 
-  # ---------------------------------------------------------------------------
-  # ACM Certificate + DNS
-  # ---------------------------------------------------------------------------
-  Certificate:
-    Type: AWS::CertificateManager::Certificate
-    Properties:
-      DomainName: !Ref DomainName
-      ValidationMethod: DNS
-      DomainValidationOptions:
-        - DomainName: !Ref DomainName
-          HostedZoneId: !Ref HostedZoneId
-
   DnsRecord:
     Type: AWS::Route53::RecordSet
     Properties:
@@ -771,68 +788,257 @@ Resources:
       Name: !Ref DomainName
       Type: A
       AliasTarget:
-        DNSName: !GetAtt Alb.DNSName
-        HostedZoneId: !GetAtt Alb.CanonicalHostedZoneID
+        DNSName: !Ref ExistingLoadBalancerDnsName
+        HostedZoneId: !Ref ExistingLoadBalancerCanonicalHostedZoneId
         EvaluateTargetHealth: true
 
   # ---------------------------------------------------------------------------
-  # ALB
+  # Load Balancer Integration
   # ---------------------------------------------------------------------------
-  Alb:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+  # These resources let the application stack integrate safely with the shared
+  # they-lb without trying to own the LB itself. The Lambda custom resource:
+  # - upserts the host-header listener rule on the shared HTTPS listener
+  # - re-registers ECS task IPs with AvailabilityZone=all so cross-VPC target
+  #   health works reliably when the load balancer and ECS service live in
+  #   different VPCs
+  TheyLoadBalancerSyncRole:
+    Type: AWS::IAM::Role
     Properties:
-      Name: openmercato-alb
-      Scheme: internet-facing
-      Type: application
-      SecurityGroups:
-        - !Ref AlbSecurityGroup
-      Subnets:
-        - !Ref PublicSubnet1
-        - !Ref PublicSubnet2
-      Tags:
-        - Key: Name
-          Value: openmercato-alb
+      RoleName: openmercato-they-lb-sync
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: openmercato-they-lb-sync
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:ListTasks
+                  - ecs:DescribeTasks
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - elasticloadbalancing:DescribeRules
+                  - elasticloadbalancing:CreateRule
+                  - elasticloadbalancing:ModifyRule
+                  - elasticloadbalancing:DeleteRule
+                  - elasticloadbalancing:DescribeTargetHealth
+                  - elasticloadbalancing:RegisterTargets
+                  - elasticloadbalancing:DeregisterTargets
+                Resource: '*'
 
-  WebTargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  TheyLoadBalancerSyncFunction:
+    Type: AWS::Lambda::Function
     Properties:
-      Name: openmercato-web-tg
-      Port: 3000
-      Protocol: HTTP
-      VpcId: !Ref VPC
-      TargetType: ip
-      HealthCheckPath: /
-      HealthCheckIntervalSeconds: 30
-      HealthCheckTimeoutSeconds: 10
-      HealthyThresholdCount: 2
-      UnhealthyThresholdCount: 3
+      FunctionName: openmercato-they-lb-sync
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 60
+      Role: !GetAtt TheyLoadBalancerSyncRole.Arn
+      Code:
+        ZipFile: |
+          import boto3, json, urllib.request
+          ecs = boto3.client('ecs')
+          elbv2 = boto3.client('elbv2')
 
-  HttpListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      LoadBalancerArn: !Ref Alb
-      Port: 80
-      Protocol: HTTP
-      DefaultActions:
-        - Type: redirect
-          RedirectConfig:
-            Protocol: HTTPS
-            Port: '443'
-            StatusCode: HTTP_301
+          def respond(event, context, status, data):
+              if 'ResponseURL' not in event:
+                  return
+              body = json.dumps({
+                  'Status': status,
+                  'Reason': f'See CloudWatch Logs: {context.log_stream_name}',
+                  'PhysicalResourceId': event.get('PhysicalResourceId') or event['LogicalResourceId'],
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Data': data,
+              }).encode('utf-8')
+              req = urllib.request.Request(
+                  event['ResponseURL'],
+                  data=body,
+                  method='PUT',
+                  headers={'content-type': '', 'content-length': str(len(body))},
+              )
+              urllib.request.urlopen(req)
 
-  HttpsListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    DependsOn: Certificate
+          def running_task_ips(cluster, service):
+              task_arns = ecs.list_tasks(cluster=cluster, serviceName=service, desiredStatus='RUNNING').get('taskArns', [])
+              if not task_arns:
+                  return set()
+              tasks = ecs.describe_tasks(cluster=cluster, tasks=task_arns).get('tasks', [])
+              ips = set()
+              for task in tasks:
+                  if task.get('lastStatus') != 'RUNNING':
+                      continue
+                  for attachment in task.get('attachments', []):
+                      if attachment.get('type') != 'ElasticNetworkInterface':
+                          continue
+                      details = {item['name']: item['value'] for item in attachment.get('details', [])}
+                      ip = details.get('privateIPv4Address')
+                      if ip:
+                          ips.add(ip)
+              return ips
+
+          def sync_targets(cluster, service, target_group_arn, port):
+              desired_ips = running_task_ips(cluster, service)
+              current = elbv2.describe_target_health(TargetGroupArn=target_group_arn).get('TargetHealthDescriptions', [])
+              to_register = []
+              to_deregister = []
+              healthy = []
+              present_all = set()
+              desired = {(ip, int(port)) for ip in desired_ips}
+              for item in current:
+                  target = item['Target']
+                  key = (target['Id'], target['Port'])
+                  az = target.get('AvailabilityZone', 'all')
+                  if key not in desired:
+                      to_deregister.append({'Id': target['Id'], 'Port': target['Port'], 'AvailabilityZone': az})
+                      continue
+                  if az != 'all':
+                      to_deregister.append({'Id': target['Id'], 'Port': target['Port'], 'AvailabilityZone': az})
+                  else:
+                      present_all.add(key)
+                      if item.get('TargetHealth', {}).get('State') == 'healthy':
+                          healthy.append(target['Id'])
+              for ip, target_port in sorted(desired):
+                  if (ip, target_port) not in present_all:
+                      to_register.append({'Id': ip, 'Port': target_port, 'AvailabilityZone': 'all'})
+              if to_deregister:
+                  elbv2.deregister_targets(TargetGroupArn=target_group_arn, Targets=to_deregister)
+              if to_register:
+                  elbv2.register_targets(TargetGroupArn=target_group_arn, Targets=to_register)
+              return {'desiredIps': sorted(desired_ips), 'registered': to_register, 'deregistered': to_deregister, 'healthyIps': healthy}
+
+          def ensure_rule(listener_arn, priority, host, target_group_arn):
+              rules = elbv2.describe_rules(ListenerArn=listener_arn).get('Rules', [])
+              desired_conditions = [{'Field': 'host-header', 'HostHeaderConfig': {'Values': [host]}}]
+              desired_actions = [{'Type': 'forward', 'TargetGroupArn': target_group_arn}]
+              existing = None
+              for rule in rules:
+                  if rule.get('Priority') == str(priority):
+                      existing = rule
+                      break
+              if existing is None:
+                  created = elbv2.create_rule(
+                      ListenerArn=listener_arn,
+                      Priority=int(priority),
+                      Conditions=desired_conditions,
+                      Actions=desired_actions,
+                  )
+                  return {'ruleArn': created['Rules'][0]['RuleArn'], 'action': 'created'}
+              elbv2.modify_rule(RuleArn=existing['RuleArn'], Conditions=desired_conditions, Actions=desired_actions)
+              return {'ruleArn': existing['RuleArn'], 'action': 'updated'}
+
+          def delete_rule(listener_arn, priority, host):
+              rules = elbv2.describe_rules(ListenerArn=listener_arn).get('Rules', [])
+              for rule in rules:
+                  if rule.get('Priority') != str(priority):
+                      continue
+                  values = []
+                  for condition in rule.get('Conditions', []):
+                      cfg = condition.get('HostHeaderConfig') or {}
+                      values.extend(cfg.get('Values', []))
+                  if host in values:
+                      elbv2.delete_rule(RuleArn=rule['RuleArn'])
+                      return {'deleted': rule['RuleArn']}
+              return {'deleted': None}
+
+          def handler(event, context):
+              if 'RequestType' in event:
+                  if event['RequestType'] == 'Delete':
+                      props = event['ResourceProperties']
+                      if props.get('Action') == 'EnsureListenerRule':
+                          data = delete_rule(props['ListenerArn'], props['Priority'], props['Host'])
+                          respond(event, context, 'SUCCESS', data)
+                          return
+                      respond(event, context, 'SUCCESS', {'deleted': True})
+                      return
+                  props = event['ResourceProperties']
+                  if props.get('Action') == 'EnsureListenerRule':
+                      data = ensure_rule(props['ListenerArn'], props['Priority'], props['Host'], props['TargetGroupArn'])
+                  else:
+                      data = sync_targets(props['Cluster'], props['ServiceName'], props['TargetGroupArn'], int(props['Port']))
+                  respond(event, context, 'SUCCESS', data)
+                  return
+              cluster = event['cluster']
+              service = event['service']
+              target_group_arn = event['targetGroupArn']
+              port = int(event.get('port', 3000))
+              return sync_targets(cluster, service, target_group_arn, port)
+
+  TheyLoadBalancerHostRule:
+    Type: Custom::TheyLoadBalancerHostRule
     Properties:
-      LoadBalancerArn: !Ref Alb
-      Port: 443
-      Protocol: HTTPS
-      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
-      Certificates:
-        - CertificateArn: !Ref Certificate
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref WebTargetGroup
+      ServiceToken: !GetAtt TheyLoadBalancerSyncFunction.Arn
+      Action: EnsureListenerRule
+      ListenerArn: !Ref ExistingLoadBalancerHttpsListenerArn
+      Priority: !Ref ExistingLoadBalancerRulePriority
+      Host: !Ref DomainName
+      TargetGroupArn: !Ref ExistingWebTargetGroupArn
+
+  TheyLoadBalancerTaskStateSyncRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: openmercato-they-lb-task-state-sync
+      EventPattern:
+        source:
+          - aws.ecs
+        detail-type:
+          - ECS Task State Change
+        detail:
+          clusterArn:
+            - !GetAtt EcsCluster.Arn
+          group:
+            - !Sub service:${WebService.Name}
+          lastStatus:
+            - RUNNING
+            - STOPPED
+      Targets:
+        - Arn: !GetAtt TheyLoadBalancerSyncFunction.Arn
+          Id: openmercato-they-lb-task-state-sync
+          Input: !Sub
+            - '{"cluster":"${ClusterName}","service":"${ServiceName}","targetGroupArn":"${TargetGroupArn}","port":3000}'
+            - ClusterName: !Ref EcsCluster
+              ServiceName: !GetAtt WebService.Name
+              TargetGroupArn: !Ref ExistingWebTargetGroupArn
+
+  TheyLoadBalancerScheduledSyncRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: openmercato-they-lb-scheduled-sync
+      ScheduleExpression: rate(1 minute)
+      Targets:
+        - Arn: !GetAtt TheyLoadBalancerSyncFunction.Arn
+          Id: openmercato-they-lb-scheduled-sync
+          Input: !Sub
+            - '{"cluster":"${ClusterName}","service":"${ServiceName}","targetGroupArn":"${TargetGroupArn}","port":3000}'
+            - ClusterName: !Ref EcsCluster
+              ServiceName: !GetAtt WebService.Name
+              TargetGroupArn: !Ref ExistingWebTargetGroupArn
+
+  TheyLoadBalancerTaskStateSyncPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TheyLoadBalancerSyncFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt TheyLoadBalancerTaskStateSyncRule.Arn
+
+  TheyLoadBalancerScheduledSyncPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TheyLoadBalancerSyncFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt TheyLoadBalancerScheduledSyncRule.Arn
 
   # ---------------------------------------------------------------------------
   # ECS Cluster
@@ -931,7 +1137,7 @@ Resources:
   WebService:
     Type: AWS::ECS::Service
     DependsOn:
-      - HttpsListener
+      - TheyLoadBalancerHostRule
       - MeilisearchEfsMountTarget1
       - MeilisearchEfsMountTarget2
       - AppStorageEfsMountTarget1
@@ -951,13 +1157,25 @@ Resources:
             - !Ref AppSecurityGroup
           AssignPublicIp: ENABLED
       LoadBalancers:
-        - TargetGroupArn: !Ref WebTargetGroup
+        - TargetGroupArn: !Ref ExistingWebTargetGroupArn
           ContainerName: app
           ContainerPort: 3000
       DeploymentConfiguration:
         MinimumHealthyPercent: 100
         MaximumPercent: 200
       EnableExecuteCommand: true
+
+  TheyLoadBalancerTargetSyncBootstrap:
+    Type: Custom::TheyLoadBalancerTargetSync
+    DependsOn:
+      - WebService
+    Properties:
+      ServiceToken: !GetAtt TheyLoadBalancerSyncFunction.Arn
+      Cluster: !Ref EcsCluster
+      ServiceName: !GetAtt WebService.Name
+      TargetGroupArn: !Ref ExistingWebTargetGroupArn
+      Port: 3000
+      TaskDefinition: !Ref WebTaskDefinition
 
   # ---------------------------------------------------------------------------
   # ECS - Worker Service
@@ -1205,7 +1423,7 @@ Outputs:
     Value: !Sub https://${DomainName}
 
   AlbDnsName:
-    Value: !GetAtt Alb.DNSName
+    Value: !Ref ExistingLoadBalancerDnsName
 
   ClusterName:
     Value: !Ref EcsCluster

@@ -2,13 +2,13 @@
 
 ## Application URL
 
-**Live URL:** http://openmercato-alb-1364343514.eu-west-2.elb.amazonaws.com
+**Live URL:** https://openmercato.they.dev
 
 | Page | URL |
 |------|-----|
-| Homepage | http://openmercato-alb-1364343514.eu-west-2.elb.amazonaws.com/ |
-| Login | http://openmercato-alb-1364343514.eu-west-2.elb.amazonaws.com/login |
-| Backend (admin) | http://openmercato-alb-1364343514.eu-west-2.elb.amazonaws.com/backend |
+| Homepage | https://openmercato.they.dev/ |
+| Login | https://openmercato.they.dev/login |
+| Backend (admin) | https://openmercato.they.dev/backend |
 
 ## Default Login Credentials
 
@@ -50,14 +50,47 @@ Self-service onboarding is enabled - new organizations can be created from the l
 **Worker service:** 512 CPU / 1024 MB memory, runs `yarn mercato queue worker --all`
 **Meilisearch:** 512 CPU / 1024 MB memory, image `getmeili/meilisearch:v1.11`
 
-### Application Load Balancer
+### Shared Ingress Load Balancer
 
 | Setting | Value |
 |---------|-------|
-| DNS Name | `openmercato-alb-1364343514.eu-west-2.elb.amazonaws.com` |
-| Listener | HTTP :80 (no TLS configured yet) |
+| Public DNS | `they-lb-1760303051.eu-west-2.elb.amazonaws.com` |
+| Public hostname | `openmercato.they.dev` |
+| Listener | Shared HTTPS listener on `they-lb` |
+| Listener rule | Host header `openmercato.they.dev` → `openmercato-they-tg` |
 | Health check | `GET /` on port 3000 |
-| Target group | `openmercato-web-tg` |
+| Target group | `openmercato-they-tg` |
+
+### Shared Ingress Ownership
+
+Open Mercato no longer has a dedicated ALB. The application stack integrates with
+the shared `they-lb` ingress instead.
+
+**Managed by the `openmercato` CloudFormation stack:**
+
+- Route53 alias for `openmercato.they.dev`
+- ECS web service attachment to `openmercato-they-tg`
+- Host-header listener rule on the shared HTTPS listener
+- Lambda/EventBridge sync that re-registers ECS task IPs with `AvailabilityZone=all`
+  for cross-VPC health checks
+
+**Managed outside the `openmercato` stack (shared infrastructure):**
+
+- `they-lb`
+- the shared HTTPS listener and ACM certificate
+- the shared target group `openmercato-they-tg`
+- VPC peering and route-table entries between the `they-lb` VPC and the
+  Open Mercato VPC
+
+If any of those shared resources change, update the CloudFormation parameters in
+`infra/cloudformation/openmercato.yml` before the next stack update:
+
+- `ExistingLoadBalancerDnsName`
+- `ExistingLoadBalancerCanonicalHostedZoneId`
+- `ExistingLoadBalancerVpcCidr`
+- `ExistingLoadBalancerHttpsListenerArn`
+- `ExistingLoadBalancerRulePriority`
+- `ExistingWebTargetGroupArn`
 
 ### Database - RDS PostgreSQL
 
@@ -114,11 +147,13 @@ Self-service onboarding is enabled - new organizations can be created from the l
 
 | Resource | Value |
 |----------|-------|
-| VPC ID | `vpc-04c60f4d0fb58a256` |
+| VPC ID | `vpc-03f86d6288567d640` |
 | VPC CIDR | `10.1.0.0/16` |
 | Public subnets | `10.1.1.0/24` (eu-west-2a), `10.1.2.0/24` (eu-west-2b) |
 | Private subnets | `10.1.10.0/24` (eu-west-2a), `10.1.11.0/24` (eu-west-2b) |
-| NAT Gateway | Single NAT in eu-west-2a |
+| Shared ingress VPC CIDR | `172.31.0.0/16` |
+| VPC peering required | Yes - shared `they-lb` VPC ↔ Open Mercato VPC |
+| NAT Gateway | None |
 
 ---
 
@@ -169,7 +204,12 @@ aws logs tail /ecs/openmercato/web --follow --region eu-west-2
 
 ---
 
-## Terraform Management
+## Historical Terraform Management (deprecated)
+
+The production stack is now managed by CloudFormation via
+`infra/cloudformation/openmercato.yml`. The Terraform details below are retained
+only as migration history/reference and should not be treated as the source of
+truth for current production changes.
 
 ### State
 
@@ -240,7 +280,8 @@ Required GitHub secrets/variables:
 
 ## Key Environment Variables
 
-These are set on ECS tasks via Terraform. To modify, update `infra/terraform/environments/production/main.tf` and apply.
+These values are currently delivered by the CloudFormation-managed ECS task
+definitions. The Terraform notes below are historical.
 
 | Variable | Value | Source |
 |----------|-------|--------|
@@ -255,7 +296,7 @@ These are set on ECS tasks via Terraform. To modify, update `infra/terraform/env
 | `QUEUE_STRATEGY` | `async` | Forced on worker tasks |
 | `MEILISEARCH_HOST` | `http://meilisearch.openmercato.internal:7700` | Cloud Map discovery |
 | `SELF_SERVICE_ONBOARDING_ENABLED` | `true` | Production tfvars |
-| `APP_URL` | `http://openmercato-alb-...` | Production tfvars |
+| `APP_URL` | `https://openmercato.they.dev` | Production stack parameter |
 | `DATABASE_URL` | (from Secrets Manager) | Injected as ECS secret |
 | `CACHE_REDIS_URL` | (from Secrets Manager) | Injected as ECS secret |
 | `JWT_SECRET` | (from Secrets Manager) | Injected as ECS secret |
