@@ -1,0 +1,7 @@
+# Paths that must never appear in contrib/* branches.
+# Used by the fork-only-guard CI job to prevent upstream pollution.
+infra/
+.github/workflows/deploy-aws.yml
+.github/workflows/qa-deploy.yml
+docs/fork-divergence-audit.md
+docs/upstream-contribution-workflow.md

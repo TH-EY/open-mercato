@@ -27,6 +27,13 @@ jobs:
       contents: read
 
     steps:
+      - name: Verify deployment branch
+        if: github.ref_name != 'develop'
+        run: |
+          echo "ERROR: Production deploys must use the develop branch."
+          echo "Current branch: ${{ github.ref_name }}"
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@v4
 

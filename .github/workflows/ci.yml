@@ -13,6 +13,40 @@ on:
       - develop
 
 jobs:
+  fork-only-guard:
+    name: Fork-only path guard
+    if: startsWith(github.head_ref, 'contrib/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for fork-only paths in contrib branch
+        run: |
+          if [ ! -f .github/fork-only-paths.txt ]; then
+            echo "No fork-only-paths.txt found, skipping guard"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only origin/develop...HEAD)
+          VIOLATIONS=""
+          while IFS= read -r pattern; do
+            [ -z "$pattern" ] && continue
+            [[ "$pattern" == \#* ]] && continue
+            MATCHES=$(echo "$CHANGED" | grep "^${pattern}" || true)
+            if [ -n "$MATCHES" ]; then
+              VIOLATIONS="${VIOLATIONS}${MATCHES}\n"
+            fi
+          done < .github/fork-only-paths.txt
+          if [ -n "$VIOLATIONS" ]; then
+            echo "ERROR: contrib/* branch contains fork-only paths:"
+            echo -e "$VIOLATIONS"
+            echo "These files must not be included in upstream contributions."
+            exit 1
+          fi
+          echo "No fork-only paths detected. Branch is clean for upstream."
+
   test:
     runs-on: ubuntu-latest
     steps:
