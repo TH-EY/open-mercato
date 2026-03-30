@@ -7,6 +7,12 @@ Checking the CLA box below confirms you accept the terms in docs/cla.md.
 
 Provide a concise description of the problem and the proposed solution.
 
+## Track
+
+- [ ] `contrib/*` – intended to stay upstream-candidate friendly
+- [ ] `fork/*` – intentionally fork-only
+- [ ] `sync/*` – branch used only for sync or extraction work
+
 ## Changes
 
 - bullet the key code or documentation updates
@@ -36,6 +42,15 @@ List the tests or commands you ran to validate the change.
 - [ ] I added or adjusted tests that cover the change.
 - [ ] I added or updated integration tests in `.ai/qa/tests/` (or documented why integration coverage is not required).
 - [ ] I created or updated the spec in `.ai/specs/` with a changelog entry (if applicable).
+
+## Upstreamability
+
+- [ ] This branch was created from a fresh `develop`.
+- [ ] This change is isolated from fork-only history, or this PR is explicitly fork-only.
+- [ ] This change still makes sense without this fork's deployment, branding, or local business rules.
+- [ ] I preferred a module, extension point, or provider package over a fork-only core patch.
+- [ ] I checked `BACKWARD_COMPATIBILITY.md` for any touched contract surface.
+- [ ] I ran the strict local quality gate from `docs/upstream-contribution-workflow.md` (or documented the exception).
 
 ## Linked issues
 

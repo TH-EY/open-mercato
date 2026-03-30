@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **URL** | https://openmercato.they.dev |
-| **Login page** | https://openmercato.they.dev/login |
+| **Login page** | https://openmercato.they.dev/login?tenant=1b430aaa-6e1c-4355-96b3-83c162967621 |
 | **Admin panel** | https://openmercato.they.dev/backend |
 | **ALB (direct)** | http://openmercato-alb-755531696.eu-west-2.elb.amazonaws.com |
 
