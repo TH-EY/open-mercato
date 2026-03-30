@@ -12,8 +12,8 @@ We’re excited to collaborate with folks building on top of Open Mercato. This 
 
 This fork uses a dual-track model so we can keep shipping fork-specific work while preparing clean future contributions to Open Mercato.
 
-- `develop` in this fork mirrors `upstream/develop` and is the only base for any work that might become an upstream contribution.
-- `main` remains the delivery branch for fork-only work and infrastructure changes that are not meant for upstream.
+- `develop` in this fork is both the **deployment branch** and the base for upstream contributions. It contains `upstream/develop` plus a fork-only overlay (infra, deploy workflows, fork docs).
+- `main` is a pure mirror of `upstream/main` (release tracking only, not used for deployment or fork-only work).
 - Branch prefixes in this fork:
   - `contrib/*` – potential upstream contributions, always branched from a fresh `develop`
   - `fork/*` – fork-only work that is allowed to depend on fork-specific decisions
