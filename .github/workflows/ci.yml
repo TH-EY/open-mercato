@@ -197,8 +197,8 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
-    # Only run on non-fork PRs (forks don't have access to GHA cache)
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Run on pushes to protected branches and on same-repo PRs; skip fork PRs.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
