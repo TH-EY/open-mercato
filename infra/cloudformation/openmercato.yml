@@ -1116,6 +1116,12 @@ Resources:
               Value: 'true'
             - Name: TENANT_DATA_ENCRYPTION
               Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SSO
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SECURITY
+              Value: 'true'
           Secrets:
             - Name: DATABASE_URL
               ValueFrom: !Ref DatabaseUrlSecret
@@ -1222,6 +1228,12 @@ Resources:
               Value: 'false'
             - Name: MEILISEARCH_HOST
               Value: http://meilisearch.openmercato.internal:7700
+            - Name: OM_ENABLE_ENTERPRISE_MODULES
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SSO
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SECURITY
+              Value: 'true'
           Secrets:
             - Name: DATABASE_URL
               ValueFrom: !Ref DatabaseUrlSecret
@@ -1321,6 +1333,12 @@ Resources:
               Value: 'true'
             - Name: DB_SSL_REJECT_UNAUTHORIZED
               Value: 'false'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SSO
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SECURITY
+              Value: 'true'
           Secrets:
             - Name: DATABASE_URL
               ValueFrom: !Ref DatabaseUrlSecret
