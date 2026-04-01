@@ -129,6 +129,10 @@ COPY --from=prod-deps /app/ ./
 # Copy built workspace files required at runtime
 COPY --from=builder /app/packages/ ./packages/
 
+# Copy root TypeScript config files required by CLI bootstrap/esbuild at runtime
+COPY --from=builder /app/tsconfig.base.json ./tsconfig.base.json
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
+
 # Copy built Next.js application
 COPY --from=builder /app/apps/mercato/.mercato/next ./apps/mercato/.mercato/next
 COPY --from=builder /app/apps/mercato/public ./apps/mercato/public
