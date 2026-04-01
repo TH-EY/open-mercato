@@ -17,14 +17,18 @@ concurrency:
 env:
   AWS_REGION: eu-west-2
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
-  build-and-deploy:
-    name: Build & Deploy
+  build-image:
+    name: Build image
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
     environment: ${{ github.event.inputs.environment }}
-    permissions:
-      id-token: write
-      contents: read
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
 
     steps:
       - name: Verify deployment branch
@@ -47,21 +51,46 @@ jobs:
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push Docker image
-        id: build
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image metadata
+        id: meta
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY_NAME }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
-          docker build \
-            -t "${IMAGE_URI}" \
-            -t "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
-            .
-          docker push "${IMAGE_URI}"
-          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
           echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+          echo "latest=${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/arm64
+          tags: |
+            ${{ steps.meta.outputs.image }}
+            ${{ steps.meta.outputs.latest }}
+          cache-from: type=gha,scope=deploy-aws
+          cache-to: type=gha,mode=max,scope=deploy-aws
+
+  deploy-web:
+    name: Deploy web
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: ${{ github.event.inputs.environment }}
+    needs: build-image
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Download current web task definition
         run: |
@@ -76,7 +105,7 @@ jobs:
         with:
           task-definition: web-task-def.json
           container-name: app
-          image: ${{ steps.build.outputs.image }}
+          image: ${{ needs.build-image.outputs.image }}
 
       - name: Deploy web service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
@@ -86,6 +115,20 @@ jobs:
           cluster: ${{ vars.ECS_CLUSTER_NAME }}
           wait-for-service-stability: true
           wait-for-minutes: 15
+
+  deploy-worker:
+    name: Deploy worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: ${{ github.event.inputs.environment }}
+    needs: build-image
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Download current worker task definition
         run: |
@@ -100,7 +143,7 @@ jobs:
         with:
           task-definition: worker-task-def.json
           container-name: worker
-          image: ${{ steps.build.outputs.image }}
+          image: ${{ needs.build-image.outputs.image }}
 
       - name: Deploy worker service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
@@ -111,13 +154,27 @@ jobs:
           wait-for-service-stability: true
           wait-for-minutes: 15
 
-      - name: Post deployment status
-        if: always()
+  post-deployment-status:
+    name: Post deployment status
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - build-image
+      - deploy-web
+      - deploy-worker
+
+    steps:
+      - name: Report deployment result
         run: |
-          if [ "${{ job.status }}" = "success" ]; then
+          if [ "${{ needs.build-image.result }}" = "success" ] \
+            && [ "${{ needs.deploy-web.result }}" = "success" ] \
+            && [ "${{ needs.deploy-worker.result }}" = "success" ]; then
             echo "Deployment to ${{ github.event.inputs.environment }} succeeded"
-            echo "Image: ${{ steps.build.outputs.image }}"
+            echo "Image: ${{ needs.build-image.outputs.image }}"
           else
             echo "Deployment to ${{ github.event.inputs.environment }} failed"
+            echo "Build image: ${{ needs.build-image.result }}"
+            echo "Deploy web: ${{ needs.deploy-web.result }}"
+            echo "Deploy worker: ${{ needs.deploy-worker.result }}"
             exit 1
           fi

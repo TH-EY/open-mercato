@@ -1,3 +1,42 @@
+FROM node:24-alpine AS source
+
+WORKDIR /app
+
+COPY package.json yarn.lock .yarnrc.yml turbo.json ./
+COPY tsconfig.base.json tsconfig.json ./
+COPY packages/ ./packages/
+COPY apps/ ./apps/
+COPY scripts/ ./scripts/
+COPY newrelic.js ./
+COPY jest.config.cjs jest.setup.ts jest.dom.setup.ts ./
+COPY eslint.config.mjs ./
+
+FROM node:24-alpine AS pruner
+
+WORKDIR /app
+
+RUN apk add --no-cache python3 make g++ ca-certificates openssl \
+ && corepack enable \
+ && npm install -g turbo@2.7.5
+
+COPY --from=source /app /app
+
+RUN turbo prune @open-mercato/app --docker --out-dir /app/out
+
+FROM node:24-alpine AS installer
+
+ENV NODE_ENV=development \
+    NEXT_TELEMETRY_DISABLED=1
+
+WORKDIR /app
+
+RUN apk add --no-cache python3 make g++ ca-certificates openssl
+RUN corepack enable
+
+COPY --from=pruner /app/out/json/ ./
+
+RUN yarn install
+
 FROM node:24-alpine AS builder
 
 ENV NODE_ENV=production \
@@ -5,33 +44,20 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
-# Install system deps required by optional native modules (Alpine uses apk)
 RUN apk add --no-cache python3 make g++ ca-certificates openssl
-
-# Enable Corepack for Yarn
 RUN corepack enable
 
-# Copy workspace configuration files
-COPY package.json yarn.lock .yarnrc.yml turbo.json ./
-COPY tsconfig.base.json tsconfig.json ./
+COPY --from=installer /app/ ./
+COPY --from=pruner /app/out/full/ ./
+COPY --from=source /app/tsconfig.base.json ./tsconfig.base.json
+COPY --from=source /app/tsconfig.json ./tsconfig.json
+COPY --from=source /app/scripts ./scripts
+COPY --from=source /app/newrelic.js ./newrelic.js
+COPY --from=source /app/jest.config.cjs ./jest.config.cjs
+COPY --from=source /app/jest.setup.ts ./jest.setup.ts
+COPY --from=source /app/jest.dom.setup.ts ./jest.dom.setup.ts
+COPY --from=source /app/eslint.config.mjs ./eslint.config.mjs
 
-# Copy all packages and apps (including package.json files for dependency installation)
-COPY packages/ ./packages/
-COPY apps/ ./apps/
-COPY scripts/ ./scripts/
-
-# Install all dependencies (including devDependencies for build)
-# Note: Using plain install because peer dependency warnings cause lockfile changes
-RUN yarn install
-
-# Copy other necessary files
-COPY newrelic.js ./
-COPY jest.config.cjs jest.setup.ts jest.dom.setup.ts ./
-COPY eslint.config.mjs ./
-
-
-# Build the app
-# Limit Node.js heap to 4GB and reduce worker count to avoid OOM in constrained Docker environments
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN yarn build
 
@@ -67,6 +93,23 @@ RUN chmod +x /app/docker/scripts/init-or-migrate.sh
 EXPOSE 3000
 CMD ["/bin/sh", "/app/docker/scripts/dev-entrypoint.sh"]
 
+FROM node:24-alpine AS prod-deps
+
+ARG CONTAINER_PORT=3000
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=${CONTAINER_PORT}
+
+WORKDIR /app
+
+RUN apk add --no-cache ca-certificates openssl
+RUN corepack enable
+
+COPY --from=pruner /app/out/json/ ./
+
+RUN yarn workspaces focus @open-mercato/app --production
+
 # Production stage
 FROM node:24-alpine AS runner
 
@@ -78,24 +121,13 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
-# Install only production system dependencies (Alpine uses apk)
-# sudo: allows non-root user to chown the Railway-mounted volume at startup
 RUN apk add --no-cache ca-certificates openssl sudo
-
-# Enable Corepack for Yarn
 RUN corepack enable
 
-# Copy workspace configuration for production install
-COPY package.json yarn.lock .yarnrc.yml turbo.json ./
-COPY tsconfig.base.json tsconfig.json ./
-COPY --from=builder /app/.yarn ./.yarn
+COPY --from=prod-deps /app/ ./
 
-# Copy all packages and app metadata for dependency resolution
+# Copy built workspace files required at runtime
 COPY --from=builder /app/packages/ ./packages/
-COPY --from=builder /app/apps/mercato/package.json ./apps/mercato/
-
-# Install only production dependencies
-RUN yarn workspaces focus @open-mercato/app --production
 
 # Copy built Next.js application
 COPY --from=builder /app/apps/mercato/.mercato/next ./apps/mercato/.mercato/next
