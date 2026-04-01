@@ -269,6 +269,44 @@ jobs:
           cluster: ${{ vars.ECS_CLUSTER_NAME }}
           wait-for-service-stability: false
 
+  verify-services:
+    name: Verify services quickly
+    if: needs.prepare.outputs.should_deploy == 'true' && needs.deploy-web.result == 'success' && needs.deploy-worker.result == 'success'
+    needs: [prepare, deploy-web, deploy-worker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    environment: ${{ needs.prepare.outputs.environment }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Wait briefly for ECS services to settle
+        env:
+          ECS_CLUSTER_NAME: ${{ vars.ECS_CLUSTER_NAME }}
+          ECS_WEB_SERVICE_NAME: ${{ vars.ECS_WEB_SERVICE_NAME }}
+          ECS_WORKER_SERVICE_NAME: ${{ vars.ECS_WORKER_SERVICE_NAME }}
+        run: |
+          set -euo pipefail
+
+          if timeout 240 aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER_NAME}" \
+            --services "${ECS_WEB_SERVICE_NAME}" "${ECS_WORKER_SERVICE_NAME}"; then
+            echo "Services reached stable state within 4 minutes."
+            exit 0
+          fi
+
+          echo "Services did not reach stable state within 4 minutes."
+          echo "Recent ECS service state:"
+          aws ecs describe-services \
+            --cluster "${ECS_CLUSTER_NAME}" \
+            --services "${ECS_WEB_SERVICE_NAME}" "${ECS_WORKER_SERVICE_NAME}" \
+            --query 'services[].{service:serviceName,status:status,desired:desiredCount,running:runningCount,pending:pendingCount,deployments:deployments[].{status:status,rollout:rolloutState,taskDefinition:taskDefinition,running:runningCount,pending:pendingCount,desired:desiredCount},events:events[0:5].message}'
+          exit 1
+
   post-deployment-status:
     name: Post deployment status
     runs-on: ubuntu-latest
@@ -278,6 +316,7 @@ jobs:
       - build-image
       - deploy-web
       - deploy-worker
+      - verify-services
 
     steps:
       - name: Report deployment result
@@ -289,7 +328,8 @@ jobs:
 
           if [ "${{ needs.build-image.result }}" = "success" ] \
             && [ "${{ needs.deploy-web.result }}" = "success" ] \
-            && [ "${{ needs.deploy-worker.result }}" = "success" ]; then
+            && [ "${{ needs.deploy-worker.result }}" = "success" ] \
+            && [ "${{ needs.verify-services.result }}" = "success" ]; then
             echo "Deployment to ${{ needs.prepare.outputs.environment }} succeeded"
             echo "Image: ${{ needs.build-image.outputs.image }}"
             exit 0
@@ -299,4 +339,5 @@ jobs:
           echo "Build image: ${{ needs.build-image.result }}"
           echo "Deploy web: ${{ needs.deploy-web.result }}"
           echo "Deploy worker: ${{ needs.deploy-worker.result }}"
+          echo "Verify services: ${{ needs.verify-services.result }}"
           exit 1
