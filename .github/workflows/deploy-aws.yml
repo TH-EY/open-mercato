@@ -291,21 +291,72 @@ jobs:
           ECS_WORKER_SERVICE_NAME: ${{ vars.ECS_WORKER_SERVICE_NAME }}
         run: |
           set -euo pipefail
+          python3 - <<'PYTHON'
+          import json
+          import os
+          import subprocess
+          import sys
+          import time
 
-          if timeout 240 aws ecs wait services-stable \
-            --cluster "${ECS_CLUSTER_NAME}" \
-            --services "${ECS_WEB_SERVICE_NAME}" "${ECS_WORKER_SERVICE_NAME}"; then
-            echo "Services reached stable state within 4 minutes."
-            exit 0
-          fi
+          cluster = os.environ['ECS_CLUSTER_NAME']
+          services = [os.environ['ECS_WEB_SERVICE_NAME'], os.environ['ECS_WORKER_SERVICE_NAME']]
+          deadline = time.time() + 240
 
-          echo "Services did not reach stable state within 4 minutes."
-          echo "Recent ECS service state:"
-          aws ecs describe-services \
-            --cluster "${ECS_CLUSTER_NAME}" \
-            --services "${ECS_WEB_SERVICE_NAME}" "${ECS_WORKER_SERVICE_NAME}" \
-            --query 'services[].{service:serviceName,status:status,desired:desiredCount,running:runningCount,pending:pendingCount,deployments:deployments[].{status:status,rollout:rolloutState,taskDefinition:taskDefinition,running:runningCount,pending:pendingCount,desired:desiredCount},events:events[0:5].message}'
-          exit 1
+          def fetch_state():
+              output = subprocess.check_output(
+                  [
+                      'aws', 'ecs', 'describe-services',
+                      '--cluster', cluster,
+                      '--services', *services,
+                      '--query', 'services[].{service:serviceName,status:status,desired:desiredCount,running:runningCount,pending:pendingCount,taskDefinition:taskDefinition,deployments:deployments[].{status:status,rollout:rolloutState,taskDefinition:taskDefinition,running:runningCount,pending:pendingCount,desired:desiredCount},events:events[0:5].message}',
+                      '--output', 'json',
+                  ],
+                  text=True,
+              )
+              return json.loads(output)
+
+          def service_is_ready(service):
+              if service.get('status') != 'ACTIVE':
+                  return False
+
+              primary = next((d for d in service.get('deployments', []) if d.get('status') == 'PRIMARY'), None)
+              if primary is None:
+                  return False
+
+              desired = service.get('desired', 0)
+              if service.get('running', 0) < desired or service.get('pending', 0) != 0:
+                  return False
+              if primary.get('taskDefinition') != service.get('taskDefinition'):
+                  return False
+              if primary.get('desired') != desired:
+                  return False
+              if primary.get('running', 0) < desired or primary.get('pending', 0) != 0:
+                  return False
+
+              for deployment in service.get('deployments', []):
+                  if deployment.get('status') == 'PRIMARY':
+                      continue
+                  if deployment.get('desired', 0) != 0:
+                      return False
+                  if deployment.get('running', 0) != 0:
+                      return False
+                  if deployment.get('pending', 0) != 0:
+                      return False
+
+              return True
+
+          while time.time() < deadline:
+              state = fetch_state()
+              if all(service_is_ready(service) for service in state):
+                  print('Services reached deploy-ready state within 4 minutes.')
+                  sys.exit(0)
+              time.sleep(15)
+
+          print('Services did not reach deploy-ready state within 4 minutes.')
+          print('Recent ECS service state:')
+          print(json.dumps(fetch_state(), indent=2))
+          sys.exit(1)
+          PYTHON
 
   post-deployment-status:
     name: Post deployment status
