@@ -9,9 +9,13 @@ on:
         type: choice
         options:
           - production
+  workflow_run:
+    workflows: ["CI for Develop&Main"]
+    types: [completed]
+    branches: [develop]
 
 concurrency:
-  group: deploy-${{ github.event.inputs.environment }}
+  group: deploy-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
   cancel-in-progress: false
 
 env:
@@ -24,22 +28,32 @@ permissions:
 jobs:
   build-image:
     name: Build image
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
-    environment: ${{ github.event.inputs.environment }}
+    environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
     outputs:
       image: ${{ steps.meta.outputs.image }}
 
     steps:
       - name: Verify deployment branch
-        if: github.ref_name != 'develop'
         run: |
-          echo "ERROR: Production deploys must use the develop branch."
-          echo "Current branch: ${{ github.ref_name }}"
-          exit 1
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            BRANCH="${{ github.ref_name }}"
+          else
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+          fi
+
+          if [ "$BRANCH" != "develop" ]; then
+            echo "ERROR: Production deploys must use the develop branch."
+            echo "Current branch: $BRANCH"
+            exit 1
+          fi
 
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -59,7 +73,7 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY_NAME }}
-          IMAGE_TAG: ${{ github.sha }}
+          IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
         run: |
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
           echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
@@ -82,7 +96,7 @@ jobs:
     name: Deploy web
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    environment: ${{ github.event.inputs.environment }}
+    environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
     needs: build-image
 
     steps:
@@ -120,7 +134,7 @@ jobs:
     name: Deploy worker
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    environment: ${{ github.event.inputs.environment }}
+    environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
     needs: build-image
 
     steps:
@@ -169,10 +183,10 @@ jobs:
           if [ "${{ needs.build-image.result }}" = "success" ] \
             && [ "${{ needs.deploy-web.result }}" = "success" ] \
             && [ "${{ needs.deploy-worker.result }}" = "success" ]; then
-            echo "Deployment to ${{ github.event.inputs.environment }} succeeded"
+            echo "Deployment to ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }} succeeded"
             echo "Image: ${{ needs.build-image.outputs.image }}"
           else
-            echo "Deployment to ${{ github.event.inputs.environment }} failed"
+            echo "Deployment to ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }} failed"
             echo "Build image: ${{ needs.build-image.result }}"
             echo "Deploy web: ${{ needs.deploy-web.result }}"
             echo "Deploy worker: ${{ needs.deploy-worker.result }}"
