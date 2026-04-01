@@ -1100,6 +1100,8 @@ Resources:
               Value: !Sub '--max-old-space-size=${WebMemory}'
             - Name: CACHE_STRATEGY
               Value: redis
+            - Name: QUEUE_STRATEGY
+              Value: async
             - Name: DB_SSL
               Value: 'true'
             - Name: DB_SSL_REJECT_UNAUTHORIZED
