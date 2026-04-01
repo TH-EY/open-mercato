@@ -229,8 +229,7 @@ jobs:
           task-definition: ${{ steps.web-task-def.outputs.task-definition }}
           service: ${{ vars.ECS_WEB_SERVICE_NAME }}
           cluster: ${{ vars.ECS_CLUSTER_NAME }}
-          wait-for-service-stability: true
-          wait-for-minutes: 15
+          wait-for-service-stability: false
 
   deploy-worker:
     name: Deploy worker
@@ -268,8 +267,7 @@ jobs:
           task-definition: ${{ steps.worker-task-def.outputs.task-definition }}
           service: ${{ vars.ECS_WORKER_SERVICE_NAME }}
           cluster: ${{ vars.ECS_CLUSTER_NAME }}
-          wait-for-service-stability: true
-          wait-for-minutes: 15
+          wait-for-service-stability: false
 
   post-deployment-status:
     name: Post deployment status
