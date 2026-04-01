@@ -1125,6 +1125,10 @@ Resources:
           Secrets:
             - Name: DATABASE_URL
               ValueFrom: !Ref DatabaseUrlSecret
+            - Name: REDIS_URL
+              ValueFrom: !Ref RedisUrlSecret
+            - Name: QUEUE_REDIS_URL
+              ValueFrom: !Ref RedisUrlSecret
             - Name: CACHE_REDIS_URL
               ValueFrom: !Ref RedisUrlSecret
             - Name: JWT_SECRET
@@ -1237,6 +1241,10 @@ Resources:
           Secrets:
             - Name: DATABASE_URL
               ValueFrom: !Ref DatabaseUrlSecret
+            - Name: REDIS_URL
+              ValueFrom: !Ref RedisUrlSecret
+            - Name: QUEUE_REDIS_URL
+              ValueFrom: !Ref RedisUrlSecret
             - Name: CACHE_REDIS_URL
               ValueFrom: !Ref RedisUrlSecret
             - Name: JWT_SECRET
@@ -1342,6 +1350,10 @@ Resources:
           Secrets:
             - Name: DATABASE_URL
               ValueFrom: !Ref DatabaseUrlSecret
+            - Name: REDIS_URL
+              ValueFrom: !Ref RedisUrlSecret
+            - Name: QUEUE_REDIS_URL
+              ValueFrom: !Ref RedisUrlSecret
             - Name: CACHE_REDIS_URL
               ValueFrom: !Ref RedisUrlSecret
             - Name: JWT_SECRET
