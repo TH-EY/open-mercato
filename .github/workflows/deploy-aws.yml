@@ -10,7 +10,7 @@ on:
         options:
           - production
   workflow_run:
-    workflows: ["CI for Develop&Main"]
+    workflows: ["Internal Deploy Gate"]
     types: [completed]
     branches: [develop]
 
@@ -26,34 +26,134 @@ permissions:
   contents: read
 
 jobs:
+  prepare:
+    name: Prepare deployment
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.finalize.outputs.should_deploy }}
+      environment: ${{ steps.finalize.outputs.environment }}
+      head_sha: ${{ steps.finalize.outputs.head_sha }}
+      branch: ${{ steps.finalize.outputs.branch }}
+      reason: ${{ steps.finalize.outputs.reason }}
+
+    steps:
+      - name: Decide deployment scope
+        id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_ENV: ${{ github.event.inputs.environment }}
+          DISPATCH_SHA: ${{ github.sha }}
+          DISPATCH_BRANCH: ${{ github.ref_name }}
+          WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          WORKFLOW_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "environment=${DISPATCH_ENV}" >> "$GITHUB_OUTPUT"
+            echo "head_sha=${DISPATCH_SHA}" >> "$GITHUB_OUTPUT"
+            echo "branch=${DISPATCH_BRANCH}" >> "$GITHUB_OUTPUT"
+            if [ "$DISPATCH_BRANCH" != "develop" ]; then
+              echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+              echo "reason=manual_dispatch_not_on_develop" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            echo "reason=manual_dispatch" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "environment=production" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${WORKFLOW_HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          echo "branch=${WORKFLOW_HEAD_BRANCH}" >> "$GITHUB_OUTPUT"
+
+          if [ "$WORKFLOW_CONCLUSION" != "success" ]; then
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            echo "reason=internal_gate_not_success" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$WORKFLOW_HEAD_BRANCH" != "develop" ]; then
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            echo "reason=workflow_run_not_on_develop" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          echo "reason=internal_gate_success" >> "$GITHUB_OUTPUT"
+
+      - name: Check for stale develop SHA
+        id: freshness
+        if: steps.decide.outputs.should_deploy == 'true' && github.event_name == 'workflow_run'
+        env:
+          EXPECTED_SHA: ${{ steps.decide.outputs.head_sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          CURRENT_SHA=$(git ls-remote "https://github.com/${REPOSITORY}.git" refs/heads/develop | awk '{print $1}')
+          if [ -z "$CURRENT_SHA" ]; then
+            echo "Failed to resolve current develop SHA"
+            exit 1
+          fi
+
+          if [ "$CURRENT_SHA" != "$EXPECTED_SHA" ]; then
+            echo "is_stale=true" >> "$GITHUB_OUTPUT"
+            echo "current_sha=${CURRENT_SHA}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "is_stale=false" >> "$GITHUB_OUTPUT"
+          echo "current_sha=${CURRENT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Downgrade stale deployment to no-op
+        if: steps.freshness.outputs.is_stale == 'true'
+        run: |
+          echo "Stale deployment detected; skipping deploy."
+          echo "Triggered SHA: ${{ steps.decide.outputs.head_sha }}"
+          echo "Current develop SHA: ${{ steps.freshness.outputs.current_sha }}"
+
+      - name: Finalize deployment decision
+        id: finalize
+        env:
+          INITIAL_SHOULD_DEPLOY: ${{ steps.decide.outputs.should_deploy }}
+          INITIAL_REASON: ${{ steps.decide.outputs.reason }}
+          ENVIRONMENT: ${{ steps.decide.outputs.environment }}
+          HEAD_SHA: ${{ steps.decide.outputs.head_sha }}
+          BRANCH: ${{ steps.decide.outputs.branch }}
+          IS_STALE: ${{ steps.freshness.outputs.is_stale }}
+        run: |
+          echo "environment=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+
+          if [ "${INITIAL_SHOULD_DEPLOY}" != "true" ]; then
+            echo "should_deploy=${INITIAL_SHOULD_DEPLOY}" >> "$GITHUB_OUTPUT"
+            echo "reason=${INITIAL_REASON}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${IS_STALE}" = "true" ]; then
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            echo "reason=stale_head_sha" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          echo "reason=${INITIAL_REASON}" >> "$GITHUB_OUTPUT"
+
   build-image:
     name: Build image
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: needs.prepare.outputs.should_deploy == 'true' && needs.prepare.result == 'success'
+    needs: prepare
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
-    environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
+    environment: ${{ needs.prepare.outputs.environment }}
     outputs:
       image: ${{ steps.meta.outputs.image }}
 
     steps:
-      - name: Verify deployment branch
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            BRANCH="${{ github.ref_name }}"
-          else
-            BRANCH="${{ github.event.workflow_run.head_branch }}"
-          fi
-
-          if [ "$BRANCH" != "develop" ]; then
-            echo "ERROR: Production deploys must use the develop branch."
-            echo "Current branch: $BRANCH"
-            exit 1
-          fi
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+          ref: ${{ needs.prepare.outputs.head_sha }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -73,7 +173,7 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY_NAME }}
-          IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+          IMAGE_TAG: ${{ needs.prepare.outputs.head_sha }}
         run: |
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
           echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
@@ -94,10 +194,11 @@ jobs:
 
   deploy-web:
     name: Deploy web
+    if: needs.prepare.outputs.should_deploy == 'true' && needs.build-image.result == 'success'
+    needs: [prepare, build-image]
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
-    needs: build-image
+    environment: ${{ needs.prepare.outputs.environment }}
 
     steps:
       - name: Configure AWS credentials
@@ -132,10 +233,11 @@ jobs:
 
   deploy-worker:
     name: Deploy worker
+    if: needs.prepare.outputs.should_deploy == 'true' && needs.build-image.result == 'success'
+    needs: [prepare, build-image]
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
-    needs: build-image
+    environment: ${{ needs.prepare.outputs.environment }}
 
     steps:
       - name: Configure AWS credentials
@@ -173,6 +275,7 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     needs:
+      - prepare
       - build-image
       - deploy-web
       - deploy-worker
@@ -180,15 +283,21 @@ jobs:
     steps:
       - name: Report deployment result
         run: |
+          if [ "${{ needs.prepare.outputs.should_deploy }}" != "true" ]; then
+            echo "Deployment skipped: ${{ needs.prepare.outputs.reason }}"
+            exit 0
+          fi
+
           if [ "${{ needs.build-image.result }}" = "success" ] \
             && [ "${{ needs.deploy-web.result }}" = "success" ] \
             && [ "${{ needs.deploy-worker.result }}" = "success" ]; then
-            echo "Deployment to ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }} succeeded"
+            echo "Deployment to ${{ needs.prepare.outputs.environment }} succeeded"
             echo "Image: ${{ needs.build-image.outputs.image }}"
-          else
-            echo "Deployment to ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }} failed"
-            echo "Build image: ${{ needs.build-image.result }}"
-            echo "Deploy web: ${{ needs.deploy-web.result }}"
-            echo "Deploy worker: ${{ needs.deploy-worker.result }}"
-            exit 1
+            exit 0
           fi
+
+          echo "Deployment to ${{ needs.prepare.outputs.environment }} failed"
+          echo "Build image: ${{ needs.build-image.result }}"
+          echo "Deploy web: ${{ needs.deploy-web.result }}"
+          echo "Deploy worker: ${{ needs.deploy-worker.result }}"
+          exit 1

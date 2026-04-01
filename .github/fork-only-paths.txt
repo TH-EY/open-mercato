@@ -5,3 +5,4 @@ infra/
 .github/workflows/qa-deploy.yml
 docs/fork-divergence-audit.md
 docs/upstream-contribution-workflow.md
+.github/workflows/internal-deploy-gate.yml
