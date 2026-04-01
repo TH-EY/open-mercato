@@ -20,6 +20,7 @@ concurrency:
 
 env:
   AWS_REGION: eu-west-2
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
   id-token: write
@@ -151,7 +152,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare.outputs.head_sha }}
 
