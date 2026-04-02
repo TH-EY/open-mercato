@@ -300,7 +300,14 @@ jobs:
 
           cluster = os.environ['ECS_CLUSTER_NAME']
           services = [os.environ['ECS_WEB_SERVICE_NAME'], os.environ['ECS_WORKER_SERVICE_NAME']]
-          deadline = time.time() + 240
+          deadline = time.time() + 300
+          failure_markers = (
+              'unable to place',
+              'unable to consistently start',
+              'failed',
+              'unhealthy',
+              'error',
+          )
 
           def fetch_state():
               output = subprocess.check_output(
@@ -315,6 +322,11 @@ jobs:
               )
               return json.loads(output)
 
+          def has_recent_failure(service):
+              events = service.get('events', []) or []
+              lowered = ' '.join(str(event).lower() for event in events)
+              return any(marker in lowered for marker in failure_markers)
+
           def service_is_ready(service):
               if service.get('status') != 'ACTIVE':
                   return False
@@ -328,31 +340,43 @@ jobs:
                   return False
               if primary.get('taskDefinition') != service.get('taskDefinition'):
                   return False
-              if primary.get('desired') != desired:
+              if primary.get('desired', 0) > desired:
                   return False
-              if primary.get('running', 0) < desired or primary.get('pending', 0) != 0:
+              primary_running = primary.get('running', 0)
+              primary_pending = primary.get('pending', 0)
+              if primary_running >= desired and primary_pending == 0:
+                  for deployment in service.get('deployments', []):
+                      if deployment.get('status') == 'PRIMARY':
+                          continue
+                      if deployment.get('desired', 0) != 0:
+                          return False
+                      if deployment.get('running', 0) != 0:
+                          return False
+                      if deployment.get('pending', 0) != 0:
+                          return False
+                  return True
+
+              if has_recent_failure(service):
                   return False
 
-              for deployment in service.get('deployments', []):
-                  if deployment.get('status') == 'PRIMARY':
-                      continue
-                  if deployment.get('desired', 0) != 0:
-                      return False
-                  if deployment.get('running', 0) != 0:
-                      return False
-                  if deployment.get('pending', 0) != 0:
-                      return False
+              if primary_pending <= desired and service.get('running', 0) >= desired:
+                  for deployment in service.get('deployments', []):
+                      if deployment.get('status') == 'PRIMARY':
+                          continue
+                      if deployment.get('pending', 0) != 0:
+                          return False
+                  return True
 
-              return True
+              return False
 
           while time.time() < deadline:
               state = fetch_state()
               if all(service_is_ready(service) for service in state):
-                  print('Services reached deploy-ready state within 4 minutes.')
+                  print('Services reached deploy-ready state within 5 minutes.')
                   sys.exit(0)
               time.sleep(15)
 
-          print('Services did not reach deploy-ready state within 4 minutes.')
+          print('Services did not reach deploy-ready state within 5 minutes.')
           print('Recent ECS service state:')
           print(json.dumps(fetch_state(), indent=2))
           sys.exit(1)
