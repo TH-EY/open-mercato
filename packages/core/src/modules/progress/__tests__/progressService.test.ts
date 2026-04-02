@@ -316,32 +316,40 @@ describe('progress service', () => {
 
     const staleJob1 = { id: 'stale-1', jobType: 'export', status: 'running', tenantId: baseCtx.tenantId } as unknown as ProgressJob
     const staleJob2 = { id: 'stale-2', jobType: 'import', status: 'running', tenantId: baseCtx.tenantId } as unknown as ProgressJob
-    em.find.mockResolvedValue([staleJob1, staleJob2])
+    const stalePendingJob = { id: 'stale-3', jobType: 'query_index.reindex', status: 'pending', tenantId: baseCtx.tenantId } as unknown as ProgressJob
+    em.find.mockResolvedValue([staleJob1, staleJob2, stalePendingJob])
 
     const service = createProgressService(em as never, eventBus)
     const count = await service.markStaleJobsFailed(baseCtx.tenantId, 60)
 
-    expect(count).toBe(2)
+    expect(count).toBe(3)
     expect(staleJob1.status).toBe('failed')
     expect(staleJob1.finishedAt).toBeInstanceOf(Date)
     expect(staleJob1.errorMessage).toContain('no heartbeat for 60 seconds')
     expect(staleJob2.status).toBe('failed')
+    expect(stalePendingJob.status).toBe('failed')
     expect(em.flush).toHaveBeenCalled()
     expect(em.find).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         tenantId: baseCtx.tenantId,
-        status: 'running',
+        status: { $in: ['pending', 'running'] },
         $or: [
           { heartbeatAt: { $lt: expect.any(Date) } },
           {
             heartbeatAt: null,
             startedAt: { $lt: expect.any(Date) },
           },
+          {
+            status: 'pending',
+            heartbeatAt: null,
+            startedAt: null,
+            updatedAt: { $lt: expect.any(Date) },
+          },
         ],
       })
     )
-    expect(eventBus.emit).toHaveBeenCalledTimes(2)
+    expect(eventBus.emit).toHaveBeenCalledTimes(3)
     expect(eventBus.emit).toHaveBeenCalledWith(
       PROGRESS_EVENTS.JOB_FAILED,
       expect.objectContaining({ jobId: 'stale-1', stale: true })
@@ -349,6 +357,10 @@ describe('progress service', () => {
     expect(eventBus.emit).toHaveBeenCalledWith(
       PROGRESS_EVENTS.JOB_FAILED,
       expect.objectContaining({ jobId: 'stale-2', stale: true })
+    )
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      PROGRESS_EVENTS.JOB_FAILED,
+      expect.objectContaining({ jobId: 'stale-3', stale: true })
     )
   })
 

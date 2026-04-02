@@ -286,12 +286,18 @@ export function createProgressService(em: EntityManager, eventBus: { emit: (even
 
       const staleJobs = await em.find(ProgressJob, {
         tenantId,
-        status: 'running',
+        status: { $in: ['pending', 'running'] },
         $or: [
           { heartbeatAt: { $lt: cutoff } },
           {
             heartbeatAt: null,
             startedAt: { $lt: cutoff },
+          },
+          {
+            status: 'pending',
+            heartbeatAt: null,
+            startedAt: null,
+            updatedAt: { $lt: cutoff },
           },
         ],
       })
