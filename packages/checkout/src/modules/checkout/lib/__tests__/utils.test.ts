@@ -13,6 +13,7 @@ import {
   serializeTemplateOrLink,
   serializeTransaction,
   signCheckoutAccessToken,
+  toTemplateOrLinkMutationInput,
   validateCheckoutCustomerData,
   validateDescriptorCurrencies,
   verifyCheckoutAccessToken,
@@ -259,6 +260,29 @@ describe('checkout utils', () => {
       logoUrl: 'https://cdn.example.com/logo.png',
       logoPreviewUrl:
         '/api/attachments/image/6e2ba1b0-3f1a-4104-a43a-123456789abc?width=640&height=240&cropType=contain',
+    })
+  })
+
+  it('preserves checkout link fields for detached link-shaped records', () => {
+    const detachedLink = {
+      ...createLink({
+        templateId: 'template_1',
+        completionCount: 3,
+        activeReservationCount: 1,
+        isLocked: true,
+      }),
+    } as CheckoutLink
+
+    expect(serializeTemplateOrLink(detachedLink)).toMatchObject({
+      slug: 'test-link',
+      templateId: 'template_1',
+      completionCount: 3,
+      activeReservationCount: 1,
+      isLocked: true,
+    })
+    expect(toTemplateOrLinkMutationInput(detachedLink)).toMatchObject({
+      slug: 'test-link',
+      templateId: 'template_1',
     })
   })
 
