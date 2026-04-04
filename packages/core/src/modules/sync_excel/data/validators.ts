@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { DEFAULT_SYNC_EXCEL_BATCH_SIZE } from '../../data_sync/lib/batch-size'
 
 export const syncExcelEntityTypes = ['customers.person'] as const
 
@@ -45,7 +46,7 @@ export const syncExcelImportRequestSchema = z.object({
   uploadId: z.string().uuid(),
   entityType: syncExcelEntityTypeSchema,
   mapping: syncExcelSuggestedMappingSchema,
-  batchSize: z.number().int().min(1).max(1000).default(100).optional(),
+  batchSize: z.number().int().min(1).max(1000).default(DEFAULT_SYNC_EXCEL_BATCH_SIZE).optional(),
 })
 
 export const syncExcelImportResponseSchema = z.object({

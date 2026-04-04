@@ -1,5 +1,6 @@
 import type { ProgressService } from '../../progress/lib/progressService'
 import type { SyncRunService } from './sync-run-service'
+import { resolveDefaultDataSyncBatchSize } from './batch-size'
 import { getSyncQueue } from './queue'
 
 export type DataSyncStartScope = {
@@ -75,7 +76,9 @@ export async function startDataSyncRun(params: {
   const queue = getSyncQueue(queueName)
   await queue.enqueue({
     runId: run.id,
-    batchSize: input.batchSize ?? 100,
+    batchSize: Number.isFinite(input.batchSize)
+      ? Math.max(1, Math.trunc(input.batchSize as number))
+      : resolveDefaultDataSyncBatchSize(input.integrationId),
     scope: {
       organizationId: scope.organizationId,
       tenantId: scope.tenantId,

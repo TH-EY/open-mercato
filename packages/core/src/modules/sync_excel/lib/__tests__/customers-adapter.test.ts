@@ -35,12 +35,17 @@ const mappingRecord = {
       { externalField: 'Last Name', localField: 'person.lastName', mappingKind: 'core' },
       { externalField: 'Lead Name', localField: 'person.displayName', mappingKind: 'core' },
       { externalField: 'Email', localField: 'person.primaryEmail', mappingKind: 'core', dedupeRole: 'secondary' },
+      { externalField: 'Address Line 1', localField: 'address.addressLine1', mappingKind: 'core' },
+      { externalField: 'City', localField: 'address.city', mappingKind: 'core' },
+      { externalField: 'Postal Code', localField: 'address.postalCode', mappingKind: 'core' },
+      { externalField: 'Favorite Color', localField: 'cf:favorite_color', mappingKind: 'custom_field' },
     ],
   },
 }
 
 const mockEm = {
   findOne: jest.fn(),
+  find: jest.fn(),
   flush: jest.fn(async () => undefined),
 }
 
@@ -84,9 +89,10 @@ describe('sync_excel customers adapter', () => {
       if (criteria?.integrationId === 'sync_excel') return mappingRecord
       return null
     })
+    mockEm.find.mockResolvedValue([])
     mockReadSyncExcelUploadBuffer.mockResolvedValue(Buffer.from([
-      'Record Id,First Name,Last Name,Lead Name,Email',
-      'ext-1,Ada,Lovelace,Ada Lovelace,ada@example.com',
+      'Record Id,First Name,Last Name,Lead Name,Email,Address Line 1,City,Postal Code,Favorite Color',
+      'ext-1,Ada,Lovelace,Ada Lovelace,ada@example.com,123 Main St,Austin,78701,Blue',
     ].join('\n')))
     mockExternalIdMappingService.lookupLocalId.mockResolvedValue(null)
     mockExternalIdMappingService.storeExternalIdMapping.mockResolvedValue(undefined)
@@ -110,6 +116,10 @@ describe('sync_excel customers adapter', () => {
         'Record Id': 'ext-1',
         'Lead Name': 'Ada Lovelace',
         Email: 'ADA@example.com',
+        'Address Line 1': '123 Main St',
+        City: 'Austin',
+        'Postal Code': '78701',
+        'Favorite Color': 'Blue',
       },
       mappingRecord.mapping as any,
       {
@@ -120,6 +130,12 @@ describe('sync_excel customers adapter', () => {
 
     expect(payload.values.externalId).toBe('ext-1')
     expect(payload.values.primaryEmail).toBe('ada@example.com')
+    expect(payload.customFields).toEqual({ favorite_color: 'Blue' })
+    expect(payload.addressValues).toEqual({
+      addressLine1: '123 Main St',
+      city: 'Austin',
+      postalCode: '78701',
+    })
     expect(payload.createInput).toMatchObject({
       organizationId: 'org-1',
       tenantId: 'tenant-1',
@@ -151,6 +167,11 @@ describe('sync_excel customers adapter', () => {
       totalEstimate: 1,
       processedCount: 1,
       hasMore: false,
+      refreshCoverageEntityTypes: expect.arrayContaining([
+        'customers:customer_person_profile',
+        'customers:customer_address',
+      ]),
+      deferredSearchReindexEntityTypes: ['customers:customer_person_profile'],
     })
     expect(batches[0].items[0]).toMatchObject({
       externalId: 'ext-1',
@@ -166,6 +187,21 @@ describe('sync_excel customers adapter', () => {
         lastName: 'Lovelace',
         displayName: 'Ada Lovelace',
         primaryEmail: 'ada@example.com',
+        customFields: {
+          favorite_color: 'Blue',
+        },
+      }),
+      ctx: expect.objectContaining({
+        auth: null,
+      }),
+    }))
+    expect(mockCommandBus.execute).toHaveBeenCalledWith('customers.addresses.create', expect.objectContaining({
+      input: expect.objectContaining({
+        entityId: '33333333-3333-4333-8333-333333333333',
+        addressLine1: '123 Main St',
+        city: 'Austin',
+        postalCode: '78701',
+        isPrimary: true,
       }),
       ctx: expect.objectContaining({
         auth: null,
@@ -186,11 +222,16 @@ describe('sync_excel customers adapter', () => {
 
   it('falls back to email dedupe and updates existing people', async () => {
     mockReadSyncExcelUploadBuffer.mockResolvedValue(Buffer.from([
-      'Email,Lead Name',
-      'ada@example.com,Ada Lovelace',
+      'Email,Lead Name,Address Line 1,City,Favorite Color',
+      'ada@example.com,Ada Lovelace,500 Updated Ave,Dallas,Purple',
     ].join('\n')))
     mockFindOneWithDecryption.mockResolvedValue({ id: 'existing-person-id' } as any)
     mockCommandBus.execute.mockResolvedValue({ result: { entityId: 'existing-person-id' } })
+    mockEm.find.mockResolvedValue([
+      {
+        id: 'existing-primary-address-id',
+      },
+    ])
 
     const batches = []
     for await (const batch of syncExcelCustomersAdapter.streamImport!({
@@ -204,6 +245,9 @@ describe('sync_excel customers adapter', () => {
         fields: [
           { externalField: 'Email', localField: 'person.primaryEmail', mappingKind: 'core', dedupeRole: 'secondary' },
           { externalField: 'Lead Name', localField: 'person.displayName', mappingKind: 'core' },
+          { externalField: 'Address Line 1', localField: 'address.addressLine1', mappingKind: 'core' },
+          { externalField: 'City', localField: 'address.city', mappingKind: 'core' },
+          { externalField: 'Favorite Color', localField: 'cf:favorite_color', mappingKind: 'custom_field' },
         ],
       },
       scope: {
@@ -226,10 +270,104 @@ describe('sync_excel customers adapter', () => {
         id: 'existing-person-id',
         primaryEmail: 'ada@example.com',
         displayName: 'Ada Lovelace',
+        customFields: {
+          favorite_color: 'Purple',
+        },
       }),
       ctx: expect.objectContaining({
         auth: null,
       }),
     }))
+    expect(mockCommandBus.execute).toHaveBeenCalledWith('customers.addresses.update', expect.objectContaining({
+      input: expect.objectContaining({
+        id: 'existing-primary-address-id',
+        addressLine1: '500 Updated Ave',
+        city: 'Dallas',
+        isPrimary: true,
+      }),
+      ctx: expect.objectContaining({
+        auth: null,
+      }),
+    }))
+  })
+
+  it('emits smaller heartbeat batches within the configured logical batch size', async () => {
+    mockReadSyncExcelUploadBuffer.mockResolvedValue(Buffer.from([
+      'Record Id,First Name,Last Name,Lead Name,Email',
+      'ext-1,Ada,Lovelace,Ada Lovelace,ada@example.com',
+      'ext-2,Grace,Hopper,Grace Hopper,grace@example.com',
+      'ext-3,Alan,Turing,Alan Turing,alan@example.com',
+      'ext-4,Barbara,Liskov,Barbara Liskov,barbara@example.com',
+      'ext-5,Donald,Knuth,Donald Knuth,donald@example.com',
+      'ext-6,Linus,Torvalds,Linus Torvalds,linus@example.com',
+    ].join('\n')))
+
+    const batches = []
+    for await (const batch of syncExcelCustomersAdapter.streamImport!({
+      entityType: 'customers.person',
+      batchSize: 25,
+      credentials: {},
+      mapping: mappingRecord.mapping as any,
+      scope: {
+        organizationId: 'org-1',
+        tenantId: 'tenant-1',
+      },
+      runId: 'run-1',
+    })) {
+      batches.push(batch)
+    }
+
+    expect(batches).toHaveLength(2)
+    expect(batches[0]).toMatchObject({
+      processedCount: 5,
+      hasMore: true,
+      cursor: expect.stringContaining('"offset":5'),
+    })
+    expect(batches[1]).toMatchObject({
+      processedCount: 1,
+      hasMore: false,
+      cursor: expect.stringContaining('"offset":6'),
+    })
+  })
+
+  it('skips address upsert when mapped address values are missing address line 1', async () => {
+    mockReadSyncExcelUploadBuffer.mockResolvedValue(Buffer.from([
+      'Record Id,First Name,Last Name,Email,City',
+      'ext-2,Grace,Hopper,grace@example.com,Arlington',
+    ].join('\n')))
+
+    const batches = []
+    for await (const batch of syncExcelCustomersAdapter.streamImport!({
+      entityType: 'customers.person',
+      batchSize: 50,
+      credentials: {},
+      mapping: {
+        entityType: 'customers.person',
+        matchStrategy: 'externalId',
+        matchField: 'person.externalId',
+        fields: [
+          { externalField: 'Record Id', localField: 'person.externalId', mappingKind: 'external_id', dedupeRole: 'primary' },
+          { externalField: 'First Name', localField: 'person.firstName', mappingKind: 'core' },
+          { externalField: 'Last Name', localField: 'person.lastName', mappingKind: 'core' },
+          { externalField: 'Email', localField: 'person.primaryEmail', mappingKind: 'core', dedupeRole: 'secondary' },
+          { externalField: 'City', localField: 'address.city', mappingKind: 'core' },
+        ],
+      },
+      scope: {
+        organizationId: 'org-1',
+        tenantId: 'tenant-1',
+      },
+      runId: 'run-1',
+    })) {
+      batches.push(batch)
+    }
+
+    expect(batches[0].items[0]).toMatchObject({
+      action: 'create',
+      externalId: 'ext-2',
+    })
+    expect(mockCommandBus.execute).toHaveBeenCalledWith('customers.people.create', expect.anything())
+    expect(mockCommandBus.execute).not.toHaveBeenCalledWith('customers.addresses.create', expect.anything())
+    expect(mockCommandBus.execute).not.toHaveBeenCalledWith('customers.addresses.update', expect.anything())
   })
 })

@@ -2,6 +2,7 @@ import type { EntityManager } from '@mikro-orm/postgresql'
 import { CustomerDeal, CustomerEntity, CustomerTag, CustomerTagAssignment, CustomerDictionaryEntry, type CustomerEntityKind } from '../data/entities'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import type { CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
+import type { CrudEmitContext, CrudIndexerConfig } from '@open-mercato/shared/lib/crud/types'
 import { ensureOrganizationScope, ensureSameScope } from '@open-mercato/shared/lib/commands/scope'
 import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 export { ensureOrganizationScope, ensureSameScope, ensureTenantScope } from '@open-mercato/shared/lib/commands/scope'
@@ -183,6 +184,72 @@ export function resolveParentResourceKind(entityKind: CustomerEntityKind | strin
   if (entityKind === 'company') return 'customers.company'
   if (entityKind === 'person') return 'customers.person'
   return null
+}
+
+function parseBooleanToken(value: string | null): boolean {
+  if (!value) return false
+  const normalized = value.trim().toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
+}
+
+export function shouldDeferSearchIndexing(ctx: CommandRuntimeContext): boolean {
+  if (!(ctx.request instanceof Request)) {
+    return false
+  }
+
+  try {
+    const url = new URL(ctx.request.url)
+    return parseBooleanToken(url.searchParams.get('deferSearchIndexing'))
+  } catch {
+    return false
+  }
+}
+
+function createIndexerPayload<TEntity>(
+  indexer: CrudIndexerConfig<TEntity>,
+  emitCtx: CrudEmitContext<TEntity>,
+  kind: 'upsert' | 'delete',
+): Record<string, unknown> {
+  const basePayload = kind === 'delete'
+    ? indexer.buildDeletePayload?.(emitCtx)
+    : indexer.buildUpsertPayload?.(emitCtx)
+
+  if (basePayload && typeof basePayload === 'object' && !Array.isArray(basePayload)) {
+    return { ...(basePayload as Record<string, unknown>) }
+  }
+
+  return {
+    entityType: indexer.entityType,
+    recordId: emitCtx.identifiers.id,
+    organizationId: emitCtx.identifiers.organizationId,
+    tenantId: emitCtx.identifiers.tenantId,
+  }
+}
+
+export function resolveCrudIndexerForCommand<TEntity>(
+  ctx: CommandRuntimeContext,
+  indexer: CrudIndexerConfig<TEntity>,
+): CrudIndexerConfig<TEntity> {
+  if (!shouldDeferSearchIndexing(ctx)) {
+    return indexer
+  }
+
+  return {
+    ...indexer,
+    buildUpsertPayload: (emitCtx) => ({
+      ...createIndexerPayload(indexer, emitCtx, 'upsert'),
+      suppressCoverage: true,
+      suppressCoverageRefresh: true,
+      suppressVectorize: true,
+      suppressSearchIndexing: true,
+    }),
+    buildDeletePayload: (emitCtx) => ({
+      ...createIndexerPayload(indexer, emitCtx, 'delete'),
+      suppressCoverageRefresh: true,
+      suppressVectorDelete: true,
+      suppressSearchDelete: true,
+    }),
+  }
 }
 
 export type QueryIndexEventEntry = {

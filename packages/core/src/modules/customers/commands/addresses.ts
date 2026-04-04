@@ -12,6 +12,7 @@ import {
   ensureSameScope,
   extractUndoPayload,
   resolveParentResourceKind,
+  resolveCrudIndexerForCommand,
 } from './shared'
 import { resolveTranslations } from '@open-mercato/shared/lib/i18n/server'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
@@ -148,7 +149,7 @@ const createAddressCommand: CommandHandler<AddressCreateInput, { addressId: stri
         organizationId: address.organizationId,
         tenantId: address.tenantId,
       },
-      indexer: addressCrudIndexer,
+      indexer: resolveCrudIndexerForCommand(ctx, addressCrudIndexer),
       events: addressCrudEvents,
     })
 
@@ -242,7 +243,7 @@ const updateAddressCommand: CommandHandler<AddressUpdateInput, { addressId: stri
         organizationId: address.organizationId,
         tenantId: address.tenantId,
       },
-      indexer: addressCrudIndexer,
+      indexer: resolveCrudIndexerForCommand(ctx, addressCrudIndexer),
       events: addressCrudEvents,
     })
 

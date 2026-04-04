@@ -54,6 +54,7 @@ export interface ImportBatch {
   totalEstimate?: number
   processedCount?: number
   refreshCoverageEntityTypes?: string[]
+  deferredSearchReindexEntityTypes?: string[]
   message?: string
   batchIndex: number
 }

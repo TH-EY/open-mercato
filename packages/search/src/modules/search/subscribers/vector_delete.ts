@@ -11,11 +11,16 @@ type Payload = {
   recordId?: string
   organizationId?: string | null
   tenantId?: string | null
+  suppressVectorDelete?: boolean
 }
 
 type HandlerContext = { resolve: <T = unknown>(name: string) => T }
 
 export default async function handle(payload: Payload, ctx: HandlerContext) {
+  if (payload?.suppressVectorDelete === true) {
+    return
+  }
+
   const entityType = String(payload?.entityType ?? '')
   const recordId = String(payload?.recordId ?? '')
   if (!entityType || !recordId) return

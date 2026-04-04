@@ -1,5 +1,7 @@
 import type { EntityManager } from '@mikro-orm/postgresql'
 import { getIntegration } from '@open-mercato/shared/modules/integrations/types'
+import type { EntityId } from '@open-mercato/shared/modules/entities'
+import type { SearchIndexer } from '@open-mercato/search'
 import type { CredentialsService } from '../../integrations/lib/credentials-service'
 import type { IntegrationLogService } from '../../integrations/lib/log-service'
 import type { ProgressService } from '../../progress/lib/progressService'
@@ -21,6 +23,7 @@ type EngineDeps = {
   integrationCredentialsService: CredentialsService
   integrationLogService: IntegrationLogService
   progressService: ProgressService
+  searchIndexer?: SearchIndexer | null
 }
 
 function resolveProviderKey(integrationId: string): string {
@@ -108,6 +111,84 @@ export function createSyncEngine(deps: EngineDeps) {
           organizationId: scope.organizationId,
         })),
     )
+  }
+
+  async function enqueueDeferredSearchReindex(
+    integrationId: string,
+    entityTypes: string[],
+    scope: SyncScope,
+    runId: string,
+  ): Promise<void> {
+    const searchIndexer = deps.searchIndexer
+    if (!searchIndexer || entityTypes.length === 0 || !scope.tenantId) {
+      return
+    }
+
+    const uniqueEntityTypes = Array.from(new Set(
+      entityTypes
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0),
+    ))
+
+    for (const entityType of uniqueEntityTypes) {
+      if (!searchIndexer.isEntityEnabled(entityType as EntityId)) {
+        continue
+      }
+
+      const [fulltextResult, vectorResult] = await Promise.allSettled([
+        searchIndexer.reindexEntityToFulltext({
+          entityId: entityType as EntityId,
+          tenantId: scope.tenantId,
+          organizationId: scope.organizationId,
+          recreateIndex: false,
+          useQueue: true,
+        }),
+        searchIndexer.reindexEntityToVector({
+          entityId: entityType as EntityId,
+          tenantId: scope.tenantId,
+          organizationId: scope.organizationId,
+          purgeFirst: false,
+          useQueue: true,
+        }),
+      ])
+
+      const fulltextError = fulltextResult.status === 'rejected'
+        ? fulltextResult.reason
+        : (!fulltextResult.value.success ? fulltextResult.value.errors.map((error) => error.error).join('; ') : null)
+      const vectorError = vectorResult.status === 'rejected'
+        ? vectorResult.reason
+        : (!vectorResult.value.success ? vectorResult.value.errors.map((error) => error.error).join('; ') : null)
+
+      await integrationLogService.write(
+        {
+          integrationId,
+          runId,
+          level: fulltextError || vectorError ? 'warn' : 'info',
+          message: fulltextError || vectorError
+            ? `Deferred search reindex completed with warnings for ${entityType}`
+            : `Deferred search reindex enqueued for ${entityType}`,
+          payload: {
+            entityType,
+            fulltext: fulltextResult.status === 'fulfilled'
+              ? {
+                  success: fulltextResult.value.success,
+                  jobsEnqueued: fulltextResult.value.jobsEnqueued ?? 0,
+                  recordsIndexed: fulltextResult.value.recordsIndexed,
+                  errors: fulltextResult.value.errors,
+                }
+              : { success: false, error: fulltextError instanceof Error ? fulltextError.message : String(fulltextError) },
+            vector: vectorResult.status === 'fulfilled'
+              ? {
+                  success: vectorResult.value.success,
+                  jobsEnqueued: vectorResult.value.jobsEnqueued ?? 0,
+                  recordsIndexed: vectorResult.value.recordsIndexed,
+                  errors: vectorResult.value.errors,
+                }
+              : { success: false, error: vectorError instanceof Error ? vectorError.message : String(vectorError) },
+          },
+        },
+        scope,
+      )
+    }
   }
 
   async function logImportItemFailures(
@@ -289,6 +370,7 @@ export function createSyncEngine(deps: EngineDeps) {
       const mapping = await resolveMapping(adapter, run.entityType, scope)
       let processedCount = 0
       let totalCount: number | null = null
+      const deferredSearchEntityTypes = new Set<string>()
 
       try {
         for await (const batch of adapter.streamImport({
@@ -309,6 +391,11 @@ export function createSyncEngine(deps: EngineDeps) {
           const processedBatchCount = batch.processedCount ?? batch.items.length
           processedCount += processedBatchCount
           totalCount = batch.totalEstimate ?? totalCount
+          for (const entityType of batch.deferredSearchReindexEntityTypes ?? []) {
+            if (typeof entityType === 'string' && entityType.trim().length > 0) {
+              deferredSearchEntityTypes.add(entityType)
+            }
+          }
 
           await syncRunService.updateCounts(
             run.id,
@@ -356,6 +443,13 @@ export function createSyncEngine(deps: EngineDeps) {
         await finalizeRun(run.id, 'failed', scope, message)
         return
       }
+
+      await enqueueDeferredSearchReindex(
+        run.integrationId,
+        Array.from(deferredSearchEntityTypes),
+        scope,
+        run.id,
+      )
 
       await finalizeRun(run.id, 'completed', scope)
     },

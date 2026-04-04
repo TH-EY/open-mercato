@@ -38,6 +38,7 @@ import {
   ensureDictionaryEntry,
   emitQueryIndexDeleteEvents,
   emitQueryIndexUpsertEvents,
+  resolveCrudIndexerForCommand,
   type QueryIndexEventEntry,
 } from './shared'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
@@ -532,7 +533,7 @@ const createPersonCommand: CommandHandler<PersonCreateInput, { entityId: string;
         tenantId,
         organizationId,
       },
-      indexer: personCrudIndexer,
+      indexer: resolveCrudIndexerForCommand(ctx, personCrudIndexer),
       events: personCrudEvents,
     })
 
@@ -695,7 +696,7 @@ const updatePersonCommand: CommandHandler<PersonUpdateInput, { entityId: string 
         tenantId: record.tenantId,
         organizationId: record.organizationId,
       },
-      indexer: personCrudIndexer,
+      indexer: resolveCrudIndexerForCommand(ctx, personCrudIndexer),
       events: personCrudEvents,
     })
 

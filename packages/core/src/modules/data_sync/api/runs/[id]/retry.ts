@@ -6,6 +6,7 @@ import { readJsonSafe } from '@open-mercato/shared/lib/http/readJsonSafe'
 import type { ProgressService } from '../../../../progress/lib/progressService'
 import type { SyncRunService } from '../../../lib/sync-run-service'
 import { retrySyncSchema } from '../../../data/validators'
+import { resolveDefaultDataSyncBatchSize } from '../../../lib/batch-size'
 import { startDataSyncRun } from '../../../lib/start-run'
 
 const paramsSchema = z.object({ id: z.string().uuid() })
@@ -80,7 +81,7 @@ export async function POST(req: Request, ctx: { params?: Promise<{ id?: string }
       direction: previous.direction,
       cursor,
       triggeredBy: auth.sub,
-      batchSize: 100,
+      batchSize: resolveDefaultDataSyncBatchSize(previous.integrationId),
       progressJob: {
         name: `Retry data sync ${previous.integrationId} — ${previous.entityType}`,
       },

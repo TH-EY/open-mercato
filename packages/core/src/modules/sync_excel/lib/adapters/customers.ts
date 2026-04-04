@@ -2,6 +2,7 @@ import type { EntityManager } from '@mikro-orm/postgresql'
 import type { CommandBus, CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { E } from '#generated/entities.ids.generated'
 import type {
   DataMapping,
   DataSyncAdapter,
@@ -12,7 +13,8 @@ import type {
 } from '../../../data_sync/lib/adapter'
 import type { ExternalIdMappingService } from '../../../data_sync/lib/id-mapping'
 import { SyncMapping } from '../../../data_sync/data/entities'
-import { CustomerEntity } from '../../../customers/data/entities'
+import { DEFAULT_SYNC_EXCEL_BATCH_SIZE } from '../../../data_sync/lib/batch-size'
+import { CustomerAddress, CustomerEntity } from '../../../customers/data/entities'
 import { Attachment } from '../../../attachments/data/entities'
 import { SyncExcelUpload } from '../../data/entities'
 import { parseCsvDocument, type CsvPreviewRow } from '../parser'
@@ -24,6 +26,10 @@ type SyncExcelCursor = {
 }
 
 type Container = Awaited<ReturnType<typeof createRequestContainer>>
+
+const SYNC_EXCEL_HEARTBEAT_BATCH_SIZE = 5
+const SYNC_EXCEL_DEFER_SEARCH_INDEXING_URL =
+  'https://internal.openmercato.local/internal/sync_excel/import?deferSearchIndexing=1'
 
 type PersonFieldValues = {
   externalId?: string | null
@@ -38,8 +44,32 @@ type PersonFieldValues = {
   description?: string | null
 }
 
+type AddressFieldValues = {
+  name?: string | null
+  purpose?: string | null
+  companyName?: string | null
+  addressLine1?: string | null
+  addressLine2?: string | null
+  buildingNumber?: string | null
+  flatNumber?: string | null
+  city?: string | null
+  region?: string | null
+  postalCode?: string | null
+  country?: string | null
+  latitude?: number | null
+  longitude?: number | null
+}
+
+type PersonRowValues = {
+  values: PersonFieldValues
+  customFields: Record<string, unknown>
+  addressValues: AddressFieldValues
+}
+
 type BuiltPersonPayload = {
   values: PersonFieldValues
+  customFields: Record<string, unknown>
+  addressValues: AddressFieldValues
   createInput: {
     organizationId: string
     tenantId: string
@@ -52,6 +82,7 @@ type BuiltPersonPayload = {
     status?: string
     source?: string
     description?: string
+    customFields?: Record<string, unknown>
   } | null
   updateInput: {
     organizationId: string
@@ -65,6 +96,7 @@ type BuiltPersonPayload = {
     firstName?: string
     lastName?: string
     displayName?: string
+    customFields?: Record<string, unknown>
   }
   sourceIdentifier: string | null
 }
@@ -80,7 +112,18 @@ function normalizeEmail(value: unknown): string | null {
   return normalized ? normalized.toLowerCase() : null
 }
 
-function buildCommandContext(container: Container, scope: TenantScope): CommandRuntimeContext {
+function normalizeOptionalNumber(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null
+  }
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (trimmed.length === 0) return null
+  const parsed = Number(trimmed)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function buildCommandContext(container: Container, scope: TenantScope, request?: Request): CommandRuntimeContext {
   return {
     container,
     auth: null,
@@ -92,6 +135,7 @@ function buildCommandContext(container: Container, scope: TenantScope): CommandR
     },
     selectedOrganizationId: scope.organizationId,
     organizationIds: [scope.organizationId],
+    request,
   }
 }
 
@@ -115,13 +159,22 @@ export function parseCursor(value: string | null | undefined): SyncExcelCursor |
   }
 }
 
-function mapRowValues(row: CsvPreviewRow, fields: FieldMapping[]): PersonFieldValues {
+function mapRowValues(row: CsvPreviewRow, fields: FieldMapping[]): PersonRowValues {
   const values: PersonFieldValues = {}
+  const customFields: Record<string, unknown> = {}
+  const addressValues: AddressFieldValues = {}
 
   for (const field of fields) {
     if (field.mappingKind === 'ignore') continue
     const rawValue = row[field.externalField]
     if (rawValue === undefined || rawValue === null) continue
+    if (field.mappingKind === 'custom_field' || field.localField.startsWith('cf:')) {
+      const customFieldKey = field.localField.startsWith('cf:') ? field.localField.slice(3) : field.localField
+      if (customFieldKey.trim().length > 0) {
+        customFields[customFieldKey] = rawValue
+      }
+      continue
+    }
 
     if (field.localField === 'person.externalId') {
       values.externalId = normalizeOptionalString(rawValue)
@@ -161,10 +214,67 @@ function mapRowValues(row: CsvPreviewRow, fields: FieldMapping[]): PersonFieldVa
     }
     if (field.localField === 'person.description') {
       values.description = normalizeOptionalString(rawValue)
+      continue
+    }
+
+    if (field.localField === 'address.name') {
+      addressValues.name = normalizeOptionalString(rawValue)
+      continue
+    }
+    if (field.localField === 'address.purpose') {
+      addressValues.purpose = normalizeOptionalString(rawValue)
+      continue
+    }
+    if (field.localField === 'address.companyName') {
+      addressValues.companyName = normalizeOptionalString(rawValue)
+      continue
+    }
+    if (field.localField === 'address.addressLine1') {
+      addressValues.addressLine1 = normalizeOptionalString(rawValue)
+      continue
+    }
+    if (field.localField === 'address.addressLine2') {
+      addressValues.addressLine2 = normalizeOptionalString(rawValue)
+      continue
+    }
+    if (field.localField === 'address.buildingNumber') {
+      addressValues.buildingNumber = normalizeOptionalString(rawValue)
+      continue
+    }
+    if (field.localField === 'address.flatNumber') {
+      addressValues.flatNumber = normalizeOptionalString(rawValue)
+      continue
+    }
+    if (field.localField === 'address.city') {
+      addressValues.city = normalizeOptionalString(rawValue)
+      continue
+    }
+    if (field.localField === 'address.region') {
+      addressValues.region = normalizeOptionalString(rawValue)
+      continue
+    }
+    if (field.localField === 'address.postalCode') {
+      addressValues.postalCode = normalizeOptionalString(rawValue)
+      continue
+    }
+    if (field.localField === 'address.country') {
+      addressValues.country = normalizeOptionalString(rawValue)
+      continue
+    }
+    if (field.localField === 'address.latitude') {
+      addressValues.latitude = normalizeOptionalNumber(rawValue)
+      continue
+    }
+    if (field.localField === 'address.longitude') {
+      addressValues.longitude = normalizeOptionalNumber(rawValue)
     }
   }
 
-  return values
+  return {
+    values,
+    customFields,
+    addressValues,
+  }
 }
 
 function derivePersonNames(values: PersonFieldValues): { firstName: string; lastName: string; displayName: string } | null {
@@ -200,7 +310,7 @@ function derivePersonNames(values: PersonFieldValues): { firstName: string; last
 }
 
 export function buildPersonPayload(row: CsvPreviewRow, mapping: DataMapping, scope: TenantScope): BuiltPersonPayload {
-  const values = mapRowValues(row, mapping.fields)
+  const { values, customFields, addressValues } = mapRowValues(row, mapping.fields)
   const derivedNames = derivePersonNames(values)
   const sourceIdentifier = values.externalId ?? values.primaryEmail ?? values.displayName ?? null
 
@@ -222,6 +332,8 @@ export function buildPersonPayload(row: CsvPreviewRow, mapping: DataMapping, sco
   if (!derivedNames) {
     return {
       values,
+      customFields,
+      addressValues,
       createInput: null,
       updateInput,
       sourceIdentifier,
@@ -230,6 +342,8 @@ export function buildPersonPayload(row: CsvPreviewRow, mapping: DataMapping, sco
 
   return {
     values,
+    customFields,
+    addressValues,
     createInput: {
       organizationId: scope.organizationId,
       tenantId: scope.tenantId,
@@ -246,6 +360,98 @@ export function buildPersonPayload(row: CsvPreviewRow, mapping: DataMapping, sco
     updateInput,
     sourceIdentifier,
   }
+}
+
+function hasAddressValues(addressValues: AddressFieldValues): boolean {
+  return Object.values(addressValues).some((value) => value !== null && value !== undefined)
+}
+
+function buildAddressCreateInput(addressValues: AddressFieldValues, entityId: string, scope: TenantScope) {
+  if (!addressValues.addressLine1) return null
+
+  return {
+    organizationId: scope.organizationId,
+    tenantId: scope.tenantId,
+    entityId,
+    addressLine1: addressValues.addressLine1,
+    isPrimary: true,
+    ...(addressValues.name ? { name: addressValues.name } : {}),
+    ...(addressValues.purpose ? { purpose: addressValues.purpose } : {}),
+    ...(addressValues.companyName ? { companyName: addressValues.companyName } : {}),
+    ...(addressValues.addressLine2 ? { addressLine2: addressValues.addressLine2 } : {}),
+    ...(addressValues.buildingNumber ? { buildingNumber: addressValues.buildingNumber } : {}),
+    ...(addressValues.flatNumber ? { flatNumber: addressValues.flatNumber } : {}),
+    ...(addressValues.city ? { city: addressValues.city } : {}),
+    ...(addressValues.region ? { region: addressValues.region } : {}),
+    ...(addressValues.postalCode ? { postalCode: addressValues.postalCode } : {}),
+    ...(addressValues.country ? { country: addressValues.country } : {}),
+    ...(addressValues.latitude !== null && addressValues.latitude !== undefined ? { latitude: addressValues.latitude } : {}),
+    ...(addressValues.longitude !== null && addressValues.longitude !== undefined ? { longitude: addressValues.longitude } : {}),
+  }
+}
+
+async function upsertPrimaryAddress(params: {
+  entityId: string
+  addressValues: AddressFieldValues
+  scope: TenantScope
+  commandBus: CommandBus
+  commandContext: CommandRuntimeContext
+  em: EntityManager
+}): Promise<void> {
+  if (!hasAddressValues(params.addressValues)) return
+  if (!params.addressValues.addressLine1) return
+
+  const [existingPrimaryAddress] = await params.em.find(
+    CustomerAddress,
+    {
+      entity: params.entityId,
+      organizationId: params.scope.organizationId,
+      tenantId: params.scope.tenantId,
+      isPrimary: true,
+    },
+    {
+      orderBy: {
+        createdAt: 'asc',
+      },
+      limit: 1,
+    },
+  )
+
+  if (existingPrimaryAddress) {
+    await params.commandBus.execute('customers.addresses.update', {
+      input: {
+        id: existingPrimaryAddress.id,
+        isPrimary: true,
+        ...(params.addressValues.name ? { name: params.addressValues.name } : {}),
+        ...(params.addressValues.purpose ? { purpose: params.addressValues.purpose } : {}),
+        ...(params.addressValues.companyName ? { companyName: params.addressValues.companyName } : {}),
+        ...(params.addressValues.addressLine1 ? { addressLine1: params.addressValues.addressLine1 } : {}),
+        ...(params.addressValues.addressLine2 ? { addressLine2: params.addressValues.addressLine2 } : {}),
+        ...(params.addressValues.buildingNumber ? { buildingNumber: params.addressValues.buildingNumber } : {}),
+        ...(params.addressValues.flatNumber ? { flatNumber: params.addressValues.flatNumber } : {}),
+        ...(params.addressValues.city ? { city: params.addressValues.city } : {}),
+        ...(params.addressValues.region ? { region: params.addressValues.region } : {}),
+        ...(params.addressValues.postalCode ? { postalCode: params.addressValues.postalCode } : {}),
+        ...(params.addressValues.country ? { country: params.addressValues.country } : {}),
+        ...(params.addressValues.latitude !== null && params.addressValues.latitude !== undefined
+          ? { latitude: params.addressValues.latitude }
+          : {}),
+        ...(params.addressValues.longitude !== null && params.addressValues.longitude !== undefined
+          ? { longitude: params.addressValues.longitude }
+          : {}),
+      },
+      ctx: params.commandContext,
+    })
+    return
+  }
+
+  const createInput = buildAddressCreateInput(params.addressValues, params.entityId, params.scope)
+  if (!createInput) return
+
+  await params.commandBus.execute('customers.addresses.create', {
+    input: createInput,
+    ctx: params.commandContext,
+  })
 }
 
 async function loadStoredMapping(em: EntityManager, entityType: string, scope: TenantScope): Promise<DataMapping> {
@@ -377,10 +583,20 @@ async function processRow(params: {
       const updateInput = {
         id: existingId,
         ...payload.updateInput,
+        ...(Object.keys(payload.customFields).length > 0 ? { customFields: payload.customFields } : {}),
       }
       await params.commandBus.execute('customers.people.update', {
         input: updateInput,
         ctx: params.commandContext,
+      })
+
+      await upsertPrimaryAddress({
+        entityId: existingId,
+        addressValues: payload.addressValues,
+        scope: params.scope,
+        commandBus: params.commandBus,
+        commandContext: params.commandContext,
+        em: params.em,
       })
 
       if (externalId) {
@@ -408,8 +624,20 @@ async function processRow(params: {
       NonNullable<BuiltPersonPayload['createInput']>,
       { entityId: string; personId: string }
     >('customers.people.create', {
-      input: payload.createInput!,
+      input: {
+        ...payload.createInput!,
+        ...(Object.keys(payload.customFields).length > 0 ? { customFields: payload.customFields } : {}),
+      },
       ctx: params.commandContext,
+    })
+
+    await upsertPrimaryAddress({
+      entityId: commandResult.result.entityId,
+      addressValues: payload.addressValues,
+      scope: params.scope,
+      commandBus: params.commandBus,
+      commandContext: params.commandContext,
+      em: params.em,
     })
 
     if (externalId) {
@@ -493,34 +721,58 @@ export const syncExcelCustomersAdapter: DataSyncAdapter = {
       const fileBuffer = await readSyncExcelUploadBuffer(attachment)
       const document = parseCsvDocument(fileBuffer)
       const startOffset = cursor?.uploadId === upload.id ? cursor.offset : 0
-      const commandContext = buildCommandContext(container, input.scope)
+      const commandContext = buildCommandContext(
+        container,
+        input.scope,
+        typeof Request === 'function'
+          ? new Request(SYNC_EXCEL_DEFER_SEARCH_INDEXING_URL)
+          : undefined,
+      )
+      const logicalBatchSize = Math.max(1, Math.trunc(input.batchSize || DEFAULT_SYNC_EXCEL_BATCH_SIZE))
+      const heartbeatBatchSize = Math.max(1, Math.min(SYNC_EXCEL_HEARTBEAT_BATCH_SIZE, logicalBatchSize))
+      let batchIndex = 0
 
-      for (let offset = startOffset, batchIndex = 0; offset < document.rows.length; offset += input.batchSize, batchIndex += 1) {
-        const batchRows = document.rows.slice(offset, offset + input.batchSize)
-        const items: ImportItem[] = []
+      for (let offset = startOffset; offset < document.rows.length; offset += logicalBatchSize) {
+        const batchRows = document.rows.slice(offset, offset + logicalBatchSize)
 
-        for (let index = 0; index < batchRows.length; index += 1) {
-          items.push(await processRow({
-            row: batchRows[index],
-            rowNumber: offset + index + 1,
-            mapping: input.mapping,
-            scope: input.scope,
-            commandBus,
-            commandContext,
-            externalIdMappingService,
-            em,
-          }))
-        }
+        for (let subOffset = 0; subOffset < batchRows.length; subOffset += heartbeatBatchSize) {
+          const heartbeatRows = batchRows.slice(subOffset, subOffset + heartbeatBatchSize)
+          const items: ImportItem[] = []
+          const isLogicalBatchComplete = subOffset + heartbeatRows.length >= batchRows.length
 
-        const nextOffset = offset + batchRows.length
-        yield {
-          items,
-          cursor: createCursor(upload.id, nextOffset),
-          hasMore: nextOffset < document.rows.length,
-          totalEstimate: document.totalRows,
-          processedCount: batchRows.length,
-          batchIndex,
-          message: `Processed ${nextOffset} of ${document.totalRows} CSV rows`,
+          for (let index = 0; index < heartbeatRows.length; index += 1) {
+            items.push(await processRow({
+              row: heartbeatRows[index],
+              rowNumber: offset + subOffset + index + 1,
+              mapping: input.mapping,
+              scope: input.scope,
+              commandBus,
+              commandContext,
+              externalIdMappingService,
+              em,
+            }))
+          }
+
+          const nextOffset = offset + subOffset + heartbeatRows.length
+          yield {
+            items,
+            cursor: createCursor(upload.id, nextOffset),
+            hasMore: nextOffset < document.rows.length,
+            totalEstimate: document.totalRows,
+            processedCount: heartbeatRows.length,
+            refreshCoverageEntityTypes: isLogicalBatchComplete
+              ? [
+                  E.customers.customer_person_profile,
+                  E.customers.customer_address,
+                ]
+              : undefined,
+            deferredSearchReindexEntityTypes: isLogicalBatchComplete
+              ? [E.customers.customer_person_profile]
+              : undefined,
+            batchIndex,
+            message: `Processed ${nextOffset} of ${document.totalRows} CSV rows`,
+          }
+          batchIndex += 1
         }
       }
 

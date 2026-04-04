@@ -6,6 +6,7 @@ import { readJsonSafe } from '@open-mercato/shared/lib/http/readJsonSafe'
 import type { ProgressService } from '@open-mercato/core/modules/progress/lib/progressService'
 import type { SyncRunService } from '@open-mercato/core/modules/data_sync/lib/sync-run-service'
 import { startDataSyncRun } from '@open-mercato/core/modules/data_sync/lib/start-run'
+import { DEFAULT_SYNC_EXCEL_BATCH_SIZE } from '@open-mercato/core/modules/data_sync/lib/batch-size'
 import { SyncMapping } from '@open-mercato/core/modules/data_sync/data/entities'
 import type { CredentialsService } from '@open-mercato/core/modules/integrations/lib/credentials-service'
 import type { IntegrationStateService } from '@open-mercato/core/modules/integrations/lib/state-service'
@@ -121,7 +122,7 @@ export async function POST(request: Request) {
       direction: 'import',
       cursor: null,
       triggeredBy: auth.sub,
-      batchSize: parsedPayload.data.batchSize ?? 100,
+      batchSize: parsedPayload.data.batchSize ?? DEFAULT_SYNC_EXCEL_BATCH_SIZE,
       progressJob: {
         jobType: 'sync_excel:import',
         name: `CSV import — ${parsedPayload.data.entityType}`,

@@ -12,6 +12,8 @@ export default async function handle(payload: any, ctx: { resolve: <T=any>(name:
   if (!entityType || !recordId) return
   let organizationId = payload?.organizationId ?? null
   let tenantId = payload?.tenantId ?? null
+  const suppressSearchDelete = payload?.suppressSearchDelete === true
+  const suppressCoverageRefresh = payload?.suppressCoverageRefresh === true
   const coverageDelayMs = typeof payload?.coverageDelayMs === 'number' ? payload.coverageDelayMs : undefined
   // Fill missing org from base table if needed
   if (organizationId == null || tenantId == null) {
@@ -62,7 +64,7 @@ export default async function handle(payload: any, ctx: { resolve: <T=any>(name:
       }
     }
 
-    const shouldRefreshCoverage = coverageDelayMs === undefined || coverageDelayMs >= 0
+    const shouldRefreshCoverage = !suppressCoverageRefresh && (coverageDelayMs === undefined || coverageDelayMs >= 0)
     if (shouldRefreshCoverage) {
       const delay = coverageDelayMs ?? 0
       try {
@@ -75,11 +77,12 @@ export default async function handle(payload: any, ctx: { resolve: <T=any>(name:
         })
       } catch {}
     }
-    // Emit search delete event
-    try {
-      const bus = ctx.resolve<any>('eventBus')
-      await bus.emitEvent('search.delete_record', { entityId: entityType, recordId, organizationId, tenantId })
-    } catch {}
+    if (!suppressSearchDelete) {
+      try {
+        const bus = ctx.resolve<any>('eventBus')
+        await bus.emitEvent('search.delete_record', { entityId: entityType, recordId, organizationId, tenantId })
+      } catch {}
+    }
   } catch (error) {
     await recordIndexerError(
       { em },

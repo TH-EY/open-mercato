@@ -13,6 +13,8 @@ export default async function handle(payload: any, ctx: { resolve: <T=any>(name:
   let organizationId = payload?.organizationId ?? null
   let tenantId = payload?.tenantId ?? null
   const suppressCoverage = payload?.suppressCoverage === true
+  const suppressVectorize = payload?.suppressVectorize === true
+  const suppressSearchIndexing = payload?.suppressSearchIndexing === true
   const coverageDelayMs = typeof payload?.coverageDelayMs === 'number' ? payload.coverageDelayMs : undefined
   // Fill missing scope from base table if needed
   if (organizationId == null || tenantId == null) {
@@ -74,15 +76,18 @@ export default async function handle(payload: any, ctx: { resolve: <T=any>(name:
       }
     }
     // Kick off secondary pass (vectorize) asynchronously
-    try {
-      const bus = ctx.resolve<any>('eventBus')
-      await bus.emitEvent('query_index.vectorize_one', { entityType, recordId, organizationId, tenantId })
-    } catch {}
-    // Emit search indexing event
-    try {
-      const bus = ctx.resolve<any>('eventBus')
-      await bus.emitEvent('search.index_record', { entityId: entityType, recordId, organizationId, tenantId })
-    } catch {}
+    if (!suppressVectorize) {
+      try {
+        const bus = ctx.resolve<any>('eventBus')
+        await bus.emitEvent('query_index.vectorize_one', { entityType, recordId, organizationId, tenantId })
+      } catch {}
+    }
+    if (!suppressSearchIndexing) {
+      try {
+        const bus = ctx.resolve<any>('eventBus')
+        await bus.emitEvent('search.index_record', { entityId: entityType, recordId, organizationId, tenantId })
+      } catch {}
+    }
   } catch (error) {
     await recordIndexerError(
       { em },

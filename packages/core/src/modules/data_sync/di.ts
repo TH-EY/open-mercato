@@ -1,5 +1,6 @@
 import { asFunction, asValue } from 'awilix'
 import type { EntityManager } from '@mikro-orm/postgresql'
+import type { SearchIndexer } from '@open-mercato/search'
 import type { AppContainer } from '@open-mercato/shared/lib/di/container'
 import type { CredentialsService } from '../integrations/lib/credentials-service'
 import type { IntegrationLogService } from '../integrations/lib/log-service'
@@ -15,6 +16,7 @@ type Cradle = {
   integrationCredentialsService: CredentialsService
   integrationLogService: IntegrationLogService
   progressService: ProgressService
+  searchIndexer?: SearchIndexer
   schedulerService?: {
     register: (registration: Record<string, unknown>) => Promise<void>
     unregister: (scheduleId: string) => Promise<void>
@@ -26,7 +28,7 @@ export function register(container: AppContainer) {
     externalIdMappingService: asFunction(({ em }: Cradle) => createExternalIdMappingService(em)).scoped().proxy(),
     dataSyncRunService: asFunction(({ em }: Cradle) => createSyncRunService(em)).scoped().proxy(),
     dataSyncScheduleService: asFunction(({ em, schedulerService }: Cradle) => createSyncScheduleService(em, schedulerService)).scoped().proxy(),
-    dataSyncEngine: asFunction(({ em, dataSyncRunService, integrationCredentialsService, integrationLogService, progressService }: Cradle & {
+    dataSyncEngine: asFunction(({ em, dataSyncRunService, integrationCredentialsService, integrationLogService, progressService, searchIndexer }: Cradle & {
       dataSyncRunService: ReturnType<typeof createSyncRunService>
     }) => createSyncEngine({
       em,
@@ -34,6 +36,7 @@ export function register(container: AppContainer) {
       integrationCredentialsService,
       integrationLogService,
       progressService,
+      searchIndexer: searchIndexer ?? null,
     })).scoped().proxy(),
 
     SyncRun: asValue(SyncRun),

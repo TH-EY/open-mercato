@@ -287,4 +287,136 @@ describe('data sync engine import item failures', () => {
       organizationId: 'org-1',
     })
   })
+
+  it('enqueues deferred fulltext and vector reindex once after import completion', async () => {
+    const adapter: DataSyncAdapter = {
+      providerKey: 'excel',
+      direction: 'import',
+      supportedEntities: ['customers.person'],
+      getMapping: jest.fn(async () => ({
+        entityType: 'customers.person',
+        fields: [],
+        matchStrategy: 'externalId',
+      })),
+      streamImport: async function* () {
+        yield {
+          items: [
+            {
+              externalId: 'person-1',
+              action: 'create',
+              data: { localId: 'person-1' },
+            },
+          ],
+          processedCount: 1,
+          cursor: 'cursor-1',
+          hasMore: false,
+          batchIndex: 0,
+          deferredSearchReindexEntityTypes: ['customers:customer_person_profile'],
+        }
+      },
+    }
+
+    mockGetIntegration.mockReturnValue({ providerKey: 'excel' })
+    mockGetDataSyncAdapter.mockReturnValue(adapter)
+
+    const syncRunService = {
+      getRun: jest.fn(async () => ({
+        id: 'run-3',
+        integrationId: 'sync_excel',
+        entityType: 'customers.person',
+        direction: 'import',
+        status: 'pending',
+        cursor: null,
+        progressJobId: 'job-3',
+      })),
+      markStatus: jest
+        .fn()
+        .mockResolvedValueOnce({
+          id: 'run-3',
+          integrationId: 'sync_excel',
+          entityType: 'customers.person',
+          direction: 'import',
+          status: 'running',
+          progressJobId: 'job-3',
+        })
+        .mockResolvedValueOnce({
+          id: 'run-3',
+          integrationId: 'sync_excel',
+          entityType: 'customers.person',
+          direction: 'import',
+          status: 'completed',
+          progressJobId: 'job-3',
+          createdCount: 1,
+          updatedCount: 0,
+          skippedCount: 0,
+          failedCount: 0,
+          batchesCompleted: 1,
+        }),
+      updateCounts: jest.fn(async () => undefined),
+      updateCursor: jest.fn(async () => undefined),
+    } as unknown as SyncRunService
+
+    const integrationCredentialsService = {
+      resolve: jest.fn(async () => ({})),
+    } as unknown as CredentialsService
+
+    const integrationLogService = {
+      write: jest.fn(async () => undefined),
+    } as unknown as IntegrationLogService
+
+    const progressService = {
+      startJob: jest.fn(async () => undefined),
+      isCancellationRequested: jest.fn(async () => false),
+      updateProgress: jest.fn(async () => undefined),
+      completeJob: jest.fn(async () => undefined),
+    } as unknown as ProgressService
+
+    const searchIndexer = {
+      isEntityEnabled: jest.fn(() => true),
+      reindexEntityToFulltext: jest.fn(async () => ({
+        success: true,
+        entitiesProcessed: 1,
+        recordsIndexed: 25,
+        jobsEnqueued: 1,
+        errors: [],
+      })),
+      reindexEntityToVector: jest.fn(async () => ({
+        success: true,
+        entitiesProcessed: 1,
+        recordsIndexed: 25,
+        jobsEnqueued: 1,
+        errors: [],
+      })),
+    }
+
+    const engine = createSyncEngine({
+      em: {} as EntityManager,
+      syncRunService,
+      integrationCredentialsService,
+      integrationLogService,
+      progressService,
+      searchIndexer: searchIndexer as any,
+    })
+
+    await engine.runImport('run-3', 25, {
+      organizationId: 'org-1',
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+    })
+
+    expect(searchIndexer.reindexEntityToFulltext).toHaveBeenCalledWith({
+      entityId: 'customers:customer_person_profile',
+      tenantId: 'tenant-1',
+      organizationId: 'org-1',
+      recreateIndex: false,
+      useQueue: true,
+    })
+    expect(searchIndexer.reindexEntityToVector).toHaveBeenCalledWith({
+      entityId: 'customers:customer_person_profile',
+      tenantId: 'tenant-1',
+      organizationId: 'org-1',
+      purgeFirst: false,
+      useQueue: true,
+    })
+  })
 })

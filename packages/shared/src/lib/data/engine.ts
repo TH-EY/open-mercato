@@ -472,6 +472,16 @@ export class DefaultDataEngine implements DataEngine {
         } catch {
           // non-blocking
         }
+
+        const suppressCoverageRefresh = enrichedPayload.suppressCoverageRefresh === true
+        if (!suppressCoverageRefresh && shouldTriggerCoverageRefresh(indexer.entityType, ctx.identifiers.tenantId ?? null)) {
+          void bus.emitEvent('query_index.coverage.refresh', {
+            entityType: indexer.entityType,
+            tenantId: ctx.identifiers.tenantId ?? null,
+            organizationId: null,
+            delayMs: 0,
+          }).catch(() => undefined)
+        }
       } else {
         const payload = indexer.buildUpsertPayload
           ? indexer.buildUpsertPayload(ctx)
@@ -489,15 +499,16 @@ export class DefaultDataEngine implements DataEngine {
         } catch {
           // non-blocking
         }
-      }
 
-      if (shouldTriggerCoverageRefresh(indexer.entityType, ctx.identifiers.tenantId ?? null)) {
-        void bus.emitEvent('query_index.coverage.refresh', {
-          entityType: indexer.entityType,
-          tenantId: ctx.identifiers.tenantId ?? null,
-          organizationId: null,
-          delayMs: 0,
-        }).catch(() => undefined)
+        const suppressCoverageRefresh = enrichedPayload.suppressCoverageRefresh === true
+        if (!suppressCoverageRefresh && shouldTriggerCoverageRefresh(indexer.entityType, ctx.identifiers.tenantId ?? null)) {
+          void bus.emitEvent('query_index.coverage.refresh', {
+            entityType: indexer.entityType,
+            tenantId: ctx.identifiers.tenantId ?? null,
+            organizationId: null,
+            delayMs: 0,
+          }).catch(() => undefined)
+        }
       }
     }
   }

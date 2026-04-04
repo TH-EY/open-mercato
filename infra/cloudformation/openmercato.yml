@@ -537,6 +537,14 @@ Resources:
         - !Ref PrivateSubnet1
         - !Ref PrivateSubnet2
 
+  RedisParameterGroup:
+    Type: AWS::ElastiCache::ParameterGroup
+    Properties:
+      CacheParameterGroupFamily: redis7
+      Description: OpenMercato Redis parameter group
+      Properties:
+        maxmemory-policy: noeviction
+
   RedisReplicationGroup:
     Type: AWS::ElastiCache::ReplicationGroup
     Properties:
@@ -550,6 +558,7 @@ Resources:
       AtRestEncryptionEnabled: true
       TransitEncryptionEnabled: true
       AuthToken: !Sub '{{resolve:secretsmanager:${RedisAuthTokenSecret}:SecretString}}'
+      CacheParameterGroupName: !Ref RedisParameterGroup
       CacheSubnetGroupName: !Ref RedisSubnetGroup
       SecurityGroupIds:
         - !Ref RedisSecurityGroup
@@ -1116,9 +1125,19 @@ Resources:
               Value: 'true'
             - Name: TENANT_DATA_ENCRYPTION
               Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SSO
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SECURITY
+              Value: 'true'
           Secrets:
             - Name: DATABASE_URL
               ValueFrom: !Ref DatabaseUrlSecret
+            - Name: REDIS_URL
+              ValueFrom: !Ref RedisUrlSecret
+            - Name: QUEUE_REDIS_URL
+              ValueFrom: !Ref RedisUrlSecret
             - Name: CACHE_REDIS_URL
               ValueFrom: !Ref RedisUrlSecret
             - Name: JWT_SECRET
@@ -1160,9 +1179,13 @@ Resources:
         - TargetGroupArn: !Ref ExistingWebTargetGroupArn
           ContainerName: app
           ContainerPort: 3000
+      HealthCheckGracePeriodSeconds: 120
       DeploymentConfiguration:
         MinimumHealthyPercent: 100
         MaximumPercent: 200
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
       EnableExecuteCommand: true
 
   TheyLoadBalancerTargetSyncBootstrap:
@@ -1222,9 +1245,19 @@ Resources:
               Value: 'false'
             - Name: MEILISEARCH_HOST
               Value: http://meilisearch.openmercato.internal:7700
+            - Name: OM_ENABLE_ENTERPRISE_MODULES
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SSO
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SECURITY
+              Value: 'true'
           Secrets:
             - Name: DATABASE_URL
               ValueFrom: !Ref DatabaseUrlSecret
+            - Name: REDIS_URL
+              ValueFrom: !Ref RedisUrlSecret
+            - Name: QUEUE_REDIS_URL
+              ValueFrom: !Ref RedisUrlSecret
             - Name: CACHE_REDIS_URL
               ValueFrom: !Ref RedisUrlSecret
             - Name: JWT_SECRET
@@ -1321,9 +1354,19 @@ Resources:
               Value: 'true'
             - Name: DB_SSL_REJECT_UNAUTHORIZED
               Value: 'false'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SSO
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SECURITY
+              Value: 'true'
           Secrets:
             - Name: DATABASE_URL
               ValueFrom: !Ref DatabaseUrlSecret
+            - Name: REDIS_URL
+              ValueFrom: !Ref RedisUrlSecret
+            - Name: QUEUE_REDIS_URL
+              ValueFrom: !Ref RedisUrlSecret
             - Name: CACHE_REDIS_URL
               ValueFrom: !Ref RedisUrlSecret
             - Name: JWT_SECRET
