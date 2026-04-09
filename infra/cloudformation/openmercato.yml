@@ -1209,6 +1209,14 @@ Resources:
       RuntimePlatform:
         CpuArchitecture: ARM64
         OperatingSystemFamily: LINUX
+      Volumes:
+        - Name: app-storage
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref AppStorageEfs
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref AppStorageEfsAccessPoint
+              IAM: ENABLED
       ContainerDefinitions:
         - Name: worker
           Image: !Ref AppImage
@@ -1217,6 +1225,9 @@ Resources:
             - sh
             - -c
             - yarn mercato queue worker --all
+          MountPoints:
+            - SourceVolume: app-storage
+              ContainerPath: /app/apps/mercato/storage
           Environment:
             - Name: NODE_ENV
               Value: production
@@ -1264,6 +1275,9 @@ Resources:
 
   WorkerService:
     Type: AWS::ECS::Service
+    DependsOn:
+      - AppStorageEfsMountTarget1
+      - AppStorageEfsMountTarget2
     Properties:
       ServiceName: openmercato-worker-worker
       Cluster: !Ref EcsCluster

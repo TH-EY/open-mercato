@@ -66,10 +66,16 @@ This keeps the architecture aligned with upstream `SPEC-045b` and avoids a stand
 2. Provider stores the file via `attachments` and persists a `SyncExcelUpload` record
 3. Provider returns headers, sample rows, row count, and suggested mapping
 4. Admin confirms mapping and starts import
-5. Provider persists/updates `SyncMapping`, creates a `SyncRun`, links it to the upload session, and enqueues a normal `data_sync` run
+5. Provider persists/updates `SyncMapping`, reads the stored upload while still on the web runtime, creates a `SyncRun`, links it to the upload session, and enqueues a normal `data_sync` run
 6. `data_sync` worker invokes the `sync_excel` adapter with `runId`
 7. Adapter resolves upload session state, parses the CSV document, and streams imports to `customers.person`
 8. Progress and cancellation continue to flow through existing `data_sync` / `progress` contracts
+
+### Runtime storage hardening
+
+- `sync_excel` imports must not depend on worker-local ephemeral storage
+- the import route now inlines the uploaded CSV payload into the persisted cursor before handing work to async workers
+- AWS web and worker runtimes should still share `/app/apps/mercato/storage` so attachment-backed recovery and diagnostics remain consistent across processes
 
 ## Data Models
 

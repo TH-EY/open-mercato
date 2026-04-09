@@ -66,5 +66,19 @@ export async function readSyncExcelUploadBuffer(attachment: Attachment): Promise
     attachment.storagePath,
     attachment.storageDriver,
   )
-  return fs.readFile(absolutePath)
+  try {
+    return await fs.readFile(absolutePath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
+      const wrapped = new Error(
+        `Sync Excel upload attachment file is unavailable at runtime (${absolutePath}). ` +
+          `The attachment exists in the database, but its storage path cannot be read by the current process. ` +
+          `Ensure all runtimes that execute sync_excel imports share attachment storage for partition "${attachment.partitionCode}".`,
+      ) as Error & { cause?: unknown }
+      wrapped.cause = error
+      throw wrapped
+    }
+
+    throw error
+  }
 }
