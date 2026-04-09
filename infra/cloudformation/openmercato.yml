@@ -89,6 +89,11 @@ Parameters:
     Type: String
     Default: cache.t4g.micro
 
+  ExistingRedisParameterGroupName:
+    Type: String
+    Description: Redis parameter group name managed outside this stack for DEMO reconciliation.
+    Default: openmercato-redis-temp-20260408
+
   WebCpu:
     Type: Number
     Default: 512
@@ -537,14 +542,6 @@ Resources:
         - !Ref PrivateSubnet1
         - !Ref PrivateSubnet2
 
-  RedisParameterGroup:
-    Type: AWS::ElastiCache::ParameterGroup
-    Properties:
-      CacheParameterGroupFamily: redis7
-      Description: OpenMercato Redis parameter group
-      Properties:
-        maxmemory-policy: noeviction
-
   RedisReplicationGroup:
     Type: AWS::ElastiCache::ReplicationGroup
     Properties:
@@ -558,7 +555,7 @@ Resources:
       AtRestEncryptionEnabled: true
       TransitEncryptionEnabled: true
       AuthToken: !Sub '{{resolve:secretsmanager:${RedisAuthTokenSecret}:SecretString}}'
-      CacheParameterGroupName: !Ref RedisParameterGroup
+      CacheParameterGroupName: !Ref ExistingRedisParameterGroupName
       CacheSubnetGroupName: !Ref RedisSubnetGroup
       SecurityGroupIds:
         - !Ref RedisSecurityGroup
@@ -631,7 +628,7 @@ Resources:
                       password = urllib.parse.quote_plus(creds['password'])
                       username = creds['username']
 
-                      url = f"postgres://{username}:{password}@{db_endpoint}:{db_port}/{db_name}"
+                      url = f"postgres://{username}:{password}@{db_endpoint}:{db_port}/{db_name}?sslmode=require"
                       secrets.put_secret_value(SecretId=target_secret_id, SecretString=url)
                       cfnresponse.send(event, context, cfnresponse.SUCCESS, {'DatabaseUrl': 'composed'})
 
@@ -1109,6 +1106,8 @@ Resources:
               Value: !Sub '--max-old-space-size=${WebMemory}'
             - Name: CACHE_STRATEGY
               Value: redis
+            - Name: QUEUE_STRATEGY
+              Value: async
             - Name: DB_SSL
               Value: 'true'
             - Name: DB_SSL_REJECT_UNAUTHORIZED
@@ -1165,6 +1164,7 @@ Resources:
       ServiceName: openmercato-web
       Cluster: !Ref EcsCluster
       TaskDefinition: !Ref WebTaskDefinition
+      AvailabilityZoneRebalancing: DISABLED
       DesiredCount: 1
       LaunchType: FARGATE
       NetworkConfiguration:
@@ -1181,11 +1181,8 @@ Resources:
           ContainerPort: 3000
       HealthCheckGracePeriodSeconds: 120
       DeploymentConfiguration:
-        MinimumHealthyPercent: 100
-        MaximumPercent: 200
-        DeploymentCircuitBreaker:
-          Enable: true
-          Rollback: true
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
       EnableExecuteCommand: true
 
   TheyLoadBalancerTargetSyncBootstrap:
@@ -1279,6 +1276,7 @@ Resources:
       ServiceName: openmercato-worker-worker
       Cluster: !Ref EcsCluster
       TaskDefinition: !Ref WorkerTaskDefinition
+      AvailabilityZoneRebalancing: DISABLED
       DesiredCount: 1
       LaunchType: FARGATE
       NetworkConfiguration:
@@ -1289,6 +1287,9 @@ Resources:
           SecurityGroups:
             - !Ref AppSecurityGroup
           AssignPublicIp: ENABLED
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
 
   # ---------------------------------------------------------------------------
   # ECS - Meilisearch Service

@@ -4,6 +4,26 @@
 
 Recurring patterns and mistakes to avoid. Review at session start.
 
+## Helper ECS tasks that can run queue workers must share the app storage mount and current app image
+
+**Context**: A production `sync_excel` UI import uploaded the CSV into the shared attachment storage, then failed with `ENOENT` only on some runs. The proper `openmercato-worker-worker` service had the EFS mount, but an ad-hoc `openmercato-ops-helper` task was also consuming `data-sync-import` and had neither the storage mount nor the latest app image.
+
+**Problem**: BullMQ treated the helper task as a valid competing consumer, so whichever task dequeued the job first processed it. When the stale helper task won, it could not read `/app/apps/mercato/storage/...` and the import failed. The stale helper image also reintroduced already-fixed SSL event bridge noise.
+
+**Rule**: Any ECS helper/ops task family that may ever be used to run application queue workers must use the same storage mount and current application image as the real worker service. Before leaving any ad-hoc queue worker task running, verify it is on the intended task definition revision and has `/app/apps/mercato/storage` mounted.
+
+**Applies to**: AWS ECS helper task definitions, ad-hoc `aws ecs run-task` operational flows, queue worker probes, and any future maintenance task family that can override its command to run `mercato ... worker ...`.
+
+## Persistent event subscribers must never be registered as in-process listeners
+
+**Context**: Workflow event triggers were declared with `persistent: true`, but the event bus still registered them into the in-memory listener map during bootstrap. As a result, `auth.login.success` triggered workflow evaluation synchronously on the web process and caused `Knex: Timeout acquiring a connection` errors.
+
+**Problem**: The runtime violated the documented contract for persistent subscribers. Heavy wildcard subscribers ran on request threads instead of through the events worker, and the async events worker also failed to honor wildcard matching for persistent subscribers.
+
+**Rule**: Event-bus registration must split ephemeral and persistent subscribers. Ephemeral subscribers may run in-process; persistent subscribers must only enqueue and be dispatched by the events worker. Any worker-side subscriber matcher must preserve wildcard semantics (`*`, `module.*`, etc.) and pass `eventName` through handler context.
+
+**Applies to**: `packages/events/src/bus.ts`, `packages/events/src/modules/events/workers/events.worker.ts`, generated module subscriber metadata, and any future event-system refactor.
+
 ## We've got centralized helpers for extracting `UndoPayload`
 
 Centralize shared command utilities like undo extraction in `packages/shared/src/lib/commands/undo.ts` and reuse `extractUndoPayload`/`UndoPayload` instead of duplicating helpers or cross-importing module code.
