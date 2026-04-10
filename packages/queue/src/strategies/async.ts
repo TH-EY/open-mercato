@@ -3,7 +3,13 @@ import { getRedisUrl, parseRedisUrl } from '@open-mercato/shared/lib/redis/conne
 
 // BullMQ interface types - we define the shape we use to maintain type safety
 // while keeping bullmq as an optional peer dependency
-type ConnectionOptions = { host?: string; port?: number; password?: string; db?: number }
+type ConnectionOptions = {
+  host?: string
+  port?: number
+  password?: string
+  db?: number
+  tls?: Record<string, never>
+}
 
 interface BullQueueInterface<T> {
   add: (

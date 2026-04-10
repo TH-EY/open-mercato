@@ -1,4 +1,5 @@
 import { Client, Pool } from 'pg'
+import { getSslConfig } from '@open-mercato/shared/lib/db/ssl'
 import type { EmitOptions, EventPayload } from './types'
 
 const BRIDGE_CHANNEL = 'om_event_bridge'
@@ -36,8 +37,10 @@ function getPublisherPool(): InstanceType<typeof Pool> | null {
     publisherPool = null
     return null
   }
+  const ssl = getSslConfig()
   publisherPool = new Pool({
     connectionString,
+    ssl,
     max: 2,
   })
   return publisherPool
@@ -87,7 +90,10 @@ async function ensureCrossProcessListener(): Promise<void> {
   if (!connectionString) return
 
   listenerConnectPromise = (async () => {
-    const client = new Client({ connectionString })
+    const client = new Client({
+      connectionString,
+      ssl: getSslConfig(),
+    })
 
     client.on('notification', (message: PgNotificationMessage) => {
       if (message.channel !== BRIDGE_CHANNEL || !message.payload) return
