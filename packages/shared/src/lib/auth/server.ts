@@ -196,7 +196,13 @@ async function resolveCanonicalInteractiveAuthContext(auth: AuthContext): Promis
     const container = await createRequestContainer()
     const em = container.resolve('em') as EntityManager
     return await resolveCanonicalStaffAuthContext(em, auth)
-  } catch {
+  } catch (error) {
+    console.error('auth.canonical_context_failed', {
+      userId: auth.sub,
+      tenantId: auth.tenantId ?? null,
+      orgId: auth.orgId ?? null,
+      message: error instanceof Error ? error.message : String(error),
+    })
     return null
   }
 }

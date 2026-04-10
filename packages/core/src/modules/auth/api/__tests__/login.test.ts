@@ -15,10 +15,14 @@ const authServiceMock = {
   createSession: jest.fn(async () => ({ token: 'session-token' })),
 }
 
+const eventBusMock = {
+  emitEvent: jest.fn(async () => undefined),
+}
+
 const containerMock = {
   resolve: jest.fn((name: string) => {
     if (name === 'authService') return authServiceMock
-    if (name === 'eventBus') return { emitEvent: jest.fn(async () => undefined) }
+    if (name === 'eventBus') return eventBusMock
     if (name === 'em') return {}
     return null
   }),
@@ -43,9 +47,21 @@ function makeFormData(data: Record<string, string>) {
 }
 
 describe('POST /api/auth/login with custom route interceptors', () => {
+  const originalWarmupFlag = process.env.QUERY_INDEX_COVERAGE_WARMUP_ON_LOGIN
+
+  afterAll(() => {
+    if (originalWarmupFlag === undefined) {
+      delete process.env.QUERY_INDEX_COVERAGE_WARMUP_ON_LOGIN
+      return
+    }
+    process.env.QUERY_INDEX_COVERAGE_WARMUP_ON_LOGIN = originalWarmupFlag
+  })
+
   beforeEach(() => {
     registerApiInterceptors([])
     jest.clearAllMocks()
+    eventBusMock.emitEvent.mockClear()
+    delete process.env.QUERY_INDEX_COVERAGE_WARMUP_ON_LOGIN
   })
 
   test('returns unchanged login response when no interceptor matches', async () => {
@@ -147,5 +163,38 @@ describe('POST /api/auth/login with custom route interceptors', () => {
     const setCookie = res.headers.get('set-cookie') ?? ''
     expect(setCookie).toContain('auth_token=pending-token')
     expect(setCookie).not.toContain('session_token=')
+  })
+
+  test('skips coverage warmup when QUERY_INDEX_COVERAGE_WARMUP_ON_LOGIN is false', async () => {
+    process.env.QUERY_INDEX_COVERAGE_WARMUP_ON_LOGIN = 'false'
+
+    const req = new Request('http://localhost/api/auth/login', {
+      method: 'POST',
+      body: makeFormData({ email: 'user@example.com', password: 'secret' }),
+    })
+
+    const res = await POST(req)
+
+    expect(res.status).toBe(200)
+    expect(eventBusMock.emitEvent).not.toHaveBeenCalledWith(
+      'query_index.coverage.warmup',
+      expect.anything(),
+    )
+  })
+
+  test('emits coverage warmup when QUERY_INDEX_COVERAGE_WARMUP_ON_LOGIN is true', async () => {
+    process.env.QUERY_INDEX_COVERAGE_WARMUP_ON_LOGIN = 'true'
+
+    const req = new Request('http://localhost/api/auth/login', {
+      method: 'POST',
+      body: makeFormData({ email: 'user@example.com', password: 'secret' }),
+    })
+
+    const res = await POST(req)
+
+    expect(res.status).toBe(200)
+    expect(eventBusMock.emitEvent).toHaveBeenCalledWith('query_index.coverage.warmup', {
+      tenantId,
+    })
   })
 })

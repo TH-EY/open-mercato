@@ -82,6 +82,42 @@ describe('auth server integrity checks', () => {
     expect(resolveCanonicalStaffAuthContext).toHaveBeenCalledWith(em, auth)
   })
 
+  it('logs canonical auth resolution failures before returning invalid auth', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const { getAuthFromRequest, resolveAuthFromRequestDetailed } = await import('@open-mercato/shared/lib/auth/server')
+      const auth = {
+        sub: '11111111-1111-4111-8111-111111111111',
+        tenantId: '22222222-2222-4222-8222-222222222222',
+        orgId: '33333333-3333-4333-8333-333333333333',
+        roles: [],
+      }
+
+      verifyJwt.mockReturnValue(auth)
+      createRequestContainer.mockRejectedValue(new Error('pool exhausted'))
+
+      const request = new Request('https://example.test/api/test', {
+        headers: {
+          cookie: 'auth_token=jwt-token',
+        },
+      })
+
+      await expect(getAuthFromRequest(request)).resolves.toBeNull()
+      await expect(resolveAuthFromRequestDetailed(request)).resolves.toEqual({ auth: null, status: 'invalid' })
+      expect(errorSpy).toHaveBeenCalledWith(
+        'auth.canonical_context_failed',
+        expect.objectContaining({
+          userId: auth.sub,
+          tenantId: auth.tenantId,
+          orgId: auth.orgId,
+          message: 'pool exhausted',
+        }),
+      )
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
   it('replaces stale JWT roles with canonical roles from the database', async () => {
     const { getAuthFromRequest } = await import('@open-mercato/shared/lib/auth/server')
     const jwtAuth = {

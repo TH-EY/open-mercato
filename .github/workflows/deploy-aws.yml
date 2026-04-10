@@ -1,4 +1,4 @@
-name: Deploy to AWS ECS
+name: Deploy to AWS via CloudFormation
 
 on:
   workflow_dispatch:
@@ -16,10 +16,11 @@ concurrency:
 
 env:
   AWS_REGION: eu-west-2
+  STACK_NAME: openmercato
 
 jobs:
   build-and-deploy:
-    name: Build & Deploy
+    name: Build, Deploy & Smoke Test
     runs-on: ubuntu-24.04-arm
     environment: ${{ github.event.inputs.environment }}
     permissions:
@@ -47,76 +48,99 @@ jobs:
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push Docker image
-        id: build
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image metadata
+        id: image
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY_NAME }}
-          IMAGE_TAG: ${{ github.sha }}
         run: |
+          IMAGE_TAG="${GITHUB_SHA}"
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
-          docker build \
-            -t "${IMAGE_URI}" \
-            -t "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
-            .
-          docker push "${IMAGE_URI}"
-          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
-          echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+          echo "tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
-      - name: Download current web task definition
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.uri }}
+            ${{ steps.ecr-login.outputs.registry }}/${{ vars.ECR_REPOSITORY_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy CloudFormation stack
+        env:
+          APP_IMAGE: ${{ steps.image.outputs.uri }}
+          JWT_SECRET_ARN: ${{ vars.JWT_SECRET_ARN != '' && vars.JWT_SECRET_ARN || secrets.JWT_SECRET_ARN }}
+          ENCRYPTION_KEY_ARN: ${{ vars.ENCRYPTION_KEY_ARN != '' && vars.ENCRYPTION_KEY_ARN || secrets.ENCRYPTION_KEY_ARN }}
+          REDIS_PARAMETER_GROUP_NAME: ${{ vars.REDIS_PARAMETER_GROUP_NAME != '' && vars.REDIS_PARAMETER_GROUP_NAME || secrets.REDIS_PARAMETER_GROUP_NAME }}
+          CFN_S3_BUCKET: ${{ vars.CFN_S3_BUCKET }}
+          CFN_S3_PREFIX: ${{ vars.CFN_S3_PREFIX }}
+        run: bash ./infra/cloudformation/deploy.sh deploy
+
+      - name: Resolve stack outputs
+        id: stack
         run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ vars.ECS_WEB_TASK_FAMILY }} \
-            --query taskDefinition \
-            > web-task-def.json
+          APPLICATION_URL="$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApplicationUrl'].OutputValue | [0]" \
+            --output text)"
+          CLUSTER_NAME="$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ClusterName'].OutputValue | [0]" \
+            --output text)"
+          WEB_SERVICE_NAME="$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='WebServiceName'].OutputValue | [0]" \
+            --output text)"
+          WORKER_SERVICE_NAME="$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='WorkerServiceName'].OutputValue | [0]" \
+            --output text)"
 
-      - name: Update web task definition with new image
-        id: web-task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: web-task-def.json
-          container-name: app
-          image: ${{ steps.build.outputs.image }}
+          test -n "${APPLICATION_URL}" && test "${APPLICATION_URL}" != "None"
+          test -n "${CLUSTER_NAME}" && test "${CLUSTER_NAME}" != "None"
+          test -n "${WEB_SERVICE_NAME}" && test "${WEB_SERVICE_NAME}" != "None"
+          test -n "${WORKER_SERVICE_NAME}" && test "${WORKER_SERVICE_NAME}" != "None"
 
-      - name: Deploy web service
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.web-task-def.outputs.task-definition }}
-          service: ${{ vars.ECS_WEB_SERVICE_NAME }}
-          cluster: ${{ vars.ECS_CLUSTER_NAME }}
-          wait-for-service-stability: true
-          wait-for-minutes: 15
+          echo "application_url=${APPLICATION_URL}" >> "$GITHUB_OUTPUT"
+          echo "cluster_name=${CLUSTER_NAME}" >> "$GITHUB_OUTPUT"
+          echo "web_service_name=${WEB_SERVICE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "worker_service_name=${WORKER_SERVICE_NAME}" >> "$GITHUB_OUTPUT"
 
-      - name: Download current worker task definition
+      - name: Wait for ECS services to stabilize
         run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ vars.ECS_WORKER_TASK_FAMILY }} \
-            --query taskDefinition \
-            > worker-task-def.json
+          aws ecs wait services-stable \
+            --cluster "${{ steps.stack.outputs.cluster_name }}" \
+            --services "${{ steps.stack.outputs.web_service_name }}" "${{ steps.stack.outputs.worker_service_name }}" \
+            --region "${AWS_REGION}"
 
-      - name: Update worker task definition with new image
-        id: worker-task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: worker-task-def.json
-          container-name: worker
-          image: ${{ steps.build.outputs.image }}
-
-      - name: Deploy worker service
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.worker-task-def.outputs.task-definition }}
-          service: ${{ vars.ECS_WORKER_SERVICE_NAME }}
-          cluster: ${{ vars.ECS_CLUSTER_NAME }}
-          wait-for-service-stability: true
-          wait-for-minutes: 15
+      - name: Run auth + dashboard smoke test
+        env:
+          BASE_URL: ${{ steps.stack.outputs.application_url }}
+          SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+          SMOKE_TEST_TENANT_ID: ${{ vars.SMOKE_TEST_TENANT_ID != '' && vars.SMOKE_TEST_TENANT_ID || secrets.SMOKE_TEST_TENANT_ID }}
+        run: node ./scripts/smoke-auth-dashboard.mjs
 
       - name: Post deployment status
         if: always()
         run: |
           if [ "${{ job.status }}" = "success" ]; then
             echo "Deployment to ${{ github.event.inputs.environment }} succeeded"
-            echo "Image: ${{ steps.build.outputs.image }}"
+            echo "Image: ${{ steps.image.outputs.uri }}"
+            echo "Application URL: ${{ steps.stack.outputs.application_url }}"
           else
             echo "Deployment to ${{ github.event.inputs.environment }} failed"
             exit 1

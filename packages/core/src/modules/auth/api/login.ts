@@ -7,7 +7,7 @@ import { AuthService } from '@open-mercato/core/modules/auth/services/authServic
 import { signJwt } from '@open-mercato/shared/lib/auth/jwt'
 import { resolveTranslations } from '@open-mercato/shared/lib/i18n/server'
 import type { EventBus } from '@open-mercato/events/types'
-import { parseBooleanToken } from '@open-mercato/shared/lib/boolean'
+import { parseBooleanToken, parseBooleanWithDefault } from '@open-mercato/shared/lib/boolean'
 import { emitAuthEvent } from '@open-mercato/core/modules/auth/events'
 import { rateLimitErrorSchema } from '@open-mercato/shared/lib/ratelimit/helpers'
 import { readEndpointRateLimitConfig } from '@open-mercato/shared/lib/ratelimit/config'
@@ -87,13 +87,15 @@ export async function POST(req: Request) {
   }
   const resolvedTenantId = tenantId ?? (user.tenantId ? String(user.tenantId) : null)
   const userRoleNames = await auth.getUserRoles(user, resolvedTenantId)
-  try {
-    const eventBus = (container.resolve('eventBus') as EventBus)
-    void eventBus.emitEvent('query_index.coverage.warmup', {
-      tenantId: resolvedTenantId,
-    }).catch(() => undefined)
-  } catch {
-    // optional warmup
+  if (parseBooleanWithDefault(process.env.QUERY_INDEX_COVERAGE_WARMUP_ON_LOGIN, true)) {
+    try {
+      const eventBus = (container.resolve('eventBus') as EventBus)
+      void eventBus.emitEvent('query_index.coverage.warmup', {
+        tenantId: resolvedTenantId,
+      }).catch(() => undefined)
+    } catch {
+      // optional warmup
+    }
   }
   const token = signJwt({
     sub: String(user.id),

@@ -118,6 +118,73 @@ Parameters:
     Type: Number
     Default: 512
 
+  WebDbPoolMin:
+    Type: Number
+    Default: 0
+
+  WebDbPoolMax:
+    Type: Number
+    Default: 6
+
+  WebDbPoolIdleTimeout:
+    Type: Number
+    Default: 30000
+
+  WebDbPoolAcquireTimeout:
+    Type: Number
+    Default: 30000
+
+  WorkerDbPoolMin:
+    Type: Number
+    Default: 0
+
+  WorkerDbPoolMax:
+    Type: Number
+    Default: 4
+
+  WorkerDbPoolIdleTimeout:
+    Type: Number
+    Default: 30000
+
+  WorkerDbPoolAcquireTimeout:
+    Type: Number
+    Default: 30000
+
+  SchedulerDbPoolMin:
+    Type: Number
+    Default: 0
+
+  SchedulerDbPoolMax:
+    Type: Number
+    Default: 2
+
+  SchedulerDbPoolIdleTimeout:
+    Type: Number
+    Default: 30000
+
+  SchedulerDbPoolAcquireTimeout:
+    Type: Number
+    Default: 30000
+
+  DataSyncQueueConcurrency:
+    Type: Number
+    Default: 2
+
+  QueryIndexCoverageWarmupOnLogin:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  WebAutoscalingMaxCapacity:
+    Type: Number
+    Default: 2
+
+  WorkerAutoscalingMaxCapacity:
+    Type: Number
+    Default: 1
+
 Resources:
 
   # ---------------------------------------------------------------------------
@@ -1112,6 +1179,16 @@ Resources:
               Value: 'true'
             - Name: DB_SSL_REJECT_UNAUTHORIZED
               Value: 'false'
+            - Name: DB_POOL_MIN
+              Value: !Ref WebDbPoolMin
+            - Name: DB_POOL_MAX
+              Value: !Ref WebDbPoolMax
+            - Name: DB_POOL_IDLE_TIMEOUT
+              Value: !Ref WebDbPoolIdleTimeout
+            - Name: DB_POOL_ACQUIRE_TIMEOUT
+              Value: !Ref WebDbPoolAcquireTimeout
+            - Name: QUERY_INDEX_COVERAGE_WARMUP_ON_LOGIN
+              Value: !Ref QueryIndexCoverageWarmupOnLogin
             - Name: AUTO_SPAWN_WORKERS
               Value: 'false'
             - Name: AUTO_SPAWN_SCHEDULER
@@ -1240,6 +1317,16 @@ Resources:
               Value: 'true'
             - Name: DB_SSL_REJECT_UNAUTHORIZED
               Value: 'false'
+            - Name: DB_POOL_MIN
+              Value: !Ref WorkerDbPoolMin
+            - Name: DB_POOL_MAX
+              Value: !Ref WorkerDbPoolMax
+            - Name: DB_POOL_IDLE_TIMEOUT
+              Value: !Ref WorkerDbPoolIdleTimeout
+            - Name: DB_POOL_ACQUIRE_TIMEOUT
+              Value: !Ref WorkerDbPoolAcquireTimeout
+            - Name: DATA_SYNC_QUEUE_CONCURRENCY
+              Value: !Ref DataSyncQueueConcurrency
             - Name: MEILISEARCH_HOST
               Value: http://meilisearch.openmercato.internal:7700
             - Name: OM_ENABLE_ENTERPRISE_MODULES
@@ -1355,6 +1442,14 @@ Resources:
               Value: 'true'
             - Name: DB_SSL_REJECT_UNAUTHORIZED
               Value: 'false'
+            - Name: DB_POOL_MIN
+              Value: !Ref SchedulerDbPoolMin
+            - Name: DB_POOL_MAX
+              Value: !Ref SchedulerDbPoolMax
+            - Name: DB_POOL_IDLE_TIMEOUT
+              Value: !Ref SchedulerDbPoolIdleTimeout
+            - Name: DB_POOL_ACQUIRE_TIMEOUT
+              Value: !Ref SchedulerDbPoolAcquireTimeout
             - Name: OM_ENABLE_ENTERPRISE_MODULES
               Value: 'true'
             - Name: OM_ENABLE_ENTERPRISE_MODULES_SSO
@@ -1391,7 +1486,7 @@ Resources:
       ResourceId: !Sub service/${EcsCluster}/${WebService.Name}
       ScalableDimension: ecs:service:DesiredCount
       MinCapacity: 1
-      MaxCapacity: 4
+      MaxCapacity: !Ref WebAutoscalingMaxCapacity
       RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
 
   WebCpuScalingPolicy:
@@ -1430,7 +1525,7 @@ Resources:
       ResourceId: !Sub service/${EcsCluster}/${WorkerService.Name}
       ScalableDimension: ecs:service:DesiredCount
       MinCapacity: 1
-      MaxCapacity: 2
+      MaxCapacity: !Ref WorkerAutoscalingMaxCapacity
       RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
 
   WorkerCpuScalingPolicy:

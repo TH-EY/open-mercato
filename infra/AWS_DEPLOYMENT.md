@@ -253,28 +253,42 @@ Example: `infra/terraform/environments/production/terraform.tfvars.example`.
 aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin 062648047691.dkr.ecr.eu-west-2.amazonaws.com
 
 # 2. Build image
-docker build --platform linux/amd64 -t 062648047691.dkr.ecr.eu-west-2.amazonaws.com/openmercato-app:latest .
+docker build --platform linux/arm64 -t 062648047691.dkr.ecr.eu-west-2.amazonaws.com/openmercato-app:latest .
 
 # 3. Push to ECR
 docker push 062648047691.dkr.ecr.eu-west-2.amazonaws.com/openmercato-app:latest
 
-# 4. Force new deployment
-aws ecs update-service --cluster openmercato-cluster --service openmercato-web --force-new-deployment --region eu-west-2
-aws ecs update-service --cluster openmercato-cluster --service openmercato-worker-worker --force-new-deployment --region eu-west-2
+# 4. Deploy the CloudFormation stack with the new image
+APP_IMAGE=062648047691.dkr.ecr.eu-west-2.amazonaws.com/openmercato-app:latest \
+JWT_SECRET_ARN=arn:aws:secretsmanager:eu-west-2:...:secret:... \
+ENCRYPTION_KEY_ARN=arn:aws:secretsmanager:eu-west-2:...:secret:... \
+REDIS_PARAMETER_GROUP_NAME=openmercato-redis-... \
+bash infra/cloudformation/deploy.sh deploy
 ```
 
 ### Automated deployment via GitHub Actions
 
-Trigger: manual `workflow_dispatch` on `.github/workflows/deploy-aws.yml`.
+Trigger: manual `workflow_dispatch` on `/Users/patrykmadaj/Sites/open-mercato/.github/workflows/deploy-aws.yml`.
 
 Required GitHub secrets/variables:
 - `AWS_DEPLOY_ROLE_ARN` - IAM role ARN for OIDC-based auth
 - `ECR_REPOSITORY_NAME` = `openmercato-app`
-- `ECS_CLUSTER_NAME` = `openmercato-cluster`
-- `ECS_WEB_SERVICE_NAME` = `openmercato-web`
-- `ECS_WEB_TASK_FAMILY` = `openmercato-web`
-- `ECS_WORKER_TASK_FAMILY` = `openmercato-worker-worker`
-- `ECS_WORKER_SERVICE_NAME` = `openmercato-worker-worker`
+- `JWT_SECRET_ARN` - Secrets Manager ARN for `JWT_SECRET` (variable or secret)
+- `ENCRYPTION_KEY_ARN` - Secrets Manager ARN for `TENANT_DATA_ENCRYPTION_KEY` (variable or secret)
+- `REDIS_PARAMETER_GROUP_NAME` - existing ElastiCache parameter group name (variable or secret)
+- `SMOKE_TEST_EMAIL` - production smoke test account email (secret)
+- `SMOKE_TEST_PASSWORD` - production smoke test account password (secret)
+- `SMOKE_TEST_TENANT_ID` - tenant UUID for smoke accounts that require tenant-scoped login links (variable or secret, optional)
+
+Optional GitHub variables:
+- `CFN_S3_BUCKET` - CloudFormation artifact bucket override
+- `CFN_S3_PREFIX` - CloudFormation artifact prefix override
+
+The workflow now:
+1. builds and pushes an ARM64 image to ECR,
+2. deploys the `openmercato` CloudFormation stack with `APP_IMAGE=<new-image>`,
+3. waits for ECS web + worker services to become stable,
+4. runs an auth/dashboard smoke test against the stack `ApplicationUrl` output.
 
 ---
 
