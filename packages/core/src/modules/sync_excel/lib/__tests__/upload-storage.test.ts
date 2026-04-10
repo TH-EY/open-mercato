@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs'
 import os from 'os'
 import path from 'path'
+import { readSyncExcelUploadBuffer } from '../upload-storage'
 
 const mockResolveAttachmentAbsolutePath = jest.fn()
 
@@ -27,31 +28,43 @@ describe('sync_excel upload storage', () => {
     mockResolveAttachmentAbsolutePath.mockReturnValue('/app/apps/mercato/storage/attachments/privateAttachments/org_1/tenant_1/Leads.csv')
   })
 
-  it('wraps missing-file errors with runtime storage guidance', async () => {
-    const { readSyncExcelUploadBuffer } = await import('../upload-storage')
+  it('reads CSV payload from attachment metadata when an inline copy is persisted for worker-safe imports', async () => {
+    const readFileSpy = jest.spyOn(fs, 'readFile')
 
-    await expect(readSyncExcelUploadBuffer({
-      id: 'attachment-1',
+    const buffer = await readSyncExcelUploadBuffer({
       partitionCode: 'privateAttachments',
       storagePath: 'org_1/tenant_1/Leads.csv',
       storageDriver: 'local',
+      storageMetadata: {
+        inlineCsvBase64: Buffer.from('Record Id,Email\next-1,ada@example.com\n', 'utf8').toString('base64'),
+      },
+    } as any)
+
+    expect(buffer.toString('utf8')).toBe('Record Id,Email\next-1,ada@example.com\n')
+    expect(readFileSpy).not.toHaveBeenCalled()
+  })
+
+  it('wraps missing-file errors with runtime storage guidance when no inline payload is available', async () => {
+    await expect(readSyncExcelUploadBuffer({
+      partitionCode: 'privateAttachments',
+      storagePath: 'org_1/tenant_1/Leads.csv',
+      storageDriver: 'local',
+      storageMetadata: null,
     } as any)).rejects.toThrow(
       'Ensure all runtimes that execute sync_excel imports share attachment storage for partition "privateAttachments".',
     )
   })
 
-  it('returns the file buffer when the attachment exists on disk', async () => {
+  it('returns the file buffer when the attachment exists on disk for legacy uploads', async () => {
     const tempFile = path.join(os.tmpdir(), `sync-excel-upload-storage-${Date.now()}.csv`)
     await fs.writeFile(tempFile, Buffer.from('csv-data'))
     mockResolveAttachmentAbsolutePath.mockReturnValue(tempFile)
 
-    const { readSyncExcelUploadBuffer } = await import('../upload-storage')
-
     await expect(readSyncExcelUploadBuffer({
-      id: 'attachment-1',
       partitionCode: 'privateAttachments',
       storagePath: 'org_1/tenant_1/Leads.csv',
       storageDriver: 'local',
+      storageMetadata: null,
     } as any)).resolves.toEqual(Buffer.from('csv-data'))
 
     await fs.unlink(tempFile)
