@@ -55,6 +55,9 @@ jobs:
       - name: Upsert preview
         id: preview
         shell: bash
+        env:
+          PREVIEW_ADMIN_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          PREVIEW_ADMIN_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
         run: |
           set -euo pipefail
           OUTPUT="$(bash ./infra/aws-upstream-baseline/preview-upsert.sh '${{ steps.branch.outputs.branch }}')"

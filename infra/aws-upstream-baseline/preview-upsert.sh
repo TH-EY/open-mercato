@@ -37,6 +37,8 @@ REMOTE_SCRIPT="$(mktemp)"
   printf 'workdir=%q\n' "${REMOTE_WORKDIR}"
   printf 'remote_root=%q\n' "${PREVIEW_REMOTE_ROOT}"
   printf 'baseline_env_file=%q\n' "${BASELINE_ENV_FILE_REMOTE}"
+  printf 'preview_admin_email=%q\n' "${PREVIEW_ADMIN_EMAIL:-${SMOKE_TEST_EMAIL:-}}"
+  printf 'preview_admin_password=%q\n' "${PREVIEW_ADMIN_PASSWORD:-${SMOKE_TEST_PASSWORD:-}}"
   cat <<'EOF'
 command -v git >/dev/null 2>&1 || { echo "Missing git on preview host" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo "Missing docker on preview host" >&2; exit 1; }
@@ -52,10 +54,10 @@ else
   git -C "$workdir" clean -fdx
 fi
 
-python3 - <<'PY' "$baseline_env_file" "$workdir/.env" "$preview_env" "$preview_port" "$preview_hostname"
+python3 - <<'PY' "$baseline_env_file" "$workdir/.env" "$preview_env" "$preview_port" "$preview_hostname" "$preview_admin_email" "$preview_admin_password"
 import secrets, sys
 from pathlib import Path
-baseline, target, preview_env, preview_port, preview_host = sys.argv[1:6]
+baseline, target, preview_env, preview_port, preview_host, preview_admin_email, preview_admin_password = sys.argv[1:8]
 values = {}
 for line in Path(baseline).read_text().splitlines():
     if not line or line.startswith('#') or '=' not in line:
@@ -73,6 +75,11 @@ values.update({
     'TENANT_DATA_ENCRYPTION_KEY': secrets.token_urlsafe(48),
     'MEILISEARCH_MASTER_KEY': secrets.token_urlsafe(32),
 })
+if preview_admin_email:
+    values['OM_INIT_SUPERADMIN_EMAIL'] = preview_admin_email
+    values['ADMIN_EMAIL'] = preview_admin_email
+if preview_admin_password:
+    values['OM_INIT_SUPERADMIN_PASSWORD'] = preview_admin_password
 keys = [
     'APP_NAME','DEPLOY_ENV','APP_PORT','APP_URL','POSTGRES_USER','POSTGRES_PASSWORD','POSTGRES_DB',
     'JWT_SECRET','AUTH_SECRET','TENANT_DATA_ENCRYPTION_KEY','MEILISEARCH_MASTER_KEY',
