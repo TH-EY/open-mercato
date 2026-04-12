@@ -33,6 +33,12 @@ Never mix `contrib/*` and `fork/*` logic in the same commit.
   - deploy: preview automation from `.github/workflows/contrib-preview-upsert.yml`
   - runtime: isolated Docker Compose stack on the Dokploy host, with its own DB / Redis / Meilisearch / storage
 
+Important GitHub Actions note:
+
+- `upstream-baseline` intentionally mirrors upstream and does not carry fork workflow files
+- pure `contrib/*` branches cut from `upstream-baseline` therefore cannot rely only on push-triggered workflow discovery
+- preview deployment must also be executable from the base branch via `pull_request_target` or explicit `workflow_dispatch`
+
 ## Source of Truth Rules
 
 - Never start `contrib/*` from `develop`
@@ -46,7 +52,8 @@ Never mix `contrib/*` and `fork/*` logic in the same commit.
 Run this before starting new `contrib/*` work and at least once a week:
 
 ```bash
-git fetch origin upstream --prune
+git fetch origin --prune
+git fetch upstream --prune
 git checkout upstream-baseline
 git reset --hard origin/upstream-baseline
 ```
@@ -73,7 +80,8 @@ Do not merge fork-only history back into `upstream-baseline`.
 ### 1. Start the branch
 
 ```bash
-git fetch origin upstream --prune
+git fetch origin --prune
+git fetch upstream --prune
 git checkout upstream-baseline
 git reset --hard origin/upstream-baseline
 git checkout -b contrib/<topic>
@@ -114,7 +122,12 @@ for UI flows, CRUD/API contracts, generators, auto-discovery, extension points, 
 git push origin contrib/<topic>
 ```
 
-This triggers:
+Then either:
+
+- update or open a PR, which triggers preview deployment from the base branch workflow
+- or run a manual `workflow_dispatch` of `contrib-preview-upsert.yml`
+
+That triggers:
 
 ```bash
 .github/workflows/contrib-preview-upsert.yml
@@ -146,13 +159,14 @@ The PR must include:
 ### 6. Keep the branch current
 
 ```bash
-git fetch origin upstream --prune
+git fetch origin --prune
+git fetch upstream --prune
 git checkout contrib/<topic>
 git rebase origin/upstream-baseline
 git push --force-with-lease
 ```
 
-Each push updates the preview environment for that branch.
+Each PR update or manual preview dispatch updates the preview environment for that branch.
 
 ### 7. After merge upstream
 
@@ -160,7 +174,7 @@ Each push updates the preview environment for that branch.
 2. Let baseline redeploy or manually redeploy `om.they.dev`
 3. Verify the feature works on `https://om.they.dev`
 4. Delete the `contrib/*` branch
-5. Branch deletion triggers:
+5. Branch deletion or PR close triggers:
 
 ```bash
 .github/workflows/contrib-preview-destroy.yml

@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - 'contrib/**'
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
   workflow_dispatch:
     inputs:
       branch:
@@ -12,11 +17,14 @@ on:
         type: string
 
 concurrency:
-  group: contrib-preview-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.branch || github.ref_name }}
+  group: contrib-preview-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.branch || github.event_name == 'pull_request_target' && github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   deploy-preview:
+    if: >-
+      github.event_name != 'pull_request_target' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -37,6 +45,8 @@ jobs:
           set -euo pipefail
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             BRANCH="${{ github.event.inputs.branch }}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "pull_request_target" ]]; then
+            BRANCH="${{ github.event.pull_request.head.ref }}"
           else
             BRANCH="${GITHUB_REF_NAME}"
           fi

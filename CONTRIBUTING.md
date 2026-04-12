@@ -25,6 +25,12 @@ This fork uses a split model so we can keep shipping fork-specific work while pr
 
 See [`docs/upstream-contribution-workflow.md`](docs/upstream-contribution-workflow.md) for the operational workflow, preview deployment flow, and strict local quality gate.
 
+Important preview note:
+
+- `upstream-baseline` intentionally stays a clean mirror of upstream
+- pure `contrib/*` branches cut from that base do not carry fork workflow files
+- preview environments are therefore deployed from the base branch workflow via PR updates or explicit manual dispatch
+
 ## Working on Features
 
 - Branch from the correct base:
@@ -53,10 +59,11 @@ See [`.ai/specs/README.md`](.ai/specs/README.md) for the full specification dire
 
 Before starting new `contrib/*` work, and at least once a week for active branches:
 
-1. `git fetch origin upstream --prune`
-2. refresh local `upstream-baseline` from `origin/upstream-baseline`
-3. branch `contrib/*` from that clean base
-4. rebase open `contrib/*` branches onto the refreshed `origin/upstream-baseline`
+1. `git fetch origin --prune`
+2. `git fetch upstream --prune`
+3. refresh local `upstream-baseline` from `origin/upstream-baseline`
+4. branch `contrib/*` from that clean base
+5. rebase open `contrib/*` branches onto the refreshed `origin/upstream-baseline`
 
 Do not merge fork-only history into `upstream-baseline`. If you need functionality that only exists on the fork track, either extract a clean version for `contrib/*` or classify the work as fork-only.
 

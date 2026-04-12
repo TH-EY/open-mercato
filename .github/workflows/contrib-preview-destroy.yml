@@ -2,6 +2,9 @@ name: Destroy contrib preview
 
 on:
   delete:
+  pull_request_target:
+    types:
+      - closed
   workflow_dispatch:
     inputs:
       branch:
@@ -13,7 +16,8 @@ jobs:
   destroy-preview:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.ref_type == 'branch' && startsWith(github.event.ref, 'contrib/'))
+      (github.event_name == 'delete' && github.event.ref_type == 'branch' && startsWith(github.event.ref, 'contrib/')) ||
+      (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.event.pull_request.head.ref, 'contrib/'))
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -32,6 +36,8 @@ jobs:
           set -euo pipefail
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             BRANCH="${{ github.event.inputs.branch }}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "pull_request_target" ]]; then
+            BRANCH="${{ github.event.pull_request.head.ref }}"
           else
             BRANCH="${{ github.event.ref }}"
           fi
