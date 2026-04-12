@@ -1,0 +1,35 @@
+name: Sync Upstream Baseline Mirror
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Sync upstream/develop into upstream-baseline
+        run: |
+          git remote add upstream https://github.com/open-mercato/open-mercato.git 2>/dev/null || git remote set-url upstream https://github.com/open-mercato/open-mercato.git
+          git fetch upstream develop --prune
+          git branch -f upstream-baseline FETCH_HEAD
+          git push origin refs/heads/upstream-baseline --force
+
+      - name: Write summary
+        run: |
+          echo "Updated origin/upstream-baseline to $(git rev-parse --short FETCH_HEAD) from upstream/develop" >> "$GITHUB_STEP_SUMMARY"

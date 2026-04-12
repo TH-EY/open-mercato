@@ -1,35 +1,63 @@
 # Upstream Contribution Workflow for This Fork
 
-This fork uses a dual-track model so we can keep shipping local work without polluting future contributions to Open Mercato.
+This fork now uses a split model:
+
+- `develop` stays the fork deployment branch for `https://openmercato.they.dev`
+- `upstream-baseline` is the only clean base for upstream-candidate work and for `https://om.they.dev`
 
 ## Branch Roles
 
-- `upstream/develop` - external source of truth for regular contribution work
-- `upstream/main` - upstream release branch (only gets release merges)
-- `origin/develop` - **deployment branch**: `upstream/develop` + fork-only overlay (infra, deploy, docs)
-- `origin/main` - pure mirror of `upstream/main` (release tracking only, not used for deployment)
-- `contrib/*` - upstream-candidate features, based on `develop`
-- `fork/*` - intentionally fork-only work (infra, deploy config, domain setup)
-- `sync/*` - short-lived branches for upstream sync or extraction work
+- `upstream/develop` - external source of truth for upstream contribution work
+- `upstream/main` - upstream release branch
+- `origin/upstream-baseline` - force-synced mirror of `upstream/develop`; no manual commits
+- `origin/develop` - fork deployment branch for `openmercato.they.dev`; may include fork-only overlay
+- `origin/main` - mirror of `upstream/main`
+- `contrib/*` - upstream-candidate branches; always branched from `upstream-baseline`
+- `fork/*` - intentionally local work; always branched from `develop`
+- `sync/*` - short-lived branches for cherry-picks from `contrib/*` into `develop` or for sync/extraction work
 
 Never mix `contrib/*` and `fork/*` logic in the same commit.
 
-## Default Decision Rule
+## Environment Mapping
 
-Start from `develop` whenever a change has even a plausible upstream value.
+- `https://openmercato.they.dev`
+  - source: `TH-EY/open-mercato:develop`
+  - deploy: `.github/workflows/deploy-aws.yml`
+  - runtime: CloudFormation + ECS
+- `https://om.they.dev`
+  - source: `TH-EY/open-mercato:upstream-baseline`
+  - deploy: Dokploy + `docker-compose.fullapp.yml`
+  - role: stable upstream baseline
+- `https://preview-<slug>.om.they.dev`
+  - source: `TH-EY/open-mercato:contrib/<topic>`
+  - deploy: preview automation from `.github/workflows/contrib-preview-upsert.yml`
+  - runtime: isolated Docker Compose stack on the Dokploy host, with its own DB / Redis / Meilisearch / storage
 
-Use `fork/*` only when the change is clearly local, such as:
+## Source of Truth Rules
 
-- environment-specific infrastructure
-- domain or deployment configuration
-- local business rules or branding
-- temporary experiments that are not yet clean enough for upstream
+- Never start `contrib/*` from `develop`
+- Never merge `develop` into `contrib/*`
+- Never point `om.they.dev` at `develop`
+- Never put fork-only paths into `contrib/*`
+- If a branch stops being upstream-friendly, close it and recreate it as `fork/*`
 
-If fork-only work later proves reusable, re-create it on a fresh `contrib/*` branch from `develop` instead of branching from `fork/*` history.
+## Sync Routine
 
-## Develop Sync (weekly + before each deploy)
+Run this before starting new `contrib/*` work and at least once a week:
 
-This is the primary sync routine. Run before starting new `contrib/*` work, before deploying, and at least once a week:
+```bash
+git fetch origin upstream --prune
+git checkout upstream-baseline
+git reset --hard origin/upstream-baseline
+```
+
+The mirror branch is maintained by:
+
+```bash
+.github/workflows/sync-upstream-baseline.yml
+```
+
+For the fork deployment branch, keep the old sync routine:
 
 ```bash
 git fetch upstream --prune
@@ -38,65 +66,27 @@ git merge upstream/develop
 git push origin develop
 ```
 
-Because fork-only files are purely additive (they don't exist in upstream), this merge is almost always conflict-free. Git merges the upstream changes into develop while preserving the fork-only overlay commits.
+Do not merge fork-only history back into `upstream-baseline`.
 
-Then rebase each open `contrib/*` branch:
+## Golden Path for Every Upstream Contribution
 
-```bash
-git checkout contrib/<name>
-git rebase develop
-```
-
-Rules:
-
-- never merge `main` into `develop`
-- keep `origin/develop` as close to `upstream/develop` as possible (plus fork-only overlay)
-- `develop` is the deployment branch - deploy from here
-
-## Main Branch Sync (release tracking only)
-
-Run periodically to keep the release mirror current:
+### 1. Start the branch
 
 ```bash
-git fetch upstream --prune
-git checkout main
-git merge --ff-only upstream/main
-git push origin main
+git fetch origin upstream --prune
+git checkout upstream-baseline
+git reset --hard origin/upstream-baseline
+git checkout -b contrib/<topic>
 ```
 
-Main is NOT used for deployment - it only tracks upstream releases for reference.
+### 2. Implement the change
 
-## Pre-Upstream Deployment
+- For non-trivial work, create or update the relevant spec in `.ai/specs/`
+- Follow `AGENTS.md`, `BACKWARD_COMPATIBILITY.md`, the PR template, and the CLA
+- Keep commits cherry-pickable and scoped to one logical topic
+- Prefer modules, extension points, and provider packages over fork-only patches
 
-When a `contrib/*` feature must be deployed before upstream accepts it:
-
-1. Merge `contrib/feature` into `develop` (the deployment branch)
-2. Deploy from `develop` via `workflow_dispatch`
-3. Simultaneously PR the same branch to `upstream/develop`
-4. When upstream merges, the next develop sync reconciles automatically (git recognizes identical changes from both sides)
-5. The `contrib/*` branch can then be deleted
-
-## Deployment
-
-Production deployment runs from the `develop` branch via GitHub Actions (`deploy-aws.yml`):
-
-1. Trigger `workflow_dispatch` on `develop` branch
-2. The workflow builds an ARM64 Docker image and pushes to ECR
-3. ECS web and worker services are updated with the new image
-4. The workflow enforces that only `develop` can be deployed
-
-## Authoring Rules for `contrib/*`
-
-- one logical topic per commit
-- use conventional commit prefixes such as `feat(scope): ...`, `fix(scope): ...`, `chore(scope): ...`
-- keep branches cherry-pickable onto a clean `develop`
-- favor modules, extension points, and overlays over direct core patches
-- confirm compliance with `BACKWARD_COMPATIBILITY.md` before changing contract surfaces
-- for non-trivial work, update or create the relevant spec before opening a PR
-
-## Strict Local Quality Gate
-
-Run this full gate before proposing an upstream PR:
+### 3. Run the local gate
 
 ```bash
 yarn build:packages
@@ -110,36 +100,116 @@ yarn test
 yarn build:app
 ```
 
-Also run `yarn test:integration` if the change touches:
+Also run:
 
-- user-facing flows
-- CRUD or API contracts
-- generators
-- module auto-discovery
-- extension points, injections, or component replacement
-- events, notifications, or event bridge behavior
+```bash
+yarn test:integration
+```
+
+for UI flows, CRUD/API contracts, generators, auto-discovery, extension points, injections, component replacement, events, notifications, or event bridge changes.
+
+### 4. Push and get a preview
+
+```bash
+git push origin contrib/<topic>
+```
+
+This triggers:
+
+```bash
+.github/workflows/contrib-preview-upsert.yml
+```
+
+The workflow deploys an isolated preview stack for that branch to:
+
+```text
+https://preview-<slug>.om.they.dev
+```
+
+The workflow summary always includes the preview URL. If there is an open same-repo PR for the branch, the workflow also posts or updates a comment with the preview link.
+
+### 5. Open the upstream PR
+
+Open the PR from:
+
+- head: `TH-EY/open-mercato:contrib/<topic>`
+- base: `open-mercato/open-mercato:develop`
+
+The PR must include:
+
+- testing summary
+- spec path
+- CLA acknowledgement
+- backward compatibility confirmation
+- integration coverage or a reason why it is not required
+
+### 6. Keep the branch current
+
+```bash
+git fetch origin upstream --prune
+git checkout contrib/<topic>
+git rebase origin/upstream-baseline
+git push --force-with-lease
+```
+
+Each push updates the preview environment for that branch.
+
+### 7. After merge upstream
+
+1. Wait for `origin/upstream-baseline` to sync from upstream
+2. Let baseline redeploy or manually redeploy `om.they.dev`
+3. Verify the feature works on `https://om.they.dev`
+4. Delete the `contrib/*` branch
+5. Branch deletion triggers:
+
+```bash
+.github/workflows/contrib-preview-destroy.yml
+```
+
+which tears down the preview environment and its ALB routing resources
+
+## Exception Path: local AWS before upstream merge
+
+If a feature must land on `openmercato.they.dev` before upstream merges it:
+
+```bash
+git checkout develop
+git checkout -b sync/<topic>-to-develop
+git cherry-pick <commit-from-contrib>
+```
+
+Only the `sync/*` branch is allowed to flow into `develop`.
+
+Do not merge `contrib/*` directly into `develop`.
+
+This keeps:
+
+- `contrib/*` clean for upstream
+- `develop` available for immediate local deployment needs
+
+## CI Guardrail
+
+A `fork-only-guard` job in CI checks `contrib/*` branches against `.github/fork-only-paths.txt`.
+
+If a contrib branch contains fork-only files, CI fails.
+
+## Local Noise Hygiene
+
+Keep machine-local state and ad-hoc screenshots out of contribution branches.
+
+Current examples that must stay out of `contrib/*`:
+
+- `.omc/`
+- `.serena/`
+- exploratory screenshots and temporary local exports
 
 ## Upstreamability Checklist
 
 Every `contrib/*` change should pass these questions before PR creation:
 
-1. Does this change provide platform value beyond this fork?
-2. Can it be built as a module, extension point, or provider package instead of a fork-only core patch?
-3. Does it preserve all applicable contracts in `BACKWARD_COMPATIBILITY.md`?
-4. Is the branch based on a fresh `develop` and isolated from fork-only history?
+1. Does it provide platform value beyond this fork?
+2. Can it be built as a module, extension point, or provider package instead of a local patch?
+3. Does it preserve all touched contract surfaces from `BACKWARD_COMPATIBILITY.md`?
+4. Is it based on fresh `upstream-baseline`, without fork-only history?
 5. Are specs, docs, locales, generators, and tests updated where required?
-6. Would this change still make sense if this fork disappeared tomorrow?
-
-## CI Guardrail
-
-A `fork-only-guard` job in CI automatically checks `contrib/*` branches against `.github/fork-only-paths.txt`. If a contrib branch contains fork-only files (infra, deploy workflows, fork docs), CI will fail. This prevents accidental upstream pollution.
-
-## Local Noise Hygiene
-
-Keep machine-local state and ad-hoc screenshots out of contribution branches. For assets that are useful only on one workstation, prefer `.git/info/exclude` instead of repo-tracked ignores.
-
-Current examples that must stay out of future `contrib/*` work:
-
-- `.omc/`
-- `.serena/`
-- root-level exploratory screenshots such as `api-docs.png`, `dashboard.png`, `login-page.png`, and `settings.png`
+6. Would the change still make sense if this fork disappeared tomorrow?

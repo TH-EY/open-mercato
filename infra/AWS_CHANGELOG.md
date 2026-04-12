@@ -1,84 +1,54 @@
 # Open Mercato AWS Deployment - Changelog
 
-## Session: 2026-03-24 / 2026-03-25
+## Session: 2026-04-12
 
 ### What was done
 
-Deployed Open Mercato on AWS from scratch, iterated through cost optimizations, and migrated from Terraform to CloudFormation.
-
-### Reconciliation update (2026-03-25)
-
-- Migrated production ingress from the dedicated `openmercato-alb` to the shared
-  `they-lb`
-- Reconciled the `openmercato` CloudFormation stack so it no longer tries to
-  recreate the dedicated ALB
-- Documented that `they-lb`, its HTTPS listener/certificate, the shared target
-  group, and cross-VPC networking are external shared dependencies rather than
-  stack-owned resources
-- Verified post-update stack drift status is `IN_SYNC`
-
-### Commits
-
-| Commit | Description |
-|--------|-------------|
-| `4a02a38d` | Initial AWS ECS Terraform module (18 files) + CI/CD workflows |
-| `29beae6b` | AWS deployment integration guide |
-| `776b1dc5` | Custom domain (openmercato.they.dev) + cost optimization ($235 -> $104) |
-| `9519442b` | ARM64 Graviton + RDS recreated at 20 GB ($104 -> $91) |
-| `cff07251` | Migrated from Terraform to CloudFormation (single template) |
-
-### Infrastructure Evolution
-
-| Stage | IaC | Monthly Cost | Key Changes |
-|-------|-----|-------------|-------------|
-| Initial deploy | Terraform (18 .tf files) | ~$235 | RDS db.t4g.medium 50 GB, x86 Fargate, NAT Gateway |
-| Cost optimization | Terraform | ~$104 | Downsized RDS/Fargate, removed NAT Gateway, public subnets |
-| ARM64 + RDS resize | Terraform | ~$91 | Graviton ARM64, RDS recreated at 20 GB gp3 |
-| CloudFormation migration | CloudFormation (1 template) | ~$91 | Replaced Terraform with native AWS CloudFormation |
-
-### Current State
-
-| Component | Details | Cost |
-|-----------|---------|------|
-| ECS Web (ARM64 Graviton) | 0.5 vCPU / 2 GB | $19.57 |
-| ECS Worker (ARM64 Graviton) | 0.25 vCPU / 0.5 GB | $8.29 |
-| ECS Meilisearch (ARM64 Graviton) | 0.25 vCPU / 0.5 GB | $8.29 |
-| RDS PostgreSQL 18.3 + pgvector | db.t4g.micro, 20 GB gp3 | $15.50 |
-| ElastiCache Redis 7.1 | cache.t4g.micro, TLS + auth | $13.14 |
-| Shared they-lb ingress | External shared dependency, not stack-owned | Included outside this stack |
-| Other (EFS, ECR, Logs, Secrets, DNS) | | $8.07 |
-| **Total** | | **~$91/mo** |
-
-### Access
-
-| | |
-|---|---|
-| **URL** | https://openmercato.they.dev |
-| **Login** | `superadmin@acme.com` / `BobryLubiaKobry123!` |
-| **AWS Region** | eu-west-2 (London) |
-| **Stack** | `openmercato` (CloudFormation) |
-| **ECR** | `062648047691.dkr.ecr.eu-west-2.amazonaws.com/openmercato-app` |
-
-### Key Decisions & Learnings
-
-| Decision | Rationale |
-|----------|-----------|
-| Public subnets for ECS (no NAT) | Saves $36/mo; security groups still restrict inbound |
-| ARM64 Graviton | ~20% cheaper Fargate; node:24-alpine + meilisearch both support arm64 |
-| RDS 20 GB gp3 (not 50 GB) | gp3 minimum is 20 GB; RDS storage can't shrink so required recreation |
-| CloudFormation over Terraform | Native AWS, no external state/tooling; single YAML template |
-| Lambda custom resource for DB URL | CloudFormation can't read RDS managed password at deploy time; app requires full DATABASE_URL |
-| `DB_SSL=true` + `DB_SSL_REJECT_UNAUTHORIZED=false` | RDS SSL with pg driver v8+; sslmode in URL causes verify-full behavior |
-| No container health check for web | Alpine image has no curl/wget; ALB health check is sufficient |
-| split_workers mode | Web + worker as separate ECS services; worker handles 12+ queue types |
+- Reworked the upstream contribution workflow around `upstream-baseline` as the only valid base for `contrib/*`
+- Added automated per-branch preview deployment support for `contrib/*`
+- Added preview lifecycle scripts for branch upsert, destroy, baseline source pinning, and preview hostname enablement
+- Added GitHub Actions workflows to deploy previews on push and destroy them on branch delete
+- Updated contribution and QA documentation so `om.they.dev` is treated as the stable upstream baseline, not as a temporary feature sandbox
+- Added the operational path to point the live baseline Dokploy compose source at `TH-EY/open-mercato:upstream-baseline`
+- Added the operational path to enable `*.om.they.dev` wildcard certificate and wildcard DNS for branch previews
 
 ### Files
 
 | File | Purpose |
 |------|---------|
-| `infra/cloudformation/openmercato.yml` | CloudFormation template (all resources) |
-| `infra/cloudformation/deploy.sh` | Helper script (create/update/destroy/status) |
-| `.github/workflows/deploy-aws.yml` | CI/CD: build ARM64 image, push ECR, deploy ECS |
-| `infra/AWS_ACCESS.md` | Access details, credentials, commands |
-| `infra/AWS_DEPLOYMENT.md` | Full integration guide |
-| `infra/AWS_CHANGELOG.md` | This file |
+| `.github/workflows/contrib-preview-upsert.yml` | Deploy or update isolated preview envs for `contrib/*` branches |
+| `.github/workflows/contrib-preview-destroy.yml` | Destroy isolated preview envs when `contrib/*` branches are deleted |
+| `infra/aws-upstream-baseline/preview-common.sh` | Shared preview deployment helpers |
+| `infra/aws-upstream-baseline/preview-upsert.sh` | Upsert a branch preview stack and its ALB routing |
+| `infra/aws-upstream-baseline/preview-destroy.sh` | Destroy a branch preview stack and its ALB routing |
+| `infra/aws-upstream-baseline/enable-preview-hostnames.sh` | Enable wildcard cert, wildcard DNS, and preview port ingress |
+| `infra/aws-upstream-baseline/point-baseline-at-fork-mirror.sh` | Repoint live baseline source to `TH-EY/open-mercato:upstream-baseline` |
+| `docs/upstream-contribution-workflow.md` | Updated contribution workflow using `upstream-baseline` and per-branch previews |
+| `CONTRIBUTING.md` | Updated contribution entrypoint to match the new branch model |
+| `.github/QA-DEPLOYMENT.md` | Updated QA docs to make branch previews the default path |
+| `infra/aws-upstream-baseline/README.md` | Updated operator runbook for baseline + preview flow |
+
+## Session: 2026-04-11
+
+### What was done
+
+- Added a parallel **upstream-baseline** AWS runbook based on Dokploy + Docker Compose instead of CloudFormation/ECS
+- Added an idempotent AWS bootstrap script for the baseline host, ingress, and DNS
+- Added a dedicated `upstream-baseline` branch sync workflow that mirrors `upstream/develop`
+- Explicitly separated CloudFormation production documentation from the new upstream-parity environment
+- Raised the upstream-baseline host defaults to `t3.xlarge` + `50 GB gp3` after the first live Dokploy deployment exhausted the original `t3.medium` / 8 GB root-disk sizing
+- Completed a live rollout at `om.they.dev` and smoke-validated login, dashboard access, global search, attachment upload, and ALB target health
+- Renamed the Dokploy project/service labels from `Upstream Baseline` to `OM Baseline` and added a baseline smoke helper that defaults to `https://om.they.dev`
+- Added an ALB health helper that checks DNS, target health, and `/login` response for the OM baseline host
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `infra/aws-upstream-baseline/README.md` | Operator runbook for the new Dokploy baseline environment |
+| `infra/aws-upstream-baseline/provision.sh` | AWS bootstrap script for EC2 + SG + TG + listener rule + Route53 |
+| `infra/aws-upstream-baseline/user-data.sh` | Dokploy installation user-data for the EC2 host |
+| `infra/aws-upstream-baseline/smoke.sh` | Convenience smoke wrapper defaulting to `https://om.they.dev` |
+| `infra/aws-upstream-baseline/check-health.sh` | Quick ALB/DNS/HTTP health diagnostic for the OM baseline environment |
+| `.github/workflows/sync-upstream-baseline.yml` | Mirrors `upstream/develop` into `origin/upstream-baseline` |
+| `.ai/specs/enterprise/2026-04-11-aws-upstream-baseline-dokploy.md` | Implementation spec for the new environment |
