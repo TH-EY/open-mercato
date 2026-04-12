@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+
 BASE_URL="${BASE_URL:-https://om.they.dev}"
 export BASE_URL
 
@@ -16,4 +19,4 @@ fi
 
 echo "[baseline-smoke] Using BASE_URL=${BASE_URL}"
 
-exec node /Users/patrykmadaj/Sites/open-mercato/scripts/smoke-auth-dashboard.mjs
+exec node "${REPO_ROOT}/scripts/smoke-auth-dashboard.mjs"
