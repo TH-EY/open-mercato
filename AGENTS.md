@@ -62,7 +62,8 @@ These rules are mandatory for every AI agent working in this repository.
 Before starting a new `contrib/*` branch, agents must use this refresh flow:
 
 ```bash
-git fetch origin upstream --prune
+git fetch origin --prune
+git fetch upstream --prune
 git checkout upstream-baseline
 git reset --hard origin/upstream-baseline
 git checkout -b contrib/<topic>
