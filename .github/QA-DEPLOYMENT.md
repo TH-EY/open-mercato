@@ -30,6 +30,8 @@ The workflow responsible is:
 - deploys the exact `contrib/*` branch to the Dokploy host used by the upstream baseline environment
 - runs the standard `docker-compose.fullapp.yml` stack
 - creates isolated PostgreSQL / Redis / Meilisearch / storage state for that branch
+- restores the seeded `om.they.dev` baseline database into that branch-local Postgres before app startup
+- reuses the baseline tenant encryption secrets required to read the seeded data
 - creates or updates a dedicated ALB target group and listener rule for the preview host
 - smoke-tests the deployed preview URL
 
@@ -61,7 +63,7 @@ The exact URL is written to the workflow summary. If there is an open same-repo 
 
 ## Stable upstream baseline
 
-The stable comparison environment remains:
+The stable seeded QA environment remains:
 
 ```text
 https://om.they.dev
@@ -74,6 +76,7 @@ TH-EY/open-mercato:upstream-baseline
 ```
 
 Do not use `om.they.dev` as a temporary preview for feature work.
+Use `/infra/aws-upstream-baseline/restore-baseline-from-cloudformation.sh` when you need to refresh the seeded QA dataset from the old CloudFormation stack.
 
 ## Legacy shared slots
 

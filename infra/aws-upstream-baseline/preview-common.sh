@@ -30,13 +30,39 @@ PREVIEW_RULE_PRIORITY_MIN="${PREVIEW_RULE_PRIORITY_MIN:-1000}"
 PREVIEW_RULE_PRIORITY_MAX="${PREVIEW_RULE_PRIORITY_MAX:-49999}"
 PREVIEW_REMOTE_ROOT="${PREVIEW_REMOTE_ROOT:-/opt/openmercato-previews}"
 PREVIEW_REPO_URL="${PREVIEW_REPO_URL:-https://github.com/TH-EY/open-mercato.git}"
+BASELINE_REMOTE_ROOT="${BASELINE_REMOTE_ROOT:-/etc/dokploy/compose/baseline-zjkhnl/code}"
+BASELINE_COMPOSE_PROJECT="${BASELINE_COMPOSE_PROJECT:-baseline-zjkhnl}"
 BASELINE_ENV_FILE_REMOTE="${BASELINE_ENV_FILE_REMOTE:-/etc/dokploy/compose/baseline-zjkhnl/code/.env}"
+BASELINE_POSTGRES_CONTAINER="${BASELINE_POSTGRES_CONTAINER:-mercato-postgres-upstream-baseline}"
+BASELINE_SEED_ROOT_REMOTE="${BASELINE_SEED_ROOT_REMOTE:-/opt/openmercato-baseline-seed}"
+BASELINE_SEED_DUMP_REMOTE="${BASELINE_SEED_DUMP_REMOTE:-/opt/openmercato-baseline-seed/baseline-seed.dump}"
+BASELINE_SEED_METADATA_REMOTE="${BASELINE_SEED_METADATA_REMOTE:-/opt/openmercato-baseline-seed/baseline-seed.json}"
+BASELINE_BACKUP_ROOT_REMOTE="${BASELINE_BACKUP_ROOT_REMOTE:-/opt/openmercato-baseline-backups}"
+OLD_STACK_DATABASE_URL_SECRET_ID="${OLD_STACK_DATABASE_URL_SECRET_ID:-openmercato/prod/database-url}"
+OLD_STACK_ENCRYPTION_KEY_SECRET_ID="${OLD_STACK_ENCRYPTION_KEY_SECRET_ID:-openmercato/prod/encryption-key}"
+POSTGRES_CLIENT_IMAGE="${POSTGRES_CLIENT_IMAGE:-pgvector/pgvector:pg17-trixie}"
 
 json_escape() {
   python3 - <<'PY' "$1"
 import json, sys
 print(json.dumps(sys.argv[1]))
 PY
+}
+
+json_escape_file() {
+  python3 - <<'PY' "$1"
+import json, sys
+path = sys.argv[1]
+print(json.dumps({'commands': [open(path, 'r', encoding='utf-8').read()]}))
+PY
+}
+
+fetch_secret_string() {
+  aws secretsmanager get-secret-value \
+    --region "${AWS_REGION}" \
+    --secret-id "$1" \
+    --query 'SecretString' \
+    --output text
 }
 
 branch_to_preview_slug() {

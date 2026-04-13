@@ -27,11 +27,12 @@ Never mix `contrib/*` and `fork/*` logic in the same commit.
 - `https://om.they.dev`
   - source: `TH-EY/open-mercato:upstream-baseline`
   - deploy: Dokploy + `docker-compose.fullapp.yml`
-  - role: stable upstream baseline
+  - role: seeded QA baseline on the upstream-like runtime
 - `https://preview-<slug>.om.they.dev`
   - source: `TH-EY/open-mercato:contrib/<topic>`
   - deploy: preview automation from `.github/workflows/contrib-preview-upsert.yml`
   - runtime: isolated Docker Compose stack on the Dokploy host, with its own DB / Redis / Meilisearch / storage
+  - data: seeded from the current `om.they.dev` baseline dump, never shared live with `om.they.dev`
 
 Important GitHub Actions note:
 
@@ -181,6 +182,29 @@ Each PR update or manual preview dispatch updates the preview environment for th
 ```
 
 which tears down the preview environment and its ALB routing resources
+
+
+## Seeded QA baseline operations
+
+The upstream-like Dokploy path now has two data layers:
+
+- code source: always `TH-EY/open-mercato:upstream-baseline` for `om.they.dev`
+- data source: a logical PostgreSQL restore cloned from the old CloudFormation stack
+
+Operator commands:
+
+```bash
+./infra/aws-upstream-baseline/restore-baseline-from-cloudformation.sh
+./infra/aws-upstream-baseline/export-baseline-seed-dump.sh
+```
+
+Rules:
+
+- `om.they.dev` stays the seeded QA baseline, not a temporary feature preview
+- branch previews must seed from the exported baseline dump
+- branch previews must keep their own Postgres / Redis / Meilisearch / storage volumes
+- branch previews must carry the same tenant encryption secrets required to read the seeded data
+- branch deletes must still fully remove preview-local volumes
 
 ## Exception Path: local AWS before upstream merge
 

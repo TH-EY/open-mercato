@@ -40,9 +40,9 @@ These rules are mandatory for every AI agent working in this repository.
 
 - `https://openmercato.they.dev` must stay mapped to `TH-EY/open-mercato:develop` through the CloudFormation + ECS path
 - `https://om.they.dev` must stay mapped to `TH-EY/open-mercato:upstream-baseline`
-- `https://om.they.dev` is a stable baseline, never a temporary feature preview
+- `https://om.they.dev` is the seeded QA baseline on the upstream-like runtime, never a temporary feature preview
 - Feature previews for upstream-candidate work must use `https://preview-<slug>.om.they.dev`
-- Preview environments must remain isolated from both `om.they.dev` and `openmercato.they.dev`
+- Preview environments must remain isolated from both `om.they.dev` and `openmercato.they.dev`, even though they seed from the `om.they.dev` baseline dump
 
 ### Preview workflow rules
 

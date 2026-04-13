@@ -22,6 +22,7 @@ This fork uses a split model so we can keep shipping fork-specific work while pr
 - Never develop directly on `develop`, `upstream-baseline`, or `main`.
 - Never merge `develop` into `contrib/*`.
 - Never point the upstream baseline environment at `develop`.
+- `om.they.dev` now serves as a seeded QA baseline on top of the upstream-like Dokploy runtime; preview branches still stay isolated from it.
 
 See [`docs/upstream-contribution-workflow.md`](docs/upstream-contribution-workflow.md) for the operational workflow, preview deployment flow, and strict local quality gate.
 
