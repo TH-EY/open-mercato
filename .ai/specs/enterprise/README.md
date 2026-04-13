@@ -17,6 +17,7 @@ Specs awaiting implementation or in design phase.
 | SPEC | Date | Title | Description |
 | --- | --- | --- | --- |
 | [Health Endpoints](SPEC-ENT-002-2026-02-17-mercato-health-endpoints.md) | 2026-02-17 | Enterprise Health Endpoints | Liveness (`/api/health/live`) and readiness (`/api/health/ready`) endpoints for deployment orchestration |
+| [AWS Upstream Baseline](2026-04-11-aws-upstream-baseline-dokploy.md) | 2026-04-11 | AWS Upstream Baseline Environment (Dokploy) | Stable `om.they.dev` baseline plus per-branch `preview-<slug>.om.they.dev` validation path without CloudFormation/ECS overlay |
 | [DevCloud](DevCloud.md) | — | Developer's Cloud | Managed infrastructure service offering for Open Mercato clients |
 | [Password Change](CONSIDERATION-password-change-integration-2026-03-05.md) | 2026-03-05 | Password Change Integration (Consideration) | Design decision for enterprise password change flow without modifying core |
 

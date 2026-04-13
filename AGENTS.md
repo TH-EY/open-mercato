@@ -9,6 +9,75 @@ Leverage the module system and follow strict naming and coding conventions to ke
 3. Enter plan mode for non-trivial tasks (3+ steps or architectural decisions)
 4. Identify the reference module (customers) if building CRUD features
 
+## Mandatory Upstream Contribution Rules For All AI Agents
+
+These rules are mandatory for every AI agent working in this repository.
+
+### Required reading before branch, deploy, or contribution work
+
+- Read `CONTRIBUTING.md` before doing contribution-flow work
+- Read `docs/upstream-contribution-workflow.md` before changing branches, previews, or deployment guidance
+- Read `.github/QA-DEPLOYMENT.md` before changing preview or QA environment behavior
+
+### Branch and environment source of truth
+
+- `origin/develop` is the fork deployment branch for `https://openmercato.they.dev`
+- `origin/upstream-baseline` is the only clean base for upstream-candidate work and for `https://om.they.dev`
+- `upstream/develop` is the external source of truth mirrored into `origin/upstream-baseline`
+
+### Hard rules for branch selection
+
+- Never start upstream-candidate work from `develop`
+- Always start upstream-candidate work from `upstream-baseline`
+- Upstream-candidate branches must use the naming pattern `contrib/<topic>`
+- Fork-only branches must use the naming pattern `fork/<topic>`
+- Emergency cherry-pick branches into the fork deployment track must use `sync/<topic>-to-develop`
+- Never merge `develop` into `contrib/*`
+- Never merge `contrib/*` directly into `develop`
+- If work stops being upstream-friendly, stop using `contrib/*` and recreate it as `fork/*`
+
+### Environment rules
+
+- `https://openmercato.they.dev` must stay mapped to `TH-EY/open-mercato:develop` through the CloudFormation + ECS path
+- `https://om.they.dev` must stay mapped to `TH-EY/open-mercato:upstream-baseline`
+- `https://om.they.dev` is a stable baseline, never a temporary feature preview
+- Feature previews for upstream-candidate work must use `https://preview-<slug>.om.they.dev`
+- Preview environments must remain isolated from both `om.they.dev` and `openmercato.they.dev`
+
+### Preview workflow rules
+
+- Pushing `contrib/*` must be treated as preview-environment work, not fork deployment work
+- Use `.github/workflows/contrib-preview-upsert.yml` for branch preview creation and updates
+- Use `.github/workflows/contrib-preview-destroy.yml` for preview cleanup
+- Do not reuse shared QA slots as the primary path for upstream-candidate validation
+
+### Fork-only hygiene
+
+- Never put fork-only files or fork-only infrastructure changes into `contrib/*`
+- Treat `.github/fork-only-paths.txt` as a hard guardrail for `contrib/*`
+- If a change touches fork-only deployment paths, classify it as `fork/*` or `sync/*`, not `contrib/*`
+
+### Required operator commands for new upstream-candidate work
+
+Before starting a new `contrib/*` branch, agents must use this refresh flow:
+
+```bash
+git fetch origin --prune
+git fetch upstream --prune
+git checkout upstream-baseline
+git reset --hard origin/upstream-baseline
+git checkout -b contrib/<topic>
+```
+
+### Exception path
+
+If a feature must land on `https://openmercato.they.dev` before upstream merges it:
+
+- keep the clean branch as `contrib/*`
+- create a separate `sync/<topic>-to-develop` branch
+- cherry-pick the needed commits into that sync branch
+- only the sync branch may flow into `develop`
+
 ## Task Router — Where to Find Detailed Guidance
 
 IMPORTANT: Before any research or coding, match the task to the root `AGENTS.md` Task Router table. A single task often maps to **multiple rows** — for example, "add a new module with search" requires both the Module Development and Search guides. Read **all** matching guides before starting. They contain the imports, patterns, and constraints you need. Only use Explore agents for topics not covered by any existing AGENTS.md.

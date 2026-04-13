@@ -1,0 +1,146 @@
+name: Upsert contrib preview
+
+on:
+  push:
+    branches:
+      - 'contrib/**'
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to deploy
+        required: true
+        type: string
+
+concurrency:
+  group: contrib-preview-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.branch || github.event_name == 'pull_request_target' && github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-preview:
+    if: >-
+      github.event_name != 'pull_request_target' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+      issues: write
+    env:
+      AWS_REGION: eu-west-2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve branch
+        id: branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            BRANCH="${{ github.event.inputs.branch }}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "pull_request_target" ]]; then
+            BRANCH="${{ github.event.pull_request.head.ref }}"
+          else
+            BRANCH="${GITHUB_REF_NAME}"
+          fi
+          if [[ "$BRANCH" != contrib/* ]]; then
+            echo "Only contrib/* branches are supported" >&2
+            exit 1
+          fi
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upsert preview
+        id: preview
+        shell: bash
+        env:
+          PREVIEW_ADMIN_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          PREVIEW_ADMIN_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+        run: |
+          set -euo pipefail
+          OUTPUT="$(bash ./infra/aws-upstream-baseline/preview-upsert.sh '${{ steps.branch.outputs.branch }}')"
+          echo "$OUTPUT"
+          while IFS='=' read -r key value; do
+            [[ -z "$key" ]] && continue
+            echo "$key=$value" >> "$GITHUB_OUTPUT"
+          done < <(printf '%s\n' "$OUTPUT" | grep '^preview_')
+
+      - name: Smoke test preview
+        env:
+          BASE_URL: ${{ steps.preview.outputs.preview_url }}
+          SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+        run: bash ./infra/aws-upstream-baseline/smoke.sh
+
+      - name: Comment preview URL on same-repo PRs
+        uses: actions/github-script@v7
+        env:
+          BRANCH_NAME: ${{ steps.branch.outputs.branch }}
+          PREVIEW_URL: ${{ steps.preview.outputs.preview_url }}
+          PREVIEW_HOSTNAME: ${{ steps.preview.outputs.preview_hostname }}
+        with:
+          script: |
+            const branch = process.env.BRANCH_NAME;
+            const previewUrl = process.env.PREVIEW_URL;
+            const previewHostname = process.env.PREVIEW_HOSTNAME;
+            const { owner, repo } = context.repo;
+            const { data: prs } = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: 'open',
+              head: `${owner}:${branch}`,
+            });
+            if (!prs.length) {
+              core.info(`No open same-repo PR found for ${branch}`);
+              return;
+            }
+            const marker = `<!-- om-contrib-preview branch=${branch} host=${previewHostname} -->`;
+            const body = [
+              marker,
+              `Preview environment is ready: ${previewUrl}`,
+              '',
+              `- Branch: ${branch}`,
+              `- Host: ${previewHostname}`,
+            ].join('\n');
+            for (const pr of prs) {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner,
+                repo,
+                issue_number: pr.number,
+                per_page: 100,
+              });
+              const existing = comments.find((comment) => comment.user?.type === 'Bot' && comment.body?.includes(marker));
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: pr.number,
+                  body,
+                });
+              }
+            }
+
+      - name: Workflow summary
+        run: |
+          echo "Preview URL: ${{ steps.preview.outputs.preview_url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Branch: ${{ steps.branch.outputs.branch }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Host: ${{ steps.preview.outputs.preview_hostname }}" >> "$GITHUB_STEP_SUMMARY"

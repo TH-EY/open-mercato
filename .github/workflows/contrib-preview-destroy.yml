@@ -1,0 +1,57 @@
+name: Destroy contrib preview
+
+on:
+  delete:
+  pull_request_target:
+    types:
+      - closed
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to destroy
+        required: true
+        type: string
+
+jobs:
+  destroy-preview:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'delete' && github.event.ref_type == 'branch' && startsWith(github.event.ref, 'contrib/')) ||
+      (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.event.pull_request.head.ref, 'contrib/'))
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: eu-west-2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve branch
+        id: branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            BRANCH="${{ github.event.inputs.branch }}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "pull_request_target" ]]; then
+            BRANCH="${{ github.event.pull_request.head.ref }}"
+          else
+            BRANCH="${{ github.event.ref }}"
+          fi
+          if [[ "$BRANCH" != contrib/* ]]; then
+            echo "Only contrib/* branches are supported" >&2
+            exit 1
+          fi
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Destroy preview
+        run: bash ./infra/aws-upstream-baseline/preview-destroy.sh '${{ steps.branch.outputs.branch }}'
