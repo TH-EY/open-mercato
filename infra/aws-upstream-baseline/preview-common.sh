@@ -60,6 +60,14 @@ preview_hostname_for_slug() {
   printf 'preview-%s.%s\n' "$1" "${PREVIEW_HOST_SUFFIX}"
 }
 
+preview_runtime_env_for_slug() {
+  python3 - <<'PY' "$1"
+import hashlib, sys
+slug = sys.argv[1]
+print(f"prv-{hashlib.sha1(slug.encode()).hexdigest()[:12]}")
+PY
+}
+
 target_group_name_for_slug() {
   python3 - <<'PY' "$1"
 import hashlib, sys

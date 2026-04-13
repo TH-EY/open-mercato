@@ -17,9 +17,10 @@ fi
 
 PREVIEW_SLUG="$(branch_to_preview_slug "${BRANCH}")"
 PREVIEW_HOSTNAME="$(preview_hostname_for_slug "${PREVIEW_SLUG}")"
+PREVIEW_RUNTIME_ENV="$(preview_runtime_env_for_slug "${PREVIEW_SLUG}")"
 TARGET_GROUP_NAME="$(target_group_name_for_slug "${PREVIEW_SLUG}")"
 PREVIEW_PORT="$(choose_preview_port "${PREVIEW_SLUG}" "${TARGET_GROUP_NAME}")"
-PREVIEW_ENV="preview-${PREVIEW_SLUG}"
+PREVIEW_ENV="${PREVIEW_RUNTIME_ENV}"
 PREVIEW_PROJECT="preview-${PREVIEW_SLUG}"
 PREVIEW_URL="https://${PREVIEW_HOSTNAME}"
 REMOTE_WORKDIR="${PREVIEW_REMOTE_ROOT}/${PREVIEW_SLUG}"
