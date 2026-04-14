@@ -596,7 +596,7 @@ export default function SyncExcelUploadConfigWidget({
       if (context.activeTab === 'logs') {
         await context.refreshLogs?.()
       }
-      if (context.activeTab === 'health' || normalizeStatus(detail?.status) !== 'idle') {
+      if (context.activeTab === 'health') {
         await context.refreshHealthSnapshot?.()
       }
       const status = normalizeStatus(detail?.status)
@@ -753,8 +753,12 @@ export default function SyncExcelUploadConfigWidget({
       })
       flash(t('sync_excel.widget.messages.importStarted', 'Import run started.'), 'success')
       await refreshRunDetail(call.result.runId)
-      await context.refreshLogs?.()
-      await context.refreshHealthSnapshot?.()
+      if (context.activeTab === 'logs') {
+        await context.refreshLogs?.()
+      }
+      if (context.activeTab === 'health') {
+        await context.refreshHealthSnapshot?.()
+      }
     } catch {
       flash(t('sync_excel.widget.messages.importError', 'Failed to start import run.'), 'error')
     } finally {
@@ -789,8 +793,12 @@ export default function SyncExcelUploadConfigWidget({
 
       flash(t('sync_excel.widget.messages.cancelSuccess', 'Import run cancelled.'), 'success')
       await refreshRunDetail(runId)
-      await context.refreshLogs?.()
-      await context.refreshHealthSnapshot?.()
+      if (context.activeTab === 'logs') {
+        await context.refreshLogs?.()
+      }
+      if (context.activeTab === 'health') {
+        await context.refreshHealthSnapshot?.()
+      }
     } catch {
       flash(t('sync_excel.widget.messages.cancelError', 'Failed to cancel import run.'), 'error')
     } finally {
@@ -801,9 +809,13 @@ export default function SyncExcelUploadConfigWidget({
   const handleRefreshAll = React.useCallback(async () => {
     if (!runId) return
     await refreshRunDetail(runId)
-    await context.refreshLogs?.()
-    await context.refreshHealthSnapshot?.()
-  }, [context, refreshRunDetail, runId])
+    if (context.activeTab === 'logs') {
+      await context.refreshLogs?.()
+    }
+    if (context.activeTab === 'health') {
+      await context.refreshHealthSnapshot?.()
+    }
+  }, [context.activeTab, context.refreshHealthSnapshot, context.refreshLogs, refreshRunDetail, runId])
 
   const firstSampleRow = preview?.sampleRows[0] ?? null
 

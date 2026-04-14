@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 import * as React from 'react'
-import { render, screen, waitFor, within, fireEvent } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import SyncExcelUploadConfigWidget from '../widget.client'
 import { apiCall } from '@open-mercato/ui/backend/utils/apiCall'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
@@ -100,6 +100,34 @@ const completedRun = {
   },
 }
 
+const runningRun = {
+  ...completedRun,
+  status: 'running' as const,
+  progressJob: {
+    ...completedRun.progressJob,
+    status: 'running' as const,
+    progressPercent: 25,
+    processedCount: 1,
+    totalCount: 4,
+    etaSeconds: 10,
+  },
+}
+
+function renderWidget(activeTab?: string) {
+  return render(
+    <SyncExcelUploadConfigWidget
+      context={{
+        integrationId: 'sync_excel',
+        activeTab,
+        state: { isEnabled: true },
+        refreshLogs: mockRefreshLogs,
+        refreshHealthSnapshot: mockRefreshHealthSnapshot,
+      }}
+      data={{ state: { isEnabled: true } }}
+    />,
+  )
+}
+
 describe('SyncExcelUploadConfigWidget', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -133,18 +161,12 @@ describe('SyncExcelUploadConfigWidget', () => {
     })
   })
 
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
   it('restores preview, mapping, and run state from URL and session storage without dropping into the empty upload state', async () => {
-    render(
-      <SyncExcelUploadConfigWidget
-        context={{
-          integrationId: 'sync_excel',
-          state: { isEnabled: true },
-          refreshLogs: mockRefreshLogs,
-          refreshHealthSnapshot: mockRefreshHealthSnapshot,
-        }}
-        data={{ state: { isEnabled: true } }}
-      />,
-    )
+    renderWidget()
 
     await waitFor(() => expect(screen.getByText('Preview and mapping')).toBeTruthy())
     expect(screen.getByText('Import run status')).toBeTruthy()
@@ -168,20 +190,13 @@ describe('SyncExcelUploadConfigWidget', () => {
     expect(mockReplace).not.toHaveBeenCalled()
   })
 
-  it('refreshes run status together with logs and health snapshot', async () => {
-    render(
-      <SyncExcelUploadConfigWidget
-        context={{
-          integrationId: 'sync_excel',
-          state: { isEnabled: true },
-          refreshLogs: mockRefreshLogs,
-          refreshHealthSnapshot: mockRefreshHealthSnapshot,
-        }}
-        data={{ state: { isEnabled: true } }}
-      />,
-    )
+  it('manual run refresh only reloads logs on the logs tab', async () => {
+    renderWidget('logs')
 
     await waitFor(() => expect(screen.getByText('Import run status')).toBeTruthy())
+    await waitFor(() => expect(mockRefreshLogs).toHaveBeenCalledTimes(1))
+    expect(mockRefreshHealthSnapshot).not.toHaveBeenCalled()
+
     mockRefreshLogs.mockClear()
     mockRefreshHealthSnapshot.mockClear()
     mockApiCall.mockClear()
@@ -191,7 +206,106 @@ describe('SyncExcelUploadConfigWidget', () => {
 
     await waitFor(() => expect(mockApiCall).toHaveBeenCalledWith('/api/data_sync/runs/run-restore-1', undefined, { fallback: null }))
     expect(mockRefreshLogs).toHaveBeenCalledTimes(1)
+    expect(mockRefreshHealthSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('manual run refresh only reloads the health snapshot on the health tab', async () => {
+    renderWidget('health')
+
+    await waitFor(() => expect(screen.getByText('Import run status')).toBeTruthy())
+    await waitFor(() => expect(mockRefreshHealthSnapshot).toHaveBeenCalledTimes(1))
+    expect(mockRefreshLogs).not.toHaveBeenCalled()
+
+    mockRefreshLogs.mockClear()
+    mockRefreshHealthSnapshot.mockClear()
+    mockApiCall.mockClear()
+    mockApiCall.mockResolvedValue({ ok: true, result: completedRun } as any)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh run status' }))
+
+    await waitFor(() => expect(mockApiCall).toHaveBeenCalledWith('/api/data_sync/runs/run-restore-1', undefined, { fallback: null }))
     expect(mockRefreshHealthSnapshot).toHaveBeenCalledTimes(1)
+    expect(mockRefreshLogs).not.toHaveBeenCalled()
+  })
+
+  it('polling stays silent for integration health on the import tab while a run is active', async () => {
+    jest.useFakeTimers()
+    mockApiCall.mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/sync_excel/preview?')) {
+        return { ok: true, result: previewResponse } as any
+      }
+      if (url === '/api/data_sync/runs/run-restore-1') {
+        return { ok: true, result: runningRun } as any
+      }
+      return { ok: false, result: null } as any
+    })
+
+    renderWidget('sync_excel.injection.upload-config')
+
+    await waitFor(() => expect(screen.getByText('Import run status')).toBeTruthy())
+    await waitFor(() => expect(mockApiCall.mock.calls.filter(([url]) => url === '/api/data_sync/runs/run-restore-1').length).toBeGreaterThanOrEqual(1))
+    expect(mockRefreshLogs).not.toHaveBeenCalled()
+    expect(mockRefreshHealthSnapshot).not.toHaveBeenCalled()
+
+    await act(async () => {
+      jest.advanceTimersByTime(4_000)
+    })
+
+    await waitFor(() => expect(mockApiCall.mock.calls.filter(([url]) => url === '/api/data_sync/runs/run-restore-1').length).toBeGreaterThanOrEqual(2))
+    expect(mockRefreshLogs).not.toHaveBeenCalled()
+    expect(mockRefreshHealthSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('polling refreshes logs only on the logs tab while a run is active', async () => {
+    jest.useFakeTimers()
+    mockApiCall.mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/sync_excel/preview?')) {
+        return { ok: true, result: previewResponse } as any
+      }
+      if (url === '/api/data_sync/runs/run-restore-1') {
+        return { ok: true, result: runningRun } as any
+      }
+      return { ok: false, result: null } as any
+    })
+
+    renderWidget('logs')
+
+    await waitFor(() => expect(screen.getByText('Import run status')).toBeTruthy())
+    await waitFor(() => expect(mockRefreshLogs).toHaveBeenCalledTimes(1))
+    expect(mockRefreshHealthSnapshot).not.toHaveBeenCalled()
+
+    await act(async () => {
+      jest.advanceTimersByTime(4_000)
+    })
+
+    await waitFor(() => expect(mockRefreshLogs).toHaveBeenCalledTimes(2))
+    expect(mockRefreshHealthSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('polling refreshes only the health snapshot on the health tab while a run is active', async () => {
+    jest.useFakeTimers()
+    mockApiCall.mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/sync_excel/preview?')) {
+        return { ok: true, result: previewResponse } as any
+      }
+      if (url === '/api/data_sync/runs/run-restore-1') {
+        return { ok: true, result: runningRun } as any
+      }
+      return { ok: false, result: null } as any
+    })
+
+    renderWidget('health')
+
+    await waitFor(() => expect(screen.getByText('Import run status')).toBeTruthy())
+    await waitFor(() => expect(mockRefreshHealthSnapshot).toHaveBeenCalledTimes(1))
+    expect(mockRefreshLogs).not.toHaveBeenCalled()
+
+    await act(async () => {
+      jest.advanceTimersByTime(4_000)
+    })
+
+    await waitFor(() => expect(mockRefreshHealthSnapshot).toHaveBeenCalledTimes(2))
+    expect(mockRefreshLogs).not.toHaveBeenCalled()
   })
 
   it('shows duplicate-risk notices but still allows starting a risky re-import', async () => {
@@ -240,17 +354,7 @@ describe('SyncExcelUploadConfigWidget', () => {
       progressJobId: 'job-restore-1',
     }))
 
-    const { rerender } = render(
-      <SyncExcelUploadConfigWidget
-        context={{
-          integrationId: 'sync_excel',
-          state: { isEnabled: true },
-          refreshLogs: mockRefreshLogs,
-          refreshHealthSnapshot: mockRefreshHealthSnapshot,
-        }}
-        data={{ state: { isEnabled: true } }}
-      />,
-    )
+    const { rerender } = renderWidget()
 
     await waitFor(() => expect(screen.getByText('Preview and mapping')).toBeTruthy())
     expect(
@@ -291,17 +395,7 @@ describe('SyncExcelUploadConfigWidget', () => {
       return { ok: false, result: null } as any
     }) as any)
 
-    render(
-      <SyncExcelUploadConfigWidget
-        context={{
-          integrationId: 'sync_excel',
-          state: { isEnabled: true },
-          refreshLogs: mockRefreshLogs,
-          refreshHealthSnapshot: mockRefreshHealthSnapshot,
-        }}
-        data={{ state: { isEnabled: true } }}
-      />,
-    )
+    renderWidget()
 
     await waitFor(() => expect(screen.getByText('Preview and mapping')).toBeTruthy())
     expect(screen.getByText('Leads.csv')).toBeTruthy()
@@ -315,17 +409,7 @@ describe('SyncExcelUploadConfigWidget', () => {
   it('restores the persisted session even when uploadId disappeared from the URL after tab navigation', async () => {
     currentSearchParams = new URLSearchParams('tab=sync_excel.injection.upload-config')
 
-    render(
-      <SyncExcelUploadConfigWidget
-        context={{
-          integrationId: 'sync_excel',
-          state: { isEnabled: true },
-          refreshLogs: mockRefreshLogs,
-          refreshHealthSnapshot: mockRefreshHealthSnapshot,
-        }}
-        data={{ state: { isEnabled: true } }}
-      />,
-    )
+    renderWidget()
 
     await waitFor(() => expect(screen.getByText('Preview and mapping')).toBeTruthy())
     expect(screen.getByText('Import run status')).toBeTruthy()

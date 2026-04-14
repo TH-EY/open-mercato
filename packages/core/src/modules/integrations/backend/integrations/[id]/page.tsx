@@ -109,6 +109,8 @@ type HealthCheckResponse = {
   checkedAt: string
 }
 
+type LoadDetailMode = 'blocking' | 'silent'
+
 const LOG_LEVEL_STYLES: Record<string, string> = {
   info: 'bg-blue-100 text-blue-800',
   warn: 'bg-yellow-100 text-yellow-800',
@@ -307,15 +309,18 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
     )
   }, [integrationId])
 
-  const loadDetail = React.useCallback(async () => {
+  const loadDetail = React.useCallback(async (mode: LoadDetailMode = 'blocking') => {
     const currentIntegrationId = resolveCurrentIntegrationId()
+    const isBlockingLoad = mode === 'blocking'
     if (!currentIntegrationId) {
       setIsLoading(false)
       setError(t('integrations.detail.loadError', 'Failed to load integration'))
-      return
+      return null
     }
     setError(null)
-    setIsLoading(true)
+    if (isBlockingLoad) {
+      setIsLoading(true)
+    }
     try {
       const call = await apiCall<IntegrationDetail>(
         `/api/integrations/${encodeURIComponent(currentIntegrationId)}`,
@@ -324,14 +329,22 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
       )
       if (!call.ok || !call.result) {
         setError(t('integrations.detail.loadError', 'Failed to load integration'))
-        setIsLoading(false)
-        return
+        if (isBlockingLoad) {
+          setIsLoading(false)
+        }
+        return null
       }
       setDetail(call.result)
-      setIsLoading(false)
+      if (isBlockingLoad) {
+        setIsLoading(false)
+      }
+      return call.result
     } catch {
       setError(t('integrations.detail.loadError', 'Failed to load integration'))
-      setIsLoading(false)
+      if (isBlockingLoad) {
+        setIsLoading(false)
+      }
+      return null
     }
   }, [resolveCurrentIntegrationId, t])
 
@@ -379,14 +392,14 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
     spotId: detailWidgetSpotId,
   })
   const refreshDetail = React.useCallback(async () => {
-    await loadDetail()
+    await loadDetail('silent')
     await loadCredentials()
   }, [loadCredentials, loadDetail])
   const refreshLogs = React.useCallback(async () => {
     await loadLogs()
   }, [loadLogs])
   const refreshHealthSnapshot = React.useCallback(async () => {
-    await loadDetail()
+    await loadDetail('silent')
   }, [loadDetail])
   const injectionContext = React.useMemo(
     () => ({
@@ -796,7 +809,7 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
       if (cancelled) return
 
       await loadLogs()
-      await loadDetail()
+      await loadDetail('silent')
 
       const status = typeof call.result?.status === 'string' ? call.result.status : null
       if (status === 'pending' || status === 'running') {
