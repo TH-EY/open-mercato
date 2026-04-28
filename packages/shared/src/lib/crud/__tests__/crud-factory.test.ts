@@ -4,16 +4,32 @@ import { z } from 'zod'
 
 // ---- Mocks ----
 const mockEventBus = { emitEvent: jest.fn() }
+const defaultOrganizationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const defaultTenantId = '123e4567-e89b-12d3-a456-426614174000'
+type MockOrganizationScope = {
+  selectedId: string | null
+  filterIds: string[] | null
+  allowedIds: string[] | null
+  tenantId: string | null
+}
 
 type Rec = { id: string; organizationId: string; tenantId: string; title?: string; isDone?: boolean; deletedAt?: Date | null }
 let db: Record<string, Rec>
 let idSeq = 1
 let commandBus: { execute: jest.Mock }
 let crudMutationGuardService: { validateMutation: jest.Mock; afterMutationSuccess: jest.Mock } | null
+let mockOrganizationScopeOverride: MockOrganizationScope | null
 
 const em = {
   create: (_cls: any, data: any) => ({ ...data, id: `id-${idSeq++}` }),
-  persistAndFlush: async (entity: Rec) => { db[entity.id] = { ...(db[entity.id] || {} as any), ...entity } },
+  persist(entity: Rec) {
+    db[entity.id] = { ...(db[entity.id] || {} as any), ...entity }
+    return { flush: async () => undefined }
+  },
+  remove(entity: Rec) {
+    delete db[entity.id]
+    return { flush: async () => undefined }
+  },
   findOne: async (_entity: any, where: any) => (em.getRepository(_entity).findOne(where) as any),
   getRepository: (_cls: any) => ({
     find: async (where: any) => Object.values(db).filter((r) => {
@@ -47,7 +63,10 @@ const em = {
           : r.organizationId === orgClause
       return matchesOrg && r.tenantId === where.tenantId
     }) || null,
-    removeAndFlush: async (entity: Rec) => { delete db[entity.id] },
+    remove(entity: Rec) {
+      delete db[entity.id]
+      return { flush: async () => undefined }
+    },
   }),
 }
 
@@ -59,22 +78,22 @@ const mockDataEngine = {
   __pendingSideEffects: [] as any[],
   createOrmEntity: jest.fn(async ({ entity, data }: any) => {
     const created = em.create(entity, data)
-    await em.persistAndFlush(created as any)
+    await em.persist(created as any).flush()
     return created
   }),
   updateOrmEntity: jest.fn(async ({ entity, where, apply }: any) => {
     const current = await (em.getRepository(entity).findOne(where) as any)
     if (!current) return null
     await apply(current)
-    await em.persistAndFlush(current)
+    await em.persist(current).flush()
     return current
   }),
   deleteOrmEntity: jest.fn(async ({ entity, where, soft, softDeleteField }: any) => {
     const repo = em.getRepository(entity)
     const current = await (repo.findOne(where) as any)
     if (!current) return null
-    if (soft !== false) { (current as any)[softDeleteField || 'deletedAt'] = new Date(); await em.persistAndFlush(current) }
-    else await repo.removeAndFlush(current)
+    if (soft !== false) { (current as any)[softDeleteField || 'deletedAt'] = new Date(); await em.persist(current).flush() }
+    else await repo.remove(current).flush()
     return current
   }),
   setCustomFields: jest.fn(async (args: any) => {
@@ -112,12 +131,26 @@ jest.mock('@open-mercato/shared/lib/di/container', () => ({
 }))
 
 jest.mock('@open-mercato/shared/lib/auth/server', () => {
-  const auth = { sub: 'u1', orgId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', tenantId: '123e4567-e89b-12d3-a456-426614174000', roles: ['admin'] }
+  const auth = {
+    sub: 'u1',
+    orgId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    tenantId: '123e4567-e89b-12d3-a456-426614174000',
+    roles: ['admin'],
+  }
   return {
     getAuthFromCookies: async () => auth,
     getAuthFromRequest: async () => auth,
   }
 })
+
+jest.mock('@open-mercato/core/modules/directory/utils/organizationScope', () => ({
+  resolveOrganizationScopeForRequest: jest.fn(async () => mockOrganizationScopeOverride ?? ({
+    selectedId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    filterIds: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
+    allowedIds: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
+    tenantId: '123e4567-e89b-12d3-a456-426614174000',
+  })),
+}))
 
 const setRecordCustomFields = jest.fn(async () => {})
 jest.mock('@open-mercato/core/modules/entities/lib/helpers', () => ({
@@ -134,6 +167,7 @@ describe('CRUD Factory', () => {
     jest.clearAllMocks()
     accessLogService.log.mockClear()
     mockDataEngine.__pendingSideEffects = []
+    mockOrganizationScopeOverride = null
     commandBus = {
       execute: jest.fn(async () => ({ result: {}, logEntry: { id: 'log-1' } })),
     }
@@ -254,16 +288,74 @@ describe('CRUD Factory', () => {
 
     const first = em.create(Todo, { title: 'One', organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', tenantId: '123e4567-e89b-12d3-a456-426614174000' }) as Rec
     first.id = '550e8400-e29b-41d4-a716-446655440010'
-    await em.persistAndFlush(first)
+    await em.persist(first).flush()
     const second = em.create(Todo, { title: 'Two', organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', tenantId: '123e4567-e89b-12d3-a456-426614174000' }) as Rec
     second.id = '550e8400-e29b-41d4-a716-446655440011'
-    await em.persistAndFlush(second)
+    await em.persist(second).flush()
 
     const res = await fallbackRoute.GET(new Request(`http://x/api/example/todos?ids=${first.id}`))
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.items).toHaveLength(1)
     expect(body.items[0]?.id).toBe(first.id)
+  })
+
+  it('GET ORM fallback keeps automatic tenant/org scoping by default', async () => {
+    const fallbackRoute = makeCrudRoute({
+      metadata: { GET: { requireAuth: true } },
+      orm: { entity: Todo, idField: 'id', orgField: 'organizationId', tenantField: 'tenantId', softDeleteField: 'deletedAt' },
+      list: {
+        schema: querySchema,
+        buildFilters: () => ({} as any),
+      },
+    })
+
+    const mine = em.create(Todo, { title: 'Mine', organizationId: defaultOrganizationId, tenantId: defaultTenantId }) as Rec
+    mine.id = '550e8400-e29b-41d4-a716-446655440020'
+    await em.persist(mine).flush()
+    const other = em.create(Todo, { title: 'Other', organizationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', tenantId: defaultTenantId }) as Rec
+    other.id = '550e8400-e29b-41d4-a716-446655440021'
+    await em.persist(other).flush()
+
+    const res = await fallbackRoute.GET(new Request('http://x/api/example/todos'))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    const ids = body.items.map((i: any) => i.id)
+    expect(ids).toContain(mine.id)
+    expect(ids).not.toContain(other.id)
+  })
+
+  it('GET ORM fallback skips automatic scoping when omitAutomaticTenantOrgScope is set', async () => {
+    const fallbackRoute = makeCrudRoute({
+      metadata: { GET: { requireAuth: true } },
+      orm: { entity: Todo, idField: 'id', orgField: 'organizationId', tenantField: 'tenantId', softDeleteField: 'deletedAt' },
+      list: {
+        schema: querySchema,
+        buildFilters: () => ({} as any),
+        omitAutomaticTenantOrgScope: true,
+      },
+    })
+
+    const mine = em.create(Todo, { title: 'Mine', organizationId: defaultOrganizationId, tenantId: defaultTenantId }) as Rec
+    mine.id = '550e8400-e29b-41d4-a716-446655440030'
+    await em.persist(mine).flush()
+    const otherOrg = em.create(Todo, { title: 'OtherOrg', organizationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', tenantId: defaultTenantId }) as Rec
+    otherOrg.id = '550e8400-e29b-41d4-a716-446655440031'
+    await em.persist(otherOrg).flush()
+    const otherTenant = em.create(Todo, { title: 'OtherTenant', organizationId: defaultOrganizationId, tenantId: 'ffffffff-ffff-4fff-8fff-ffffffffffff' }) as Rec
+    otherTenant.id = '550e8400-e29b-41d4-a716-446655440032'
+    await em.persist(otherTenant).flush()
+
+    const res = await fallbackRoute.GET(new Request('http://x/api/example/todos'))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    const ids = body.items.map((i: any) => i.id)
+    // With the flag, buildFilters returns {} and auto-scope is suppressed —
+    // so rows from other orgs/tenants are reachable. Callers are expected to
+    // encode full visibility in buildFilters themselves.
+    expect(ids).toContain(mine.id)
+    expect(ids).toContain(otherOrg.id)
+    expect(ids).toContain(otherTenant.id)
   })
 
   it('GET returns CSV when format=csv', async () => {
@@ -348,10 +440,10 @@ describe('CRUD Factory', () => {
 
   it('PUT updates entity, saves custom fields, emits updated event', async () => {
     // Seed
-    const created = em.create(Todo, { title: 'X', organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', tenantId: '123e4567-e89b-12d3-a456-426614174000' }) as Rec
+    const created = em.create(Todo, { title: 'X', organizationId: defaultOrganizationId, tenantId: defaultTenantId }) as Rec
     // Force UUID id to satisfy validation
     created.id = '123e4567-e89b-12d3-a456-426614174001'
-    await em.persistAndFlush(created)
+    await em.persist(created).flush()
     const res = await route.PUT(new Request('http://x/api/example/todos', { method: 'PUT', body: JSON.stringify({ id: created.id, title: 'X2', cf_priority: 5 }), headers: { 'content-type': 'application/json' } }))
     expect(res.status).toBe(200)
     expect(setRecordCustomFields).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ values: { priority: 5 } }))
@@ -366,9 +458,9 @@ describe('CRUD Factory', () => {
   })
 
   it('DELETE soft-deletes entity and emits deleted event', async () => {
-    const created = em.create(Todo, { title: 'Y', organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', tenantId: '123e4567-e89b-12d3-a456-426614174000' }) as Rec
+    const created = em.create(Todo, { title: 'Y', organizationId: defaultOrganizationId, tenantId: defaultTenantId }) as Rec
     created.id = '123e4567-e89b-12d3-a456-426614174002'
-    await em.persistAndFlush(created)
+    await em.persist(created).flush()
     const res = await route.DELETE(new Request(`http://x/api/example/todos?id=${created.id}`, { method: 'DELETE' }))
     expect(res.status).toBe(200)
     expect(mockDataEngine.emitOrmEntityEvent).toHaveBeenCalledTimes(1)
@@ -379,6 +471,46 @@ describe('CRUD Factory', () => {
     expect(deletedArgs.identifiers.id).toBe(created.id)
     expect(deletedArgs.indexer?.entityType).toBe('example.todo')
     expect(db[created.id].deletedAt).toBeInstanceOf(Date)
+  })
+
+  it('trims padded selected organization ids when scope resolution falls back from empty filter ids', async () => {
+    const created = em.create(Todo, { title: 'Scoped', organizationId: defaultOrganizationId, tenantId: defaultTenantId }) as Rec
+    created.id = '123e4567-e89b-12d3-a456-426614174052'
+    await em.persist(created).flush()
+    mockOrganizationScopeOverride = {
+      selectedId: ` ${defaultOrganizationId} `,
+      filterIds: [],
+      allowedIds: null,
+      tenantId: defaultTenantId,
+    }
+
+    const updateResponse = await route.PUT(new Request('http://x/api/example/todos', {
+      method: 'PUT',
+      body: JSON.stringify({ id: created.id, title: 'Scoped Updated' }),
+      headers: { 'content-type': 'application/json' },
+    }))
+
+    expect(updateResponse.status).toBe(200)
+    expect(mockDataEngine.updateOrmEntity).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: {
+        id: created.id,
+        organizationId: defaultOrganizationId,
+        tenantId: defaultTenantId,
+        deletedAt: null,
+      },
+    }))
+
+    const deleteResponse = await route.DELETE(new Request(`http://x/api/example/todos?id=${created.id}`, { method: 'DELETE' }))
+
+    expect(deleteResponse.status).toBe(200)
+    expect(mockDataEngine.deleteOrmEntity).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: {
+        id: created.id,
+        organizationId: defaultOrganizationId,
+        tenantId: defaultTenantId,
+        deletedAt: null,
+      },
+    }))
   })
 
   it('PUT mutation guard uses route resource identity instead of spoofed lock headers', async () => {
@@ -396,7 +528,7 @@ describe('CRUD Factory', () => {
       tenantId: '123e4567-e89b-12d3-a456-426614174000',
     }) as Rec
     created.id = '123e4567-e89b-12d3-a456-426614174051'
-    await em.persistAndFlush(created)
+    await em.persist(created).flush()
 
     const res = await route.PUT(new Request('http://x/api/example/todos', {
       method: 'PUT',

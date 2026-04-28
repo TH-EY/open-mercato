@@ -41,8 +41,14 @@ import {
   GLOBAL_SIDEBAR_STATUS_BADGES_INJECTION_SPOT_ID,
 } from './injection/spotIds'
 
+export type ShellLogo = {
+  src: string
+  alt?: string
+}
+
 export type AppShellProps = {
   productName?: string
+  logo?: ShellLogo
   email?: string
   groups: {
     id?: string
@@ -54,6 +60,7 @@ export type AppShellProps = {
       title: string
       defaultTitle?: string
       icon?: React.ReactNode
+      iconName?: string
       iconMarkup?: string
       enabled?: boolean
       hidden?: boolean
@@ -64,6 +71,7 @@ export type AppShellProps = {
         title: string
         defaultTitle?: string
         icon?: React.ReactNode
+        iconName?: string
         iconMarkup?: string
         enabled?: boolean
         hidden?: boolean
@@ -109,6 +117,7 @@ function convertInjectedMenuItemToSidebarItem(item: InjectionMenuItem, title: st
     title,
     defaultTitle: title,
     icon: resolveInjectedIcon(item.icon) ?? undefined,
+    iconName: item.icon,
     enabled: true,
     hidden: false,
     pageContext: 'main',
@@ -302,8 +311,17 @@ function SerializedIcon({ markup }: { markup: string }) {
   return <span aria-hidden="true" dangerouslySetInnerHTML={{ __html: markup }} />
 }
 
-function renderIcon(icon: React.ReactNode | undefined, iconMarkup: string | undefined, fallback: React.ReactNode) {
+function renderIcon(
+  icon: React.ReactNode | undefined,
+  iconName: string | undefined,
+  iconMarkup: string | undefined,
+  fallback: React.ReactNode,
+) {
   if (icon) return icon
+  if (iconName) {
+    const resolved = resolveInjectedIcon(iconName)
+    if (resolved) return resolved
+  }
   if (iconMarkup) return <SerializedIcon markup={iconMarkup} />
   return fallback
 }
@@ -386,7 +404,7 @@ export function AppShell(props: AppShellProps) {
   )
 }
 
-function AppShellBody({ productName, email, groups, rightHeaderSlot, children, sidebarCollapsedDefault = false, currentTitle, breadcrumb, version, settingsSectionTitle, settingsPathPrefixes = [], settingsSections, profileSections, profileSectionTitle, profilePathPrefixes = [], mobileSidebarSlot }: AppShellProps) {
+function AppShellBody({ productName, logo, email, groups, rightHeaderSlot, children, sidebarCollapsedDefault = false, currentTitle, breadcrumb, version, settingsSectionTitle, settingsPathPrefixes = [], settingsSections, profileSections, profileSectionTitle, profilePathPrefixes = [], mobileSidebarSlot }: AppShellProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const t = useT()
@@ -796,7 +814,7 @@ function AppShellBody({ productName, email, groups, rightHeaderSlot, children, s
         {!hideHeader && (
           <div className={`flex items-center ${compact ? 'justify-center' : 'justify-between'} mb-2`}>
             <Link href="/backend" className="flex items-center gap-2" aria-label={t('appShell.goToDashboard')}>
-              <Image src="/open-mercato.svg" alt={resolvedProductName} width={32} height={32} className="rounded m-4" />
+              <Image src={logo?.src ?? "/open-mercato.svg"} alt={logo?.alt ?? resolvedProductName} width={32} height={32} className="rounded m-4" />
               {!compact && <div className="text-m font-semibold">{resolvedProductName}</div>}
             </Link>
           </div>
@@ -862,6 +880,7 @@ function AppShellBody({ productName, email, groups, rightHeaderSlot, children, s
                     <span className={`flex items-center justify-center shrink-0 ${compact ? '' : 'text-muted-foreground'}`}>
                       {renderIcon(
                         item.icon,
+                        item.iconName,
                         item.iconMarkup,
                         item.href.includes('/backend/entities/user/') && item.href.endsWith('/records') ? DataTableIcon : DefaultIcon,
                       )}
@@ -906,7 +925,7 @@ function AppShellBody({ productName, email, groups, rightHeaderSlot, children, s
           {!hideHeader ? (
             <div className={`flex items-center ${compact ? 'justify-center' : 'justify-between'} mb-2`}>
               <Link href="/backend" className="flex items-center gap-2" aria-label={t('appShell.goToDashboard')}>
-                <Image src="/open-mercato.svg" alt={resolvedProductName} width={32} height={32} className="rounded m-4" />
+                <Image src={logo?.src ?? "/open-mercato.svg"} alt={logo?.alt ?? resolvedProductName} width={32} height={32} className="rounded m-4" />
                 {!compact && <div className="text-m font-semibold">{resolvedProductName}</div>}
               </Link>
             </div>
@@ -1155,7 +1174,7 @@ function AppShellBody({ productName, email, groups, rightHeaderSlot, children, s
         {!hideHeader && (
           <div className={`flex items-center ${compact ? 'justify-center' : 'justify-between'} mb-2`}>
             <Link href="/backend" className="flex items-center gap-2" aria-label={t('appShell.goToDashboard')}>
-              <Image src="/open-mercato.svg" alt={resolvedProductName} width={32} height={32} className="rounded m-4" />
+              <Image src={logo?.src ?? "/open-mercato.svg"} alt={logo?.alt ?? resolvedProductName} width={32} height={32} className="rounded m-4" />
               {!compact && <div className="text-m font-semibold">{resolvedProductName}</div>}
             </Link>
           </div>
@@ -1243,7 +1262,12 @@ function AppShellBody({ productName, email, groups, rightHeaderSlot, children, s
                                         <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded bg-foreground" />
                                       ) : null}
                                       <span className={`flex items-center justify-center shrink-0 ${compact ? '' : 'text-muted-foreground'}`}>
-                                        {renderIcon(i.icon, i.iconMarkup, DefaultIcon)}
+                                        {renderIcon(
+                                          i.icon,
+                                          i.iconName,
+                                          i.iconMarkup,
+                                          DefaultIcon,
+                                        )}
                                       </span>
                                       {!compact && <span>{i.title}</span>}
                                     </Link>
@@ -1270,6 +1294,7 @@ function AppShellBody({ productName, email, groups, rightHeaderSlot, children, s
                                               <span className={`flex items-center justify-center shrink-0 ${compact ? '' : 'text-muted-foreground'}`}>
                                                 {renderIcon(
                                                   c.icon,
+                                                  c.iconName,
                                                   c.iconMarkup,
                                                   c.href.includes('/backend/entities/user/') && c.href.endsWith('/records') ? DataTableIcon : DefaultIcon,
                                                 )}
@@ -1533,7 +1558,7 @@ function AppShellBody({ productName, email, groups, rightHeaderSlot, children, s
           <aside className="absolute left-0 top-0 flex h-full w-[260px] flex-col bg-background border-r overflow-hidden">
             <div className="shrink-0 p-3 pb-2 flex items-center justify-between border-b">
               <Link href="/backend" className="flex items-center gap-2 text-sm font-semibold" onClick={() => setMobileOpen(false)} aria-label={t('appShell.goToDashboard')}>
-                <Image src="/open-mercato.svg" alt={resolvedProductName} width={28} height={28} className="rounded" />
+                <Image src={logo?.src ?? "/open-mercato.svg"} alt={logo?.alt ?? resolvedProductName} width={28} height={28} className="rounded" />
                 {resolvedProductName}
               </Link>
               <IconButton variant="outline" size="sm" onClick={() => setMobileOpen(false)} aria-label={t('appShell.closeMenu')}>✕</IconButton>
@@ -1564,6 +1589,7 @@ AppShell.cloneGroups = function cloneGroups(groups: AppShellProps['groups']): Ap
     title: item.title,
     defaultTitle: item.defaultTitle,
     icon: item.icon,
+    iconName: item.iconName,
     iconMarkup: item.iconMarkup,
     enabled: item.enabled,
     hidden: item.hidden,

@@ -78,6 +78,12 @@ const DEPRECATION_HEADERS = {
   Link: '</api/customers/interactions>; rel="successor-version"',
 }
 
+// Caps the per-source fetch window used by the deprecated merged (legacy +
+// canonical bridge) read path. Keeps memory bounded on tenants with large
+// todo history; deep-pagination beyond this window is not supported here —
+// use /api/customers/interactions instead.
+const MERGED_TODO_FETCH_CAP = 2000
+
 function resolveGuardUserId(auth: {
   sub?: string | null
   userId?: string | null
@@ -137,13 +143,14 @@ function collectTodoCustomValues(
 async function findLegacyTodoLink(
   em: EntityManager,
   target: { linkId?: string; todoId?: string },
+  tenantId: string,
 ): Promise<CustomerTodoLink | null> {
   if (target.linkId) {
-    const byLinkId = await em.findOne(CustomerTodoLink, { id: target.linkId }, { populate: ['entity'] })
+    const byLinkId = await em.findOne(CustomerTodoLink, { id: target.linkId, tenantId }, { populate: ['entity'] })
     if (byLinkId) return byLinkId
   }
   if (target.todoId) {
-    return await em.findOne(CustomerTodoLink, { todoId: target.todoId }, { populate: ['entity'] })
+    return await em.findOne(CustomerTodoLink, { todoId: target.todoId, tenantId }, { populate: ['entity'] })
   }
   return null
 }
@@ -155,7 +162,7 @@ async function ensureCanonicalTodoBridge(
   commandContext: Parameters<CommandBus['execute']>[1]['ctx'],
   link: CustomerTodoLink,
 ): Promise<string> {
-  const existing = await em.findOne(CustomerInteraction, { id: link.todoId })
+  const existing = await em.findOne(CustomerInteraction, { id: link.todoId, tenantId: link.tenantId })
   if (existing) return existing.id
 
   const detailMap = await resolveLegacyTodoDetails(
@@ -174,6 +181,8 @@ async function ensureCanonicalTodoBridge(
   await commandBus.execute('customers.interactions.create', {
     input: {
       id: link.todoId,
+      tenantId: link.tenantId,
+      organizationId: link.organizationId,
       entityId,
       interactionType: 'task',
       title: detail?.title ?? null,
@@ -196,13 +205,14 @@ async function resolveCanonicalTodoTargetId(
   commandBus: CommandBus,
   commandContext: Parameters<CommandBus['execute']>[1]['ctx'],
   target: { todoId?: string; linkId?: string },
+  tenantId: string,
 ): Promise<string> {
   if (target.todoId) {
-    const interaction = await em.findOne(CustomerInteraction, { id: target.todoId })
+    const interaction = await em.findOne(CustomerInteraction, { id: target.todoId, tenantId })
     if (interaction) return interaction.id
   }
 
-  const legacyLink = await findLegacyTodoLink(em, target)
+  const legacyLink = await findLegacyTodoLink(em, target, tenantId)
   if (!legacyLink) {
     if (!target.todoId) throw new CrudHttpError(404, { error: 'Todo not found' })
     return target.todoId
@@ -230,34 +240,56 @@ export async function GET(request: Request): Promise<Response> {
     const exportAll = parseBooleanToken(query.all) === true
     const search = normalizeTodoSearch(query.search)
 
-    const mergedRows = flags.unified
-      ? (await listCanonicalTodoRows(
-          em,
-          container,
-          auth,
-          selectedOrganizationId,
-          organizationIds,
-          { entityId: query.entityId },
-        )).items
-      : await Promise.all([
-        listLegacyTodoRows(em, queryEngine, auth.tenantId, organizationIds, query.entityId),
-        listCanonicalTodoRows(
-          em,
-          container,
-          auth,
-          selectedOrganizationId,
-          organizationIds,
-          {
-            entityId: query.entityId,
-            includeDeleted: true,
-            source: CUSTOMER_INTERACTION_TODO_ADAPTER_SOURCE,
-          },
-        ),
-      ]).then(([legacyRows, canonicalRows]) => [
-        ...legacyRows.filter((row) => !canonicalRows.bridgeIds.has(row.todoId)),
-        ...canonicalRows.items,
-      ])
+    if (flags.unified) {
+      const canonical = await listCanonicalTodoRows(
+        em,
+        container,
+        auth,
+        selectedOrganizationId,
+        organizationIds,
+        {
+          entityId: query.entityId,
+          pagination: exportAll ? null : { page: query.page, pageSize: query.pageSize },
+          searchText: search,
+        },
+      )
+      const total = canonical.total
+      return withAdapterHeaders(
+        NextResponse.json({
+          items: canonical.items,
+          total,
+          page: exportAll ? 1 : query.page,
+          pageSize: exportAll ? canonical.items.length : query.pageSize,
+          totalPages: exportAll ? 1 : Math.max(1, Math.ceil(total / query.pageSize)),
+        }),
+      )
+    }
 
+    const legacyWindow = exportAll
+      ? null
+      : Math.min(MERGED_TODO_FETCH_CAP, Math.max(query.pageSize, query.page * query.pageSize + query.pageSize))
+    const [legacyRows, canonicalRows] = await Promise.all([
+      listLegacyTodoRows(em, queryEngine, auth.tenantId, organizationIds, query.entityId, {
+        limit: legacyWindow,
+      }),
+      listCanonicalTodoRows(
+        em,
+        container,
+        auth,
+        selectedOrganizationId,
+        organizationIds,
+        {
+          entityId: query.entityId,
+          includeDeleted: true,
+          source: CUSTOMER_INTERACTION_TODO_ADAPTER_SOURCE,
+          limit: legacyWindow,
+        },
+      ),
+    ])
+    const mergedRows = [
+      ...legacyRows.filter((row) => !canonicalRows.bridgeIds.has(row.todoId)),
+      ...canonicalRows.items,
+    ]
     const filteredRows = filterTodoRows(sortTodoRows(mergedRows), search)
     const paged = paginateTodoRows(filteredRows, query.page, query.pageSize, exportAll)
 
@@ -314,6 +346,8 @@ export async function POST(request: Request): Promise<Response> {
 
     const { result } = await commandBus.execute('customers.interactions.create', {
       input: {
+        tenantId: auth.tenantId,
+        organizationId: selectedOrganizationId ?? auth.orgId,
         entityId: body.entityId,
         interactionType: 'task',
         title: body.title,
@@ -420,6 +454,7 @@ export async function PUT(request: Request): Promise<Response> {
             todoId: body.id,
             linkId: body.linkId,
           },
+          auth.tenantId,
         )
     const customValues = collectTodoCustomValues(body as Record<string, unknown>)
     const nextDone = normalizeTodoStatusInput(body)
@@ -510,6 +545,7 @@ export async function DELETE(request: Request): Promise<Response> {
             linkId: body.id,
             todoId: body.todoId ?? body.id,
           },
+          auth.tenantId,
         )
 
     await commandBus.execute('customers.interactions.delete', {

@@ -1,8 +1,9 @@
-import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import spawn from 'cross-spawn'
+import { resolveSpawnCommand } from './dev-spawn-utils.mjs'
 
 const FALSE_TOKENS = new Set(['0', 'false', 'no', 'off', 'disabled'])
 const TOOL_DEFINITIONS = [
@@ -306,7 +307,7 @@ function writeJson(res, statusCode, payload) {
 // the shell-launching codepath. This is the canonical sanitizer for paths and
 // shell argument values used by the splash coding flow; CodeQL recognizes the
 // explicit reject as a safe boundary.
-const SHELL_UNSAFE_CHAR_PATTERN = /[\u0000-\u001f\u007f]/
+const SHELL_UNSAFE_CHAR_PATTERN = /[\u0000-\u001f\u007f`$"';&|<>()[\]!^]/
 
 export function isShellSafePathString(value) {
   return typeof value === 'string'
@@ -324,7 +325,10 @@ export function assertShellSafePath(value, label) {
 export { sanitizeLaunchDirectory }
 
 function sanitizeLaunchDirectory(value) {
-  const fallback = process.cwd()
+  const homeFallback = path.resolve(os.homedir())
+  const tmpFallback = path.resolve(os.tmpdir())
+  const fallback = isShellSafePathString(homeFallback) ? homeFallback : assertShellSafePath(tmpFallback, 'Fallback launch directory')
+
   if (!isShellSafePathString(value) || value.trim().length === 0) {
     return fallback
   }
@@ -376,11 +380,13 @@ function readJsonBody(req) {
 
 function spawnDetached(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const resolvedSpawn = resolveSpawnCommand(command, args)
+    const child = spawn(resolvedSpawn.command, resolvedSpawn.args, {
       cwd: options.cwd,
       env: options.env,
       detached: true,
       stdio: 'ignore',
+      ...resolvedSpawn.spawnOptions,
     })
 
     child.once('error', reject)
@@ -393,10 +399,12 @@ function spawnDetached(command, args, options = {}) {
 
 function spawnCaptured(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const resolvedSpawn = resolveSpawnCommand(command, args)
+    const child = spawn(resolvedSpawn.command, resolvedSpawn.args, {
       cwd: options.cwd,
       env: options.env,
       stdio: ['ignore', 'pipe', 'pipe'],
+      ...resolvedSpawn.spawnOptions,
     })
 
     let stdout = ''

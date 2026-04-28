@@ -13,7 +13,9 @@ export function buildScopedWhere(
 
   if (orgField) {
     if (scope.organizationIds !== undefined) {
-      const ids = (scope.organizationIds ?? []).filter((id): id is string => typeof id === 'string' && id.length > 0)
+      const ids = (scope.organizationIds ?? [])
+        .map((id) => (typeof id === 'string' ? id.trim() : id))
+        .filter((id): id is string => typeof id === 'string' && id.length > 0)
       if (ids.length === 0) {
         where[orgField] = { $in: [] }
       } else if (ids.length === 1) {
@@ -55,5 +57,5 @@ export async function softDelete<T extends { deletedAt?: Date | null }>(
   entity: T
 ): Promise<void> {
   ;(entity as any).deletedAt = new Date()
-  await em.persistAndFlush(entity)
+  await em.persist(entity).flush()
 }

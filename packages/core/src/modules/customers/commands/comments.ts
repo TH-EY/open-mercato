@@ -8,7 +8,7 @@ import { commentCreateSchema, commentUpdateSchema, type CommentCreateInput, type
 import {
   ensureOrganizationScope,
   ensureTenantScope,
-  requireCustomerEntity,
+  requireTimelineParentEntity,
   ensureSameScope,
   extractUndoPayload,
   requireDealInScope,
@@ -82,7 +82,7 @@ const createCommentCommand: CommandHandler<CommentCreateInput, { commentId: stri
     const normalizedAuthor = normalizeAuthorUserId(parsed.authorUserId, ctx.auth)
 
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    const entity = await requireCustomerEntity(em, parsed.entityId, undefined, 'Customer not found')
+    const entity = await requireTimelineParentEntity(em, parsed.entityId)
     ensureSameScope(entity, parsed.organizationId, parsed.tenantId)
     const deal = await requireDealInScope(em, parsed.dealId, parsed.tenantId, parsed.organizationId)
 
@@ -133,6 +133,8 @@ const createCommentCommand: CommandHandler<CommentCreateInput, { commentId: stri
       tenantId: snapshot?.tenantId ?? null,
       organizationId: snapshot?.organizationId ?? null,
       snapshotAfter: snapshot ?? null,
+      relatedResourceKind: snapshot?.dealId ? 'customers.deal' : null,
+      relatedResourceId: snapshot?.dealId ?? null,
       payload: {
         undo: {
           after: snapshot ?? null,
@@ -169,7 +171,7 @@ const updateCommentCommand: CommandHandler<CommentUpdateInput, { commentId: stri
     ensureOrganizationScope(ctx, comment.organizationId)
 
     if (parsed.entityId !== undefined) {
-      const entity = await requireCustomerEntity(em, parsed.entityId, undefined, 'Customer not found')
+      const entity = await requireTimelineParentEntity(em, parsed.entityId)
       ensureSameScope(entity, comment.organizationId, comment.tenantId)
       comment.entity = entity
     }
@@ -226,6 +228,8 @@ const updateCommentCommand: CommandHandler<CommentUpdateInput, { commentId: stri
       organizationId: before.organizationId,
       snapshotBefore: before,
       snapshotAfter: afterSnapshot ?? null,
+      relatedResourceKind: (afterSnapshot?.dealId ?? before.dealId) ? 'customers.deal' : null,
+      relatedResourceId: afterSnapshot?.dealId ?? before.dealId ?? null,
       changes,
       payload: {
         undo: {
@@ -241,7 +245,7 @@ const updateCommentCommand: CommandHandler<CommentUpdateInput, { commentId: stri
     if (!before) return
     const em = (ctx.container.resolve('em') as EntityManager).fork()
     let comment = await em.findOne(CustomerComment, { id: before.id })
-    const entity = await requireCustomerEntity(em, before.entityId, undefined, 'Customer not found')
+    const entity = await requireTimelineParentEntity(em, before.entityId)
     const deal = await requireDealInScope(em, before.dealId, before.tenantId, before.organizationId)
 
     if (!comment) {
@@ -332,6 +336,8 @@ const deleteCommentCommand: CommandHandler<{ body?: Record<string, unknown>; que
         tenantId: before.tenantId,
         organizationId: before.organizationId,
         snapshotBefore: before,
+        relatedResourceKind: before.dealId ? 'customers.deal' : null,
+        relatedResourceId: before.dealId ?? null,
         payload: {
           undo: {
             before,
@@ -344,7 +350,7 @@ const deleteCommentCommand: CommandHandler<{ body?: Record<string, unknown>; que
       const before = payload?.before
       if (!before) return
       const em = (ctx.container.resolve('em') as EntityManager).fork()
-      const entity = await requireCustomerEntity(em, before.entityId, undefined, 'Customer not found')
+      const entity = await requireTimelineParentEntity(em, before.entityId)
       const deal = await requireDealInScope(em, before.dealId, before.tenantId, before.organizationId)
       let comment = await em.findOne(CustomerComment, { id: before.id })
       if (!comment) {

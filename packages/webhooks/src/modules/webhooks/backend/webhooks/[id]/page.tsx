@@ -16,7 +16,7 @@ import { FormHeader } from '@open-mercato/ui/backend/forms'
 import { RowActions } from '@open-mercato/ui/backend/RowActions'
 import { CrudForm } from '@open-mercato/ui/backend/CrudForm'
 import { deleteCrud, updateCrud } from '@open-mercato/ui/backend/utils/crud'
-import { Notice } from '@open-mercato/ui/primitives/Notice'
+import { Alert, AlertDescription } from '@open-mercato/ui/primitives/alert'
 import {
   buildWebhookFormContentHeader,
   buildWebhookFormFields,
@@ -520,11 +520,17 @@ export default function WebhookDetailPage() {
 
         <div className="mt-6 space-y-4">
           {!access.isLoading && !access.canManage && !access.canSecrets && !access.canTest ? (
-            <Notice compact>{t('webhooks.detail.readOnlyTip')}</Notice>
+            <Alert variant="info">
+              <AlertDescription>{t('webhooks.detail.readOnlyTip')}</AlertDescription>
+            </Alert>
           ) : null}
           <div className="grid gap-3 lg:grid-cols-2">
-            <Notice compact>{t('webhooks.detail.deliveryTip')}</Notice>
-            <Notice compact>{t('webhooks.detail.signatureTip')}</Notice>
+            <Alert variant="info">
+              <AlertDescription>{t('webhooks.detail.deliveryTip')}</AlertDescription>
+            </Alert>
+            <Alert variant="info">
+              <AlertDescription>{t('webhooks.detail.signatureTip')}</AlertDescription>
+            </Alert>
           </div>
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div>
@@ -628,21 +634,25 @@ export default function WebhookDetailPage() {
             columns={deliveryColumns}
             data={deliveries}
             onRowClick={(row) => { void handleDeliveryOpen(row.id) }}
-            rowActions={(row) => (
-              access.canManage && (row.status === 'failed' || row.status === 'expired')
-                ? (
-                  <RowActions
-                    items={[
-                      {
-                        id: 'retry',
-                        label: t('webhooks.deliveries.actions.retry'),
-                        onSelect: () => { void handleRetryDelivery(row.id) },
-                      },
-                    ]}
-                  />
-                )
-                : null
-            )}
+            rowActions={(row) => {
+              const items: Array<{ id: string; label: string; onSelect: () => void }> = [
+                {
+                  id: 'view-details',
+                  label: t('webhooks.deliveries.actions.viewDetails'),
+                  onSelect: () => { void handleDeliveryOpen(row.id) },
+                },
+              ]
+
+              if (access.canManage && (row.status === 'failed' || row.status === 'expired')) {
+                items.push({
+                  id: 'retry',
+                  label: t('webhooks.deliveries.actions.retry'),
+                  onSelect: () => { void handleRetryDelivery(row.id) },
+                })
+              }
+
+              return <RowActions items={items} />
+            }}
             perspective={{ tableId: 'webhooks.deliveries' }}
             pagination={{
               page: deliveryPage,

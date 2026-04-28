@@ -1,4 +1,4 @@
-import type { Knex } from 'knex'
+import type { Kysely } from 'kysely'
 import type {
   SearchBuildContext,
   SearchResult,
@@ -12,6 +12,7 @@ import type { EntityId } from '@open-mercato/shared/modules/entities'
 import type { TenantDataEncryptionService } from '@open-mercato/shared/lib/encryption/tenantDataEncryptionService'
 import { decryptIndexDocForSearch } from '@open-mercato/shared/lib/encryption/indexDoc'
 import { extractFallbackPresenter } from './fallback-presenter'
+import { needsSearchResultEnrichment } from './search-result-enrichment'
 
 /** Maximum number of record IDs per batch query to avoid hitting DB parameter limits */
 const BATCH_SIZE = 500
@@ -21,31 +22,6 @@ const logWarning = (message: string, context?: Record<string, unknown>) => {
   if (process.env.NODE_ENV === 'development' || process.env.DEBUG_SEARCH_ENRICHER) {
     console.warn(`[search:presenter-enricher] ${message}`, context ?? '')
   }
-}
-
-/**
- * Check if a string looks like an encrypted value.
- * Encrypted format: iv:ciphertext:authTag:v1
- */
-function looksEncrypted(value: unknown): boolean {
-  if (typeof value !== 'string') return false
-  if (!value.includes(':')) return false
-  const parts = value.split(':')
-  // Encrypted strings end with :v1 and have at least 3 colon-separated parts
-  return parts.length >= 3 && parts[parts.length - 1] === 'v1'
-}
-
-/**
- * Check if a result needs enrichment (missing presenter, encrypted values, or missing URL/links)
- */
-function needsEnrichment(result: SearchResult): boolean {
-  if (!result.presenter?.title) return true
-  // Also re-enrich if presenter looks encrypted
-  if (looksEncrypted(result.presenter.title)) return true
-  if (looksEncrypted(result.presenter.subtitle)) return true
-  // Also enrich if missing URL/links (needed for token search results)
-  if (!result.url && (!result.links || result.links.length === 0)) return true
-  return false
 }
 
 /**
@@ -64,7 +40,7 @@ function chunk<T>(array: T[], size: number): T[][] {
  * Uses OR conditions to fetch all needed docs in one round trip.
  */
 async function fetchDocsBatch(
-  knex: Knex,
+  db: Kysely<any>,
   byEntityType: Map<string, SearchResult[]>,
   tenantId: string,
   organizationId?: string | null,
@@ -94,27 +70,28 @@ async function fetchDocsBatch(
     }
 
     // Build query with OR conditions per entity type
-    const query = knex('entity_indexes')
-      .select('entity_type', 'entity_id', 'doc')
-      .where('tenant_id', tenantId)
-      .whereNull('deleted_at')
-      .where((builder) => {
-        for (const [entityType, recordIds] of chunkByType) {
-          builder.orWhere((sub) => {
-            sub.where('entity_type', entityType).whereIn('entity_id', recordIds)
-          })
-        }
-      })
+    let query = db
+      .selectFrom('entity_indexes' as any)
+      .select(['entity_type' as any, 'entity_id' as any, 'doc' as any])
+      .where('tenant_id' as any, '=', tenantId)
+      .where('deleted_at' as any, 'is', null)
+      .where((eb: any) => eb.or(
+        Array.from(chunkByType.entries()).map(([entityType, recordIds]) => eb.and([
+          eb('entity_type' as any, '=', entityType),
+          eb('entity_id' as any, 'in', recordIds),
+        ])),
+      ))
 
     // Add organization filter if provided
     if (organizationId) {
-      query.where((builder) => {
-        builder.where('organization_id', organizationId).orWhereNull('organization_id')
-      })
+      query = query.where((eb: any) => eb.or([
+        eb('organization_id' as any, '=', organizationId),
+        eb('organization_id' as any, 'is', null),
+      ]))
     }
 
-    const rows = await query
-    allDocs.push(...(rows as typeof allDocs))
+    const rows = await query.execute() as Array<{ entity_type: string; entity_id: string; doc: Record<string, unknown> }>
+    allDocs.push(...rows)
   }
 
   return allDocs
@@ -220,14 +197,14 @@ async function computePresenterAndLinks(
  * - Automatic decryption of encrypted fields when encryption service is provided
  */
 export function createPresenterEnricher(
-  knex: Knex,
+  db: Kysely<any>,
   entityConfigMap: Map<EntityId, SearchEntityConfig>,
   queryEngine?: QueryEngine,
   encryptionService?: TenantDataEncryptionService | null,
 ): PresenterEnricherFn {
   return async (results, tenantId, organizationId) => {
     // Find results missing presenter OR with encrypted presenter
-    const missingResults = results.filter(needsEnrichment)
+    const missingResults = results.filter(needsSearchResultEnrichment)
     if (missingResults.length === 0) return results
 
     // Group by entity type for config lookup
@@ -239,7 +216,7 @@ export function createPresenterEnricher(
     }
 
     // Single batch query for all docs across all entity types
-    const rawDocs = await fetchDocsBatch(knex, byEntityType, tenantId, organizationId)
+    const rawDocs = await fetchDocsBatch(db, byEntityType, tenantId, organizationId)
 
     // Decrypt docs in parallel using DEK cache for efficiency
     const dekCache = new Map<string | null, string | null>()
@@ -308,15 +285,16 @@ export function createPresenterEnricher(
 
     // Enrich results with computed presenter, URL, and links
     return results.map((result) => {
-      if (!needsEnrichment(result)) return result
+      if (!needsSearchResultEnrichment(result)) return result
       const key = `${result.entityId}:${result.recordId}`
       const enriched = enrichmentMap.get(key)
       if (!enriched) return result
+      const hasExistingLinks = Array.isArray(result.links) && result.links.length > 0
       return {
         ...result,
         presenter: enriched.presenter ?? result.presenter,
         url: result.url ?? enriched.url,
-        links: result.links ?? enriched.links,
+        links: hasExistingLinks ? result.links : (enriched.links ?? result.links),
       }
     })
   }

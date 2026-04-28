@@ -1,14 +1,5 @@
-import {
-  Collection,
-  Entity,
-  Index,
-  ManyToOne,
-  OneToMany,
-  OptionalProps,
-  PrimaryKey,
-  Property,
-  Unique,
-} from '@mikro-orm/core'
+import { Collection, OptionalProps } from '@mikro-orm/core'
+import { Entity, Index, ManyToOne, OneToMany, PrimaryKey, Property, Unique } from '@mikro-orm/decorators/legacy'
 import type {
   CatalogPriceDisplayMode,
   CatalogProductOptionSchema,
@@ -535,6 +526,12 @@ export class CatalogProductVariant {
 
   @Property({ name: 'option_values', type: 'jsonb', nullable: true })
   optionValues?: Record<string, string> | null
+
+  @Property({ name: 'default_media_id', type: 'uuid', nullable: true })
+  defaultMediaId?: string | null
+
+  @Property({ name: 'default_media_url', type: 'text', nullable: true })
+  defaultMediaUrl?: string | null
 
   @Property({ name: 'custom_fieldset_code', type: 'text', nullable: true })
   customFieldsetCode?: string | null

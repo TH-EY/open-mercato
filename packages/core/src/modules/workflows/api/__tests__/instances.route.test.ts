@@ -12,6 +12,10 @@ import { POST as retryInstance } from '../instances/[id]/retry/route'
 import { GET as getInstanceEvents } from '../instances/[id]/events/route'
 import { WorkflowInstance, WorkflowDefinition, WorkflowEvent } from '../../data/entities'
 import * as workflowExecutor from '../../lib/workflow-executor'
+import {
+  expectListHandlerOmitsOrganizationForWildcardScope,
+  expectListHandlerScopesToFilterIds,
+} from './helpers/orgScopeAssertions'
 
 // Mock dependencies
 jest.mock('@open-mercato/shared/lib/di/container', () => ({
@@ -68,7 +72,9 @@ describe('Workflow Instances API', () => {
       findAndCount: jest.fn(),
       count: jest.fn(),
       create: jest.fn(),
-      persistAndFlush: jest.fn(),
+      persist: jest.fn(function persist(this: any) { return this }),
+      flush: jest.fn(),
+      persist: jest.fn(function persist(this: any) { return this }),
       flush: jest.fn(),
       refresh: jest.fn(),
     }
@@ -137,7 +143,7 @@ describe('Workflow Instances API', () => {
         WorkflowInstance,
         expect.objectContaining({
           tenantId: testTenantId,
-          organizationId: testOrgId,
+          organizationId: { $in: [testOrgId] },
         }),
         expect.any(Object)
       )
@@ -239,6 +245,28 @@ describe('Workflow Instances API', () => {
       const response = await listInstances(request)
 
       expect(response.status).toBe(500)
+    })
+
+    test('should scope across all permitted orgs when filterIds has multiple entries', async () => {
+      const { resolveOrganizationScopeForRequest } = require('@open-mercato/core/modules/directory/utils/organizationScope')
+      await expectListHandlerScopesToFilterIds({
+        Entity: WorkflowInstance,
+        findAndCount: mockEm.findAndCount,
+        resolveScope: resolveOrganizationScopeForRequest,
+        runHandler: () => listInstances(new NextRequest('http://localhost/api/workflows/instances')),
+        tenantId: testTenantId,
+      })
+    })
+
+    test('should omit organization filter when scope resolves to wildcard (filterIds null)', async () => {
+      const { resolveOrganizationScopeForRequest } = require('@open-mercato/core/modules/directory/utils/organizationScope')
+      await expectListHandlerOmitsOrganizationForWildcardScope({
+        Entity: WorkflowInstance,
+        findAndCount: mockEm.findAndCount,
+        resolveScope: resolveOrganizationScopeForRequest,
+        runHandler: () => listInstances(new NextRequest('http://localhost/api/workflows/instances')),
+        tenantId: testTenantId,
+      })
     })
   })
 
@@ -477,7 +505,7 @@ describe('Workflow Instances API', () => {
         expect.objectContaining({
           id: testInstanceId,
           tenantId: testTenantId,
-          organizationId: testOrgId,
+          organizationId: { $in: [testOrgId] },
         })
       )
     })
@@ -501,7 +529,7 @@ describe('Workflow Instances API', () => {
         WorkflowInstance,
         expect.objectContaining({
           tenantId: testTenantId,
-          organizationId: testOrgId,
+          organizationId: { $in: [testOrgId] },
         })
       )
     })
@@ -724,6 +752,9 @@ describe('Workflow Instances API', () => {
         retryCount: 0,
         tenantId: testTenantId,
         organizationId: testOrgId,
+        errorMessage: 'Original error',
+        errorDetails: { step: 'payment' },
+        updatedAt: new Date(),
       }
 
       mockEm.findOne.mockResolvedValue(mockInstance)
@@ -736,6 +767,36 @@ describe('Workflow Instances API', () => {
       const response = await retryInstance(request, { params: Promise.resolve({ id: testInstanceId }) })
 
       expect(response.status).toBe(400)
+    })
+
+    test('should revert to FAILED status when execution throws (fix: #1415)', async () => {
+      const originalError = 'Payment gateway timeout'
+      const originalDetails = { step: 'payment', code: 'TIMEOUT' }
+      const mockInstance = {
+        id: testInstanceId,
+        status: 'FAILED',
+        retryCount: 1,
+        tenantId: testTenantId,
+        organizationId: testOrgId,
+        errorMessage: originalError,
+        errorDetails: originalDetails,
+        updatedAt: new Date(),
+      }
+
+      mockEm.findOne.mockResolvedValue(mockInstance);
+      (workflowExecutor.executeWorkflow as jest.Mock).mockRejectedValue(
+        new workflowExecutor.WorkflowExecutionError('Retry execution failed', 'EXECUTION_ERROR'),
+      )
+
+      const request = new NextRequest(`http://localhost/api/workflows/instances/${testInstanceId}/retry`, {
+        method: 'POST',
+      })
+      await retryInstance(request, { params: Promise.resolve({ id: testInstanceId }) })
+
+      expect(mockInstance.status).toBe('FAILED')
+      expect(mockInstance.errorMessage).toBe(originalError)
+      expect(mockInstance.errorDetails).toBe(originalDetails)
+      expect(mockEm.flush).toHaveBeenCalledTimes(2)
     })
   })
 
@@ -790,7 +851,7 @@ describe('Workflow Instances API', () => {
         expect.objectContaining({
           workflowInstanceId: testInstanceId,
           tenantId: testTenantId,
-          organizationId: testOrgId,
+          organizationId: { $in: [testOrgId] },
         }),
         expect.objectContaining({
           orderBy: { occurredAt: 'DESC' },
@@ -851,7 +912,7 @@ describe('Workflow Instances API', () => {
         WorkflowInstance,
         expect.objectContaining({
           tenantId: testTenantId,
-          organizationId: testOrgId,
+          organizationId: { $in: [testOrgId] },
         })
       )
 
@@ -860,7 +921,7 @@ describe('Workflow Instances API', () => {
         WorkflowEvent,
         expect.objectContaining({
           tenantId: testTenantId,
-          organizationId: testOrgId,
+          organizationId: { $in: [testOrgId] },
         }),
         expect.any(Object)
       )

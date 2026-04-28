@@ -29,11 +29,11 @@ describe('buildScopedWhere', () => {
     expect(base).toEqual({ id: 'entity-1' })
   })
 
-  it('prefers organizationIds and collapses them to scalar or $in filters after sanitizing empty values', () => {
+  it('prefers organizationIds and collapses them to scalar or $in filters after trimming and sanitizing empty values', () => {
     expect(
       buildScopedWhere(
         { id: 'entity-1' },
-        { organizationId: 'org-ignored', organizationIds: ['org-1'], tenantId: 'tenant-1' }
+        { organizationId: 'org-ignored', organizationIds: [' org-1 '], tenantId: 'tenant-1' }
       )
     ).toEqual({
       id: 'entity-1',
@@ -45,7 +45,7 @@ describe('buildScopedWhere', () => {
     expect(
       buildScopedWhere(
         { id: 'entity-1' },
-        { organizationIds: ['org-1', '', 'org-2'], tenantId: 'tenant-1' }
+        { organizationIds: [' org-1 ', '   ', '', 'org-2  '], tenantId: 'tenant-1' }
       )
     ).toEqual({
       id: 'entity-1',
@@ -203,14 +203,16 @@ describe('findOneScoped', () => {
 describe('softDelete', () => {
   it('sets deletedAt and persists the updated entity', async () => {
     const entity = new ExampleEntity()
-    const persistAndFlush = jest.fn(async () => undefined)
-    const em = { persistAndFlush } as unknown as EntityManager
+    const flush = jest.fn(async () => undefined)
+    const persist = jest.fn((_entity: ExampleEntity) => ({ flush }))
+    const em = { persist } as unknown as EntityManager
     const before = Date.now()
 
     await softDelete(em, entity)
 
     expect(entity.deletedAt).toBeInstanceOf(Date)
     expect((entity.deletedAt as Date).getTime()).toBeGreaterThanOrEqual(before)
-    expect(persistAndFlush).toHaveBeenCalledWith(entity)
+    expect(persist).toHaveBeenCalledWith(entity)
+    expect(flush).toHaveBeenCalled()
   })
 })

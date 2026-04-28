@@ -1,4 +1,4 @@
-import { Entity, PrimaryKey, Property, ManyToOne, Unique, Index } from '@mikro-orm/core'
+import { Entity, Index, ManyToOne, PrimaryKey, Property, Unique } from '@mikro-orm/decorators/legacy'
 
 @Entity({ tableName: 'customer_users' })
 @Unique({ properties: ['tenantId', 'emailHash'], name: 'customer_users_tenant_email_hash_uniq' })
@@ -36,6 +36,9 @@ export class CustomerUser {
 
   @Property({ name: 'last_login_at', type: Date, nullable: true })
   lastLoginAt?: Date | null
+
+  @Property({ name: 'sessions_revoked_at', type: Date, nullable: true })
+  sessionsRevokedAt?: Date | null
 
   @Property({ name: 'person_entity_id', type: 'uuid', nullable: true })
   @Index({ name: 'customer_users_person_entity_idx' })
