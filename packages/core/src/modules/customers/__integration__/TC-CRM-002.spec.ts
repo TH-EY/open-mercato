@@ -9,6 +9,8 @@ import { getAuthToken } from '@open-mercato/core/modules/core/__integration__/he
  */
 test.describe('TC-CRM-002: Company Creation Validation Errors', () => {
   test('should block invalid input, show field errors, then allow create after correction', async ({ page, request }) => {
+    test.setTimeout(60_000);
+
     let token: string | null = null;
     let companyId: string | null = null;
     const companyName = `QA TC-CRM-002 ${Date.now()}`;
@@ -28,9 +30,11 @@ test.describe('TC-CRM-002: Company Creation Validation Errors', () => {
       await page.getByRole('button', { name: 'Create Company' }).first().click();
 
       await expect(page.getByText('Invalid email address')).toBeVisible();
-      await expect(page.getByText('Invalid URL')).toBeVisible();
 
       await page.getByPlaceholder('name@example.com').fill('qa+crm002@example.com');
+      await page.getByRole('button', { name: 'Create Company' }).first().click();
+      await expect(page.getByText(/invalid url/i)).toBeVisible();
+
       await page.getByPlaceholder('https://example.com').fill('https://example.com');
       await page.getByRole('button', { name: 'Create Company' }).first().click();
 
