@@ -65,8 +65,10 @@ jobs:
         run: |
           set -euo pipefail
           cd preview-src
-          git fetch origin upstream-baseline:refs/remotes/origin/upstream-baseline --prune
-          CHANGED_MIGRATIONS="$(git diff --name-only origin/upstream-baseline...HEAD | grep -E '(^|/)migrations/|Migration[0-9].*\.ts$' || true)"
+          git fetch origin +refs/heads/upstream-baseline:refs/remotes/origin/upstream-baseline --prune
+          git rev-parse --verify origin/upstream-baseline >/dev/null
+          DIFF_FILES="$(git diff --name-only origin/upstream-baseline...HEAD)"
+          CHANGED_MIGRATIONS="$(printf '%s\n' "$DIFF_FILES" | grep -E '(^|/)migrations/|Migration[0-9].*\.ts$' || true)"
           if [[ -n "$CHANGED_MIGRATIONS" && "$ALLOW_PROD_MIGRATIONS" != "true" ]]; then
             {
               echo "This preview changes migration files but allow_prod_migrations=false."
