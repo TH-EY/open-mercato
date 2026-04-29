@@ -2,6 +2,8 @@
 
 This runbook manages the upstream-parity AWS path that intentionally stays outside the CloudFormation/ECS stack used by `openmercato.they.dev`.
 
+For the full developer/operator map of production, baseline, existing `*.om.they.dev` previews, and planned CloudFormation/ECS previews, see [`../OPEN_MERCATO_AWS_ENVIRONMENTS.md`](../OPEN_MERCATO_AWS_ENVIRONMENTS.md).
+
 ## Purpose
 
 The goal is to validate Open Mercato work against an environment that stays as close as possible to upstream runtime expectations:

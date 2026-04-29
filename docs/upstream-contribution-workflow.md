@@ -5,6 +5,8 @@ This fork now uses a split model:
 - `develop` stays the fork deployment branch for `https://openmercato.they.dev`
 - `upstream-baseline` is the only clean base for upstream-candidate work and for `https://om.they.dev`
 
+For concrete AWS environment details, target groups, host paths, deploy workflows, and preview mechanics, see [`../infra/OPEN_MERCATO_AWS_ENVIRONMENTS.md`](../infra/OPEN_MERCATO_AWS_ENVIRONMENTS.md).
+
 ## Branch Roles
 
 - `upstream/develop` - external source of truth for upstream contribution work

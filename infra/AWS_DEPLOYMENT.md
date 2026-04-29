@@ -3,6 +3,8 @@
 > **Scope note:** this document describes the current **CloudFormation/ECS** stack that serves `openmercato.they.dev`.
 > The new upstream-parity environment intentionally lives outside that path and is documented in
 > [`infra/aws-upstream-baseline/README.md`](./aws-upstream-baseline/README.md).
+> For the full developer/operator map of all AWS environments and preview paths, see
+> [`infra/OPEN_MERCATO_AWS_ENVIRONMENTS.md`](./OPEN_MERCATO_AWS_ENVIRONMENTS.md).
 
 ## Application URL
 
