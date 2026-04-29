@@ -2,10 +2,15 @@ import { createNotificationService } from '../lib/notificationService'
 import { NOTIFICATION_EVENTS, NOTIFICATION_SSE_EVENTS } from '../lib/events'
 import type { Notification } from '../data/entities'
 import { getRecipientUserIdsForFeature } from '../lib/notificationRecipients'
+import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 
 jest.mock('../lib/notificationRecipients', () => ({
   getRecipientUserIdsForRole: jest.fn(),
   getRecipientUserIdsForFeature: jest.fn(),
+}))
+
+jest.mock('@open-mercato/shared/lib/encryption/find', () => ({
+  findWithDecryption: jest.fn(),
 }))
 
 const baseNotificationInput = {
@@ -25,18 +30,23 @@ const buildEm = () => {
     fork: jest.fn(),
     transactional: jest.fn(),
     create: jest.fn(),
-    persistAndFlush: jest.fn(),
+    persist: jest.fn(),
     flush: jest.fn(),
     findOne: jest.fn(),
     findOneOrFail: jest.fn(),
     count: jest.fn(),
     find: jest.fn(),
-    getConnection: jest.fn(),
+    getKysely: jest.fn(),
   }
   em.fork.mockReturnValue(em)
   em.transactional.mockImplementation(async (cb: (tx: typeof em) => Promise<unknown>) => cb(em))
-  em.getConnection.mockReturnValue({
-    getKnex: () => ({}),
+  em.persist.mockImplementation(() => ({ flush: em.flush }))
+  em.getKysely.mockReturnValue({
+    selectFrom: () => ({
+      select: () => ({
+        where: () => ({ executeTakeFirst: async () => undefined, execute: async () => [] }),
+      }),
+    }),
   })
   return em
 }
@@ -191,6 +201,104 @@ describe('notification service', () => {
         tenantId: baseCtx.tenantId,
       })
     )
+  })
+
+  it('marks all as read, scopes by org, and emits events per notification', async () => {
+    const em = buildEm()
+    const eventBus = { emit: jest.fn().mockResolvedValue(undefined) }
+    const notifications = [
+      {
+        id: 'note-11',
+        recipientUserId: baseCtx.userId,
+        tenantId: baseCtx.tenantId,
+        organizationId: 'org-1',
+        status: 'read',
+        readAt: new Date('2026-03-01T00:00:00Z'),
+        createdAt: new Date('2026-02-28T00:00:00Z'),
+        type: 'system',
+        title: 'Hello',
+      },
+      {
+        id: 'note-12',
+        recipientUserId: baseCtx.userId,
+        tenantId: baseCtx.tenantId,
+        organizationId: 'org-1',
+        status: 'read',
+        readAt: new Date('2026-03-01T00:00:01Z'),
+        createdAt: new Date('2026-02-28T00:00:01Z'),
+        type: 'system',
+        title: 'Hi again',
+      },
+    ] as Notification[]
+
+    ;(findWithDecryption as jest.Mock).mockResolvedValue(notifications)
+
+    // Kysely-shaped stub for `em.getKysely()`.
+    // `markAllAsRead` first runs a SELECT to collect target rows, then an UPDATE
+    // whose `executeTakeFirst` returns `{ numUpdatedRows }`.
+    const whereCalls: any[] = []
+    const selectWhereChain: any = {
+      where: jest.fn((...args: any[]) => { whereCalls.push(['select', ...args]); return selectWhereChain }),
+      execute: jest.fn(async () => notifications.map((n) => ({
+        id: n.id,
+        organization_id: n.organizationId,
+        recipient_user_id: n.recipientUserId,
+      }))),
+    }
+    const selectChain: any = {
+      select: jest.fn(() => selectWhereChain),
+    }
+    const updateWhereChain: any = {
+      where: jest.fn((...args: any[]) => { whereCalls.push(['update', ...args]); return updateWhereChain }),
+      executeTakeFirst: jest.fn(async () => ({ numUpdatedRows: BigInt(notifications.length) })),
+    }
+    const updateChain: any = {
+      set: jest.fn(() => updateWhereChain),
+    }
+    const kyselyMock = {
+      selectFrom: jest.fn(() => selectChain),
+      updateTable: jest.fn(() => updateChain),
+    }
+
+    em.getKysely.mockReturnValue(kyselyMock)
+
+    const service = createNotificationService({ em, eventBus })
+
+    const count = await service.markAllAsRead({ ...baseCtx, organizationId: 'org-1' })
+
+    expect(count).toBe(2)
+    // Ensure scope filters were applied to both the SELECT and the UPDATE.
+    const userWhere = whereCalls.filter((call) => call[1] === 'recipient_user_id')
+    const tenantWhere = whereCalls.filter((call) => call[1] === 'tenant_id')
+    const statusWhere = whereCalls.filter((call) => call[1] === 'status')
+    const orgWhere = whereCalls.filter((call) => call[1] === 'organization_id')
+    expect(userWhere.length).toBeGreaterThanOrEqual(2)
+    expect(tenantWhere.length).toBeGreaterThanOrEqual(2)
+    expect(statusWhere[0]).toEqual(['select', 'status', '=', 'unread'])
+    expect(orgWhere[0]).toEqual(['select', 'organization_id', '=', 'org-1'])
+    expect(findWithDecryption).toHaveBeenCalledWith(
+      em,
+      expect.anything(),
+      { id: { $in: ['note-11', 'note-12'] } },
+      undefined,
+      { tenantId: baseCtx.tenantId, organizationId: 'org-1' },
+    )
+    expect(eventBus.emit).toHaveBeenCalledTimes(4)
+    for (const note of notifications) {
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        NOTIFICATION_EVENTS.READ,
+        expect.objectContaining({ notificationId: note.id, userId: baseCtx.userId, tenantId: baseCtx.tenantId })
+      )
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        NOTIFICATION_SSE_EVENTS.CREATED,
+        expect.objectContaining({
+          tenantId: note.tenantId,
+          organizationId: note.organizationId,
+          recipientUserId: note.recipientUserId,
+          notification: expect.objectContaining({ id: note.id, status: 'read' }),
+        })
+      )
+    }
   })
 
   it('executes notification action via command bus', async () => {

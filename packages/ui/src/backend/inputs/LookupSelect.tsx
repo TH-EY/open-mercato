@@ -167,24 +167,24 @@ export function LookupSelect({
           <div className="space-y-2 max-h-80 overflow-y-auto">
             {items.map((item) => {
               const isSelected = value === item.id
-              const handleSelect = () => {
-                if (item.disabled && !isSelected) return
-                onChange(item.id)
-              }
               return (
                 <div
                   key={item.id}
                   className={cn(
-                    'flex gap-3 rounded border bg-card p-3 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                    'flex gap-3 rounded border bg-card p-3 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
                     isSelected ? 'border-primary/70 bg-primary/5' : 'hover:border-primary/50'
                   )}
                   role="button"
                   tabIndex={item.disabled ? -1 : 0}
-                  onClick={handleSelect}
+                  onClick={() => {
+                    if (item.disabled && !isSelected) return
+                    onChange(item.id)
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault()
-                      handleSelect()
+                      if (item.disabled && !isSelected) return
+                      onChange(item.id)
                     }
                   }}
                   aria-pressed={isSelected}
@@ -215,7 +215,8 @@ export function LookupSelect({
                         className="shrink-0"
                         onClick={(event) => {
                           event.stopPropagation()
-                          handleSelect()
+                          if (item.disabled && !isSelected) return
+                          onChange(item.id)
                         }}
                         disabled={item.disabled && !isSelected}
                       >

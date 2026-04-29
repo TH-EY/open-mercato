@@ -397,7 +397,7 @@ export function FieldDefinitionsEditor({
         </div>
       )}
       {orderNotice?.dirty && (
-        <div className="sticky top-0 z-10 -mt-1 -mb-1">
+        <div className="sticky top-0 z-sticky -mt-1 -mb-1">
           <div className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded border bg-amber-50 text-amber-800 shadow-sm">
             {orderNotice?.saving ? 'Saving order…' : (orderNotice?.message ?? 'Reordered — saving soon')}
           </div>
@@ -516,6 +516,7 @@ const FieldDefinitionCard = React.memo(function FieldDefinitionCard({
   translate,
 }: FieldDefinitionCardProps) {
   const [local, setLocal] = React.useState<FieldDefinition>(definition)
+  const localRef = React.useRef<FieldDefinition>(definition)
   const [optionValueDraft, setOptionValueDraft] = React.useState('')
   const [optionLabelDraft, setOptionLabelDraft] = React.useState('')
   const [optionDialogOpen, setOptionDialogOpen] = React.useState(false)
@@ -529,7 +530,10 @@ const FieldDefinitionCard = React.memo(function FieldDefinitionCard({
     [local.configJson?.fieldset],
   )
   const t = React.useCallback((key: string, fallback: string) => (translate ? translate(key, fallback) : fallback), [translate])
-  React.useEffect(() => { setLocal(definition) }, [definition.key])
+  React.useEffect(() => {
+    localRef.current = definition
+    setLocal(definition)
+  }, [definition.key])
   React.useEffect(() => {
     setOptionValueDraft('')
     setOptionLabelDraft('')
@@ -571,35 +575,37 @@ const FieldDefinitionCard = React.memo(function FieldDefinitionCard({
     }
   }
 
+  const replaceLocal = React.useCallback((next: FieldDefinition) => {
+    localRef.current = next
+    setLocal(next)
+    return next
+  }, [])
+
   const apply = (patch: Partial<FieldDefinition> | ((current: FieldDefinition) => Partial<FieldDefinition>), propagateNow = false) => {
-    setLocal((prev) => {
-      const resolvedPatch = typeof patch === 'function' ? patch(prev) : patch
-      const next = { ...prev, ...resolvedPatch }
-      if (!propagateNow) return next
-      const sanitized = sanitize(next)
-      onChange(sanitized)
-      return sanitized
-    })
+    const current = localRef.current
+    const resolvedPatch = typeof patch === 'function' ? patch(current) : patch
+    const next = { ...current, ...resolvedPatch }
+    const resolvedNext = propagateNow ? sanitize(next) : next
+    replaceLocal(resolvedNext)
+    if (propagateNow) {
+      onChange(resolvedNext)
+    }
   }
 
   const commit = () => {
-    setLocal((prev) => {
-      const sanitized = sanitize(prev)
-      onChange(sanitized)
-      return sanitized
-    })
+    const sanitized = sanitize(localRef.current)
+    replaceLocal(sanitized)
+    onChange(sanitized)
   }
 
   const handleFieldsetSelect = (value: string) => {
-    setLocal((prev) => {
-      const nextConfig = { ...(prev.configJson || {}) }
-      if (value) nextConfig.fieldset = value
-      else delete nextConfig.fieldset
-      delete nextConfig.group
-      const next = { ...prev, configJson: nextConfig }
-      onChange(next)
-      return next
-    })
+    const nextConfig = { ...(localRef.current.configJson || {}) }
+    if (value) nextConfig.fieldset = value
+    else delete nextConfig.fieldset
+    delete nextConfig.group
+    const next = { ...localRef.current, configJson: nextConfig }
+    replaceLocal(next)
+    onChange(next)
   }
 
   const handleGroupSelect = (value: string) => {
@@ -900,7 +906,7 @@ const FieldDefinitionCard = React.memo(function FieldDefinitionCard({
                   >
                     <div>
                       <div className="font-medium text-foreground">{option.label}</div>
-                      <div className="text-muted-foreground font-mono text-[11px]">{option.value}</div>
+                      <div className="text-muted-foreground font-mono text-overline">{option.value}</div>
                     </div>
                     <IconButton
                       variant="ghost"
@@ -1114,6 +1120,110 @@ const FieldDefinitionCard = React.memo(function FieldDefinitionCard({
         })()}
       </div>
 
+      {/* Default value control — shown for kinds without a dedicated FieldRegistry defEditor default section */}
+      {(() => {
+        // Dictionary kind handles defaults in its own defEditor; skip here
+        if (local.kind === 'dictionary') return null
+        // Relation and attachment kinds do not support defaults
+        if (local.kind === 'relation' || local.kind === 'attachment') return null
+        const currentDefault = local.configJson?.defaultValue
+        if (local.kind === 'boolean') {
+          const boolDefault = currentDefault === true ? 'true' : currentDefault === false ? 'false' : ''
+          return (
+            <div className="mt-3">
+              <label className="text-xs">{t('entities.customFields.fields.defaultValue', 'Default value')}</label>
+              <select
+                className="border rounded w-full px-2 py-1 text-sm"
+                value={boolDefault}
+                onChange={(event) => {
+                  const raw = event.target.value
+                  const value = raw === 'true' ? true : raw === 'false' ? false : undefined
+                  apply({ configJson: { ...(local.configJson || {}), defaultValue: value } }, true)
+                }}
+              >
+                <option value="">{t('entities.customFields.fields.defaultValueNone', 'No default')}</option>
+                <option value="true">{t('entities.customFields.fields.defaultValueTrue', 'Checked (true)')}</option>
+                <option value="false">{t('entities.customFields.fields.defaultValueFalse', 'Unchecked (false)')}</option>
+              </select>
+            </div>
+          )
+        }
+        // select with static options — picker
+        if (local.kind === 'select' && !local.configJson?.multi) {
+          const opts = normalizeCustomFieldOptions(local.configJson?.options || [])
+          if (opts.length > 0) {
+            return (
+              <div className="mt-3">
+                <label className="text-xs">{t('entities.customFields.fields.defaultValue', 'Default value')}</label>
+                <select
+                  className="border rounded w-full px-2 py-1 text-sm"
+                  value={typeof currentDefault === 'string' || typeof currentDefault === 'number' ? String(currentDefault) : ''}
+                  onChange={(event) => {
+                    const raw = event.target.value
+                    if (!raw) {
+                      apply({ configJson: { ...(local.configJson || {}), defaultValue: undefined } }, true)
+                      return
+                    }
+                    // Preserve the original option type (string or number) instead of coercing to string
+                    const matched = opts.find((o) => String(o.value) === raw)
+                    const typed = matched ? matched.value : raw
+                    apply({ configJson: { ...(local.configJson || {}), defaultValue: typed } }, true)
+                  }}
+                >
+                  <option value="">{t('entities.customFields.fields.defaultValueNone', 'No default')}</option>
+                  {opts.map((option) => (
+                    <option key={String(option.value)} value={String(option.value)}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )
+          }
+        }
+        // Numeric kinds
+        if (local.kind === 'integer' || local.kind === 'float') {
+          return (
+            <div className="mt-3">
+              <label className="text-xs">{t('entities.customFields.fields.defaultValue', 'Default value')}</label>
+              <input
+                type="number"
+                step={local.kind === 'integer' ? '1' : 'any'}
+                className="border rounded w-full px-2 py-1 text-sm"
+                value={typeof currentDefault === 'number' ? String(currentDefault) : ''}
+                onChange={(event) => {
+                  const raw = event.target.value
+                  const parsed = raw === '' ? undefined : (local.kind === 'integer' ? parseInt(raw, 10) : parseFloat(raw))
+                  const value = parsed !== undefined && !isNaN(parsed) ? parsed : undefined
+                  apply({ configJson: { ...(local.configJson || {}), defaultValue: value } })
+                }}
+                onBlur={commit}
+                placeholder={t('entities.customFields.fields.defaultValuePlaceholder', 'No default')}
+              />
+            </div>
+          )
+        }
+        // Text-like kinds (text, multiline, date, datetime, currency)
+        if (['text', 'multiline', 'date', 'datetime', 'currency'].includes(local.kind)) {
+          return (
+            <div className="mt-3">
+              <label className="text-xs">{t('entities.customFields.fields.defaultValue', 'Default value')}</label>
+              <input
+                className="border rounded w-full px-2 py-1 text-sm"
+                value={typeof currentDefault === 'string' ? currentDefault : ''}
+                onChange={(event) => {
+                  const value = event.target.value
+                  apply({ configJson: { ...(local.configJson || {}), defaultValue: value || undefined } })
+                }}
+                onBlur={commit}
+                placeholder={t('entities.customFields.fields.defaultValuePlaceholder', 'No default')}
+              />
+            </div>
+          )
+        }
+        return null
+      })()}
+
       <div className="mt-3 pt-2 border-t flex flex-wrap items-center gap-4">
         <span className="text-xs text-muted-foreground">{t('entities.customFields.fields.visibility', 'Visibility:')}</span>
         <label className="inline-flex items-center gap-2 text-xs">
@@ -1218,7 +1328,7 @@ const FieldDefinitionCard = React.memo(function FieldDefinitionCard({
           <div>
             <label className="text-xs font-medium">Group code</label>
             <input
-              className="mt-1 w-full rounded border px-2 py-1 text-sm font-mono disabled:cursor-not-allowed disabled:bg-muted/40 disabled:text-muted-foreground"
+              className="mt-1 w-full rounded border px-2 py-1 text-sm font-mono disabled:cursor-not-allowed disabled:bg-muted/50 disabled:text-muted-foreground"
               value={groupDraft.code}
               onChange={(event) => {
                 setGroupDraft((prev) => ({ ...prev, code: event.target.value }))

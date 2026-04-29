@@ -162,6 +162,23 @@ function deriveChangesFromSnapshots(
   return Object.keys(changes).length ? changes : null
 }
 
+function invertRecordedChanges(
+  changes: unknown,
+): Record<string, { from: unknown; to: unknown }> | null {
+  const source = asRecord(changes)
+  if (!source) return null
+  const inverted: Record<string, { from: unknown; to: unknown }> = {}
+  for (const [key, value] of Object.entries(source)) {
+    const entry = asRecord(value)
+    if (!entry || (!('from' in entry) && !('to' in entry))) continue
+    inverted[key] = {
+      from: entry.to,
+      to: entry.from,
+    }
+  }
+  return Object.keys(inverted).length ? inverted : null
+}
+
 function extractAliasList(source: unknown): string[] {
   if (!source || typeof source !== 'object' || Array.isArray(source)) return []
   const record = source as Record<string, unknown>
@@ -313,7 +330,7 @@ export class CommandBus {
       ctx,
       logEntry: log,
     })
-    await service.markUndone(log.id)
+    await service.markUndone(log.id, this.buildUndoTraceLog(log, ctx))
 
     // Run afterUndo command interceptors
     if (allInterceptors.length) {
@@ -332,6 +349,41 @@ export class CommandBus {
 
     await this.invalidateCacheAfterUndo(log, ctx)
     await this.flushCrudSideEffects(ctx.container)
+  }
+
+  private buildUndoTraceLog(log: ActionLog, ctx: CommandRuntimeContext): ActionLogCreateInput | undefined {
+    const snapshotBefore = log.snapshotAfter ?? null
+    const snapshotAfter = log.snapshotBefore ?? null
+    const changes =
+      deriveChangesFromSnapshots(snapshotBefore, snapshotAfter)
+      ?? invertRecordedChanges(log.changesJson)
+      ?? undefined
+
+    const baseContext = asRecord(log.contextJson) ?? {}
+    const context = {
+      ...baseContext,
+      historyAction: 'undo',
+      sourceLogId: log.id,
+      sourceCommandId: log.commandId,
+    }
+
+    return {
+      tenantId: log.tenantId ?? ctx.auth?.tenantId ?? null,
+      organizationId: log.organizationId ?? ctx.selectedOrganizationId ?? ctx.auth?.orgId ?? null,
+      actorUserId: ctx.auth?.sub ?? log.actorUserId ?? null,
+      commandId: log.commandId,
+      actionLabel: log.actionLabel ?? undefined,
+      resourceKind: log.resourceKind ?? undefined,
+      resourceId: log.resourceId ?? undefined,
+      parentResourceKind: log.parentResourceKind ?? null,
+      parentResourceId: log.parentResourceId ?? null,
+      relatedResourceKind: log.relatedResourceKind ?? null,
+      relatedResourceId: log.relatedResourceId ?? null,
+      snapshotBefore,
+      snapshotAfter,
+      changes,
+      context,
+    }
   }
 
   private async resolveUserFeaturesForInterceptors(ctx: CommandRuntimeContext): Promise<string[]> {
@@ -406,6 +458,7 @@ export class CommandBus {
   private mergeMetadata(primary?: CommandLogMetadata | null, secondary?: CommandLogMetadata | null): CommandLogMetadata | null {
     if (!primary && !secondary) return null
     return {
+      skipLog: secondary?.skipLog ?? primary?.skipLog ?? false,
       tenantId: secondary?.tenantId ?? primary?.tenantId ?? null,
       organizationId: secondary?.organizationId ?? primary?.organizationId ?? null,
       actorUserId: secondary?.actorUserId ?? primary?.actorUserId ?? null,
@@ -414,6 +467,8 @@ export class CommandBus {
       resourceId: secondary?.resourceId ?? primary?.resourceId ?? null,
       parentResourceKind: secondary?.parentResourceKind ?? primary?.parentResourceKind ?? null,
       parentResourceId: secondary?.parentResourceId ?? primary?.parentResourceId ?? null,
+      relatedResourceKind: secondary?.relatedResourceKind ?? primary?.relatedResourceKind ?? null,
+      relatedResourceId: secondary?.relatedResourceId ?? primary?.relatedResourceId ?? null,
       undoToken: secondary?.undoToken ?? primary?.undoToken ?? null,
       payload: secondary?.payload ?? primary?.payload ?? null,
       snapshotBefore: secondary?.snapshotBefore ?? primary?.snapshotBefore ?? null,
@@ -429,6 +484,7 @@ export class CommandBus {
     metadata: CommandLogMetadata | null
   ): Promise<ActionLog | null> {
     if (!metadata) return null
+    if (metadata.skipLog) return null
     const resourceKind =
       typeof metadata.resourceKind === 'string' ? metadata.resourceKind : null
     if (resourceKind && SKIPPED_ACTION_LOG_RESOURCE_KINDS.has(resourceKind)) {
@@ -459,6 +515,8 @@ export class CommandBus {
       if ('resourceId' in metadata && metadata.resourceId != null) payload.resourceId = metadata.resourceId
       if ('parentResourceKind' in metadata && metadata.parentResourceKind != null) payload.parentResourceKind = metadata.parentResourceKind
       if ('parentResourceId' in metadata && metadata.parentResourceId != null) payload.parentResourceId = metadata.parentResourceId
+      if ('relatedResourceKind' in metadata && metadata.relatedResourceKind != null) payload.relatedResourceKind = metadata.relatedResourceKind
+      if ('relatedResourceId' in metadata && metadata.relatedResourceId != null) payload.relatedResourceId = metadata.relatedResourceId
       if ('undoToken' in metadata && metadata.undoToken != null) payload.undoToken = metadata.undoToken
       if ('payload' in metadata && metadata.payload !== undefined) payload.commandPayload = metadata.payload
       if ('snapshotBefore' in metadata && metadata.snapshotBefore !== undefined) payload.snapshotBefore = metadata.snapshotBefore

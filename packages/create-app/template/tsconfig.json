@@ -29,6 +29,9 @@
       "@/*": [
         "./src/*"
       ],
+      "@/.mercato/generated/entities/*": [
+        "./.mercato/generated/entities/*/index.ts"
+      ],
       "@/.mercato/*": [
         "./.mercato/*"
       ]
@@ -38,7 +41,7 @@
       "./node_modules/@types"
     ],
     "verbatimModuleSyntax": false,
-    "target": "ES2017"
+    "target": "ES2022"
   },
   "include": [
     "next-env.d.ts",

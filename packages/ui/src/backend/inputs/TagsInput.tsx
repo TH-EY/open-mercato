@@ -66,6 +66,11 @@ export function TagsInput({
   const [loading, setLoading] = React.useState(false)
   const [touched, setTouched] = React.useState(false)
   const suppressBlurCommitRef = React.useRef(false)
+  const valueRef = React.useRef(value)
+
+  React.useEffect(() => {
+    valueRef.current = value
+  }, [value])
 
   const staticOptions = React.useMemo(() => normalizeOptions(suggestions), [suggestions])
   const selectedOptionList = React.useMemo(
@@ -134,10 +139,13 @@ export function TagsInput({
       if (disabled) return
       const trimmed = nextValue.trim()
       if (!trimmed) return
-      if (value.includes(trimmed)) return
-      onChange([...value, trimmed])
+      const currentValue = valueRef.current
+      if (currentValue.includes(trimmed)) return
+      const next = [...currentValue, trimmed]
+      valueRef.current = next
+      onChange(next)
     },
-    [disabled, onChange, value]
+    [disabled, onChange]
   )
 
   const findOptionForInput = React.useCallback(
@@ -170,9 +178,11 @@ export function TagsInput({
   const removeTag = React.useCallback(
     (tag: string) => {
       if (disabled) return
-      onChange(value.filter((candidate) => candidate !== tag))
+      const next = valueRef.current.filter((candidate) => candidate !== tag)
+      valueRef.current = next
+      onChange(next)
     },
-    [disabled, onChange, value]
+    [disabled, onChange]
   )
 
   return (
@@ -195,7 +205,7 @@ export function TagsInput({
               <span className="flex flex-col items-start leading-tight">
                 <span className="whitespace-nowrap">{label}</span>
                 {description ? (
-                  <span className="text-[10px] text-muted-foreground">{description}</span>
+                  <span className="text-overline text-muted-foreground">{description}</span>
                 ) : null}
               </span>
               <IconButton
@@ -275,7 +285,7 @@ export function TagsInput({
               >
                 <span>{option.label}</span>
                 {option.description ? (
-                  <span className="text-[10px] text-muted-foreground">{option.description}</span>
+                  <span className="text-overline text-muted-foreground">{option.description}</span>
                 ) : null}
               </Button>
             ))}

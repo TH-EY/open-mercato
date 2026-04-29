@@ -1,4 +1,4 @@
-name: Deploy to AWS ECS
+name: Deploy to AWS via CloudFormation
 
 on:
   workflow_dispatch:
@@ -9,152 +9,34 @@ on:
         type: choice
         options:
           - production
-  workflow_run:
-    workflows: ["Internal Deploy Gate"]
-    types: [completed]
-    branches: [develop]
 
 concurrency:
-  group: deploy-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' }}
+  group: deploy-${{ github.event.inputs.environment }}
   cancel-in-progress: false
 
 env:
   AWS_REGION: eu-west-2
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
-permissions:
-  id-token: write
-  contents: read
+  STACK_NAME: openmercato
 
 jobs:
-  prepare:
-    name: Prepare deployment
-    runs-on: ubuntu-latest
-    outputs:
-      should_deploy: ${{ steps.finalize.outputs.should_deploy }}
-      environment: ${{ steps.finalize.outputs.environment }}
-      head_sha: ${{ steps.finalize.outputs.head_sha }}
-      branch: ${{ steps.finalize.outputs.branch }}
-      reason: ${{ steps.finalize.outputs.reason }}
-
-    steps:
-      - name: Decide deployment scope
-        id: decide
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          DISPATCH_ENV: ${{ github.event.inputs.environment }}
-          DISPATCH_SHA: ${{ github.sha }}
-          DISPATCH_BRANCH: ${{ github.ref_name }}
-          WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          WORKFLOW_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
-        run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "environment=${DISPATCH_ENV}" >> "$GITHUB_OUTPUT"
-            echo "head_sha=${DISPATCH_SHA}" >> "$GITHUB_OUTPUT"
-            echo "branch=${DISPATCH_BRANCH}" >> "$GITHUB_OUTPUT"
-            if [ "$DISPATCH_BRANCH" != "develop" ]; then
-              echo "should_deploy=false" >> "$GITHUB_OUTPUT"
-              echo "reason=manual_dispatch_not_on_develop" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
-            echo "reason=manual_dispatch" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "environment=production" >> "$GITHUB_OUTPUT"
-          echo "head_sha=${WORKFLOW_HEAD_SHA}" >> "$GITHUB_OUTPUT"
-          echo "branch=${WORKFLOW_HEAD_BRANCH}" >> "$GITHUB_OUTPUT"
-
-          if [ "$WORKFLOW_CONCLUSION" != "success" ]; then
-            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
-            echo "reason=internal_gate_not_success" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ "$WORKFLOW_HEAD_BRANCH" != "develop" ]; then
-            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
-            echo "reason=workflow_run_not_on_develop" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "should_deploy=true" >> "$GITHUB_OUTPUT"
-          echo "reason=internal_gate_success" >> "$GITHUB_OUTPUT"
-
-      - name: Check for stale develop SHA
-        id: freshness
-        if: steps.decide.outputs.should_deploy == 'true' && github.event_name == 'workflow_run'
-        env:
-          EXPECTED_SHA: ${{ steps.decide.outputs.head_sha }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          CURRENT_SHA=$(git ls-remote "https://github.com/${REPOSITORY}.git" refs/heads/develop | awk '{print $1}')
-          if [ -z "$CURRENT_SHA" ]; then
-            echo "Failed to resolve current develop SHA"
-            exit 1
-          fi
-
-          if [ "$CURRENT_SHA" != "$EXPECTED_SHA" ]; then
-            echo "is_stale=true" >> "$GITHUB_OUTPUT"
-            echo "current_sha=${CURRENT_SHA}" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "is_stale=false" >> "$GITHUB_OUTPUT"
-          echo "current_sha=${CURRENT_SHA}" >> "$GITHUB_OUTPUT"
-
-      - name: Downgrade stale deployment to no-op
-        if: steps.freshness.outputs.is_stale == 'true'
-        run: |
-          echo "Stale deployment detected; skipping deploy."
-          echo "Triggered SHA: ${{ steps.decide.outputs.head_sha }}"
-          echo "Current develop SHA: ${{ steps.freshness.outputs.current_sha }}"
-
-      - name: Finalize deployment decision
-        id: finalize
-        env:
-          INITIAL_SHOULD_DEPLOY: ${{ steps.decide.outputs.should_deploy }}
-          INITIAL_REASON: ${{ steps.decide.outputs.reason }}
-          ENVIRONMENT: ${{ steps.decide.outputs.environment }}
-          HEAD_SHA: ${{ steps.decide.outputs.head_sha }}
-          BRANCH: ${{ steps.decide.outputs.branch }}
-          IS_STALE: ${{ steps.freshness.outputs.is_stale }}
-        run: |
-          echo "environment=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
-          echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
-          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
-
-          if [ "${INITIAL_SHOULD_DEPLOY}" != "true" ]; then
-            echo "should_deploy=${INITIAL_SHOULD_DEPLOY}" >> "$GITHUB_OUTPUT"
-            echo "reason=${INITIAL_REASON}" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ "${IS_STALE}" = "true" ]; then
-            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
-            echo "reason=stale_head_sha" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "should_deploy=true" >> "$GITHUB_OUTPUT"
-          echo "reason=${INITIAL_REASON}" >> "$GITHUB_OUTPUT"
-
-  build-image:
-    name: Build image
-    if: needs.prepare.outputs.should_deploy == 'true' && needs.prepare.result == 'success'
-    needs: prepare
+  build-and-deploy:
+    name: Build, Deploy & Smoke Test
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 45
-    environment: ${{ needs.prepare.outputs.environment }}
-    outputs:
-      image: ${{ steps.meta.outputs.image }}
+    environment: ${{ github.event.inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
+      - name: Verify deployment branch
+        if: github.ref_name != 'develop'
+        run: |
+          echo "ERROR: Production deploys must use the develop branch."
+          echo "Current branch: ${{ github.ref_name }}"
+          exit 1
+
       - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.prepare.outputs.head_sha }}
+        uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -170,249 +52,96 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Compute image metadata
-        id: meta
+        id: image
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY_NAME }}
-          IMAGE_TAG: ${{ needs.prepare.outputs.head_sha }}
         run: |
+          IMAGE_TAG="${GITHUB_SHA}"
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
-          echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
-          echo "latest=${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" >> "$GITHUB_OUTPUT"
+          echo "tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile
-          push: true
+          file: Dockerfile
           platforms: linux/arm64
+          push: true
           tags: |
-            ${{ steps.meta.outputs.image }}
-            ${{ steps.meta.outputs.latest }}
-          cache-from: type=gha,scope=deploy-aws
-          cache-to: type=gha,mode=max,scope=deploy-aws
+            ${{ steps.image.outputs.uri }}
+            ${{ steps.ecr-login.outputs.registry }}/${{ vars.ECR_REPOSITORY_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-  deploy-web:
-    name: Deploy web
-    if: needs.prepare.outputs.should_deploy == 'true' && needs.build-image.result == 'success'
-    needs: [prepare, build-image]
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    environment: ${{ needs.prepare.outputs.environment }}
-
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Download current web task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ vars.ECS_WEB_TASK_FAMILY }} \
-            --query taskDefinition \
-            > web-task-def.json
-
-      - name: Update web task definition with new image
-        id: web-task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: web-task-def.json
-          container-name: app
-          image: ${{ needs.build-image.outputs.image }}
-
-      - name: Deploy web service
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.web-task-def.outputs.task-definition }}
-          service: ${{ vars.ECS_WEB_SERVICE_NAME }}
-          cluster: ${{ vars.ECS_CLUSTER_NAME }}
-          wait-for-service-stability: false
-
-  deploy-worker:
-    name: Deploy worker
-    if: needs.prepare.outputs.should_deploy == 'true' && needs.build-image.result == 'success'
-    needs: [prepare, build-image]
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    environment: ${{ needs.prepare.outputs.environment }}
-
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Download current worker task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ vars.ECS_WORKER_TASK_FAMILY }} \
-            --query taskDefinition \
-            > worker-task-def.json
-
-      - name: Update worker task definition with new image
-        id: worker-task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: worker-task-def.json
-          container-name: worker
-          image: ${{ needs.build-image.outputs.image }}
-
-      - name: Deploy worker service
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.worker-task-def.outputs.task-definition }}
-          service: ${{ vars.ECS_WORKER_SERVICE_NAME }}
-          cluster: ${{ vars.ECS_CLUSTER_NAME }}
-          wait-for-service-stability: false
-
-  verify-services:
-    name: Verify services quickly
-    if: needs.prepare.outputs.should_deploy == 'true' && needs.deploy-web.result == 'success' && needs.deploy-worker.result == 'success'
-    needs: [prepare, deploy-web, deploy-worker]
-    runs-on: ubuntu-latest
-    timeout-minutes: 6
-    environment: ${{ needs.prepare.outputs.environment }}
-
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Wait briefly for ECS services to settle
+      - name: Deploy CloudFormation stack
         env:
-          ECS_CLUSTER_NAME: ${{ vars.ECS_CLUSTER_NAME }}
-          ECS_WEB_SERVICE_NAME: ${{ vars.ECS_WEB_SERVICE_NAME }}
-          ECS_WORKER_SERVICE_NAME: ${{ vars.ECS_WORKER_SERVICE_NAME }}
+          APP_IMAGE: ${{ steps.image.outputs.uri }}
+          JWT_SECRET_ARN: ${{ vars.JWT_SECRET_ARN != '' && vars.JWT_SECRET_ARN || secrets.JWT_SECRET_ARN }}
+          ENCRYPTION_KEY_ARN: ${{ vars.ENCRYPTION_KEY_ARN != '' && vars.ENCRYPTION_KEY_ARN || secrets.ENCRYPTION_KEY_ARN }}
+          REDIS_PARAMETER_GROUP_NAME: ${{ vars.REDIS_PARAMETER_GROUP_NAME != '' && vars.REDIS_PARAMETER_GROUP_NAME || secrets.REDIS_PARAMETER_GROUP_NAME }}
+          CFN_S3_BUCKET: ${{ vars.CFN_S3_BUCKET }}
+          CFN_S3_PREFIX: ${{ vars.CFN_S3_PREFIX }}
+        run: bash ./infra/cloudformation/deploy.sh deploy
+
+      - name: Resolve stack outputs
+        id: stack
         run: |
-          set -euo pipefail
-          python3 - <<'PYTHON'
-          import json
-          import os
-          import subprocess
-          import sys
-          import time
+          APPLICATION_URL="$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApplicationUrl'].OutputValue | [0]" \
+            --output text)"
+          CLUSTER_NAME="$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ClusterName'].OutputValue | [0]" \
+            --output text)"
+          WEB_SERVICE_NAME="$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='WebServiceName'].OutputValue | [0]" \
+            --output text)"
+          WORKER_SERVICE_NAME="$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='WorkerServiceName'].OutputValue | [0]" \
+            --output text)"
 
-          cluster = os.environ['ECS_CLUSTER_NAME']
-          services = [os.environ['ECS_WEB_SERVICE_NAME'], os.environ['ECS_WORKER_SERVICE_NAME']]
-          deadline = time.time() + 300
-          failure_markers = (
-              'unable to place',
-              'unable to consistently start',
-              'failed',
-              'unhealthy',
-              'error',
-          )
+          test -n "${APPLICATION_URL}" && test "${APPLICATION_URL}" != "None"
+          test -n "${CLUSTER_NAME}" && test "${CLUSTER_NAME}" != "None"
+          test -n "${WEB_SERVICE_NAME}" && test "${WEB_SERVICE_NAME}" != "None"
+          test -n "${WORKER_SERVICE_NAME}" && test "${WORKER_SERVICE_NAME}" != "None"
 
-          def fetch_state():
-              output = subprocess.check_output(
-                  [
-                      'aws', 'ecs', 'describe-services',
-                      '--cluster', cluster,
-                      '--services', *services,
-                      '--query', 'services[].{service:serviceName,status:status,desired:desiredCount,running:runningCount,pending:pendingCount,taskDefinition:taskDefinition,deployments:deployments[].{status:status,rollout:rolloutState,taskDefinition:taskDefinition,running:runningCount,pending:pendingCount,desired:desiredCount},events:events[0:5].message}',
-                      '--output', 'json',
-                  ],
-                  text=True,
-              )
-              return json.loads(output)
+          echo "application_url=${APPLICATION_URL}" >> "$GITHUB_OUTPUT"
+          echo "cluster_name=${CLUSTER_NAME}" >> "$GITHUB_OUTPUT"
+          echo "web_service_name=${WEB_SERVICE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "worker_service_name=${WORKER_SERVICE_NAME}" >> "$GITHUB_OUTPUT"
 
-          def has_recent_failure(service):
-              events = service.get('events', []) or []
-              lowered = ' '.join(str(event).lower() for event in events)
-              return any(marker in lowered for marker in failure_markers)
-
-          def service_is_ready(service):
-              if service.get('status') != 'ACTIVE':
-                  return False
-
-              primary = next((d for d in service.get('deployments', []) if d.get('status') == 'PRIMARY'), None)
-              if primary is None:
-                  return False
-
-              desired = service.get('desired', 0)
-              if service.get('running', 0) < desired or service.get('pending', 0) != 0:
-                  return False
-              if primary.get('taskDefinition') != service.get('taskDefinition'):
-                  return False
-              if primary.get('desired', 0) > desired:
-                  return False
-              primary_running = primary.get('running', 0)
-              primary_pending = primary.get('pending', 0)
-              if primary_running >= desired and primary_pending == 0:
-                  for deployment in service.get('deployments', []):
-                      if deployment.get('status') == 'PRIMARY':
-                          continue
-                      if deployment.get('desired', 0) != 0:
-                          return False
-                      if deployment.get('running', 0) != 0:
-                          return False
-                      if deployment.get('pending', 0) != 0:
-                          return False
-                  return True
-
-              if has_recent_failure(service):
-                  return False
-
-              if primary_pending <= desired and service.get('running', 0) >= desired:
-                  for deployment in service.get('deployments', []):
-                      if deployment.get('status') == 'PRIMARY':
-                          continue
-                      if deployment.get('pending', 0) != 0:
-                          return False
-                  return True
-
-              return False
-
-          while time.time() < deadline:
-              state = fetch_state()
-              if all(service_is_ready(service) for service in state):
-                  print('Services reached deploy-ready state within 5 minutes.')
-                  sys.exit(0)
-              time.sleep(15)
-
-          print('Services did not reach deploy-ready state within 5 minutes.')
-          print('Recent ECS service state:')
-          print(json.dumps(fetch_state(), indent=2))
-          sys.exit(1)
-          PYTHON
-
-  post-deployment-status:
-    name: Post deployment status
-    runs-on: ubuntu-latest
-    if: always()
-    needs:
-      - prepare
-      - build-image
-      - deploy-web
-      - deploy-worker
-      - verify-services
-
-    steps:
-      - name: Report deployment result
+      - name: Wait for ECS services to stabilize
         run: |
-          if [ "${{ needs.prepare.outputs.should_deploy }}" != "true" ]; then
-            echo "Deployment skipped: ${{ needs.prepare.outputs.reason }}"
-            exit 0
-          fi
+          aws ecs wait services-stable \
+            --cluster "${{ steps.stack.outputs.cluster_name }}" \
+            --services "${{ steps.stack.outputs.web_service_name }}" "${{ steps.stack.outputs.worker_service_name }}" \
+            --region "${AWS_REGION}"
 
-          if [ "${{ needs.build-image.result }}" = "success" ] \
-            && [ "${{ needs.deploy-web.result }}" = "success" ] \
-            && [ "${{ needs.deploy-worker.result }}" = "success" ] \
-            && [ "${{ needs.verify-services.result }}" = "success" ]; then
-            echo "Deployment to ${{ needs.prepare.outputs.environment }} succeeded"
-            echo "Image: ${{ needs.build-image.outputs.image }}"
-            exit 0
-          fi
+      - name: Run auth + dashboard smoke test
+        env:
+          BASE_URL: ${{ steps.stack.outputs.application_url }}
+          SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+          SMOKE_TEST_TENANT_ID: ${{ vars.SMOKE_TEST_TENANT_ID != '' && vars.SMOKE_TEST_TENANT_ID || secrets.SMOKE_TEST_TENANT_ID }}
+        run: node ./scripts/smoke-auth-dashboard.mjs
 
-          echo "Deployment to ${{ needs.prepare.outputs.environment }} failed"
-          echo "Build image: ${{ needs.build-image.result }}"
-          echo "Deploy web: ${{ needs.deploy-web.result }}"
-          echo "Deploy worker: ${{ needs.deploy-worker.result }}"
-          echo "Verify services: ${{ needs.verify-services.result }}"
-          exit 1
+      - name: Post deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "Deployment to ${{ github.event.inputs.environment }} succeeded"
+            echo "Image: ${{ steps.image.outputs.uri }}"
+            echo "Application URL: ${{ steps.stack.outputs.application_url }}"
+          else
+            echo "Deployment to ${{ github.event.inputs.environment }} failed"
+            exit 1
+          fi

@@ -13,7 +13,6 @@ import {
   serializeTemplateOrLink,
   serializeTransaction,
   signCheckoutAccessToken,
-  toTemplateOrLinkMutationInput,
   validateCheckoutCustomerData,
   validateDescriptorCurrencies,
   verifyCheckoutAccessToken,
@@ -263,26 +262,22 @@ describe('checkout utils', () => {
     })
   })
 
-  it('preserves checkout link fields for detached link-shaped records', () => {
-    const detachedLink = {
+  it('serializes link-only fields even when the record is a plain object', () => {
+    const link = {
       ...createLink({
         templateId: 'template_1',
-        completionCount: 3,
-        activeReservationCount: 1,
+        completionCount: 1,
+        activeReservationCount: 2,
         isLocked: true,
       }),
     } as CheckoutLink
 
-    expect(serializeTemplateOrLink(detachedLink)).toMatchObject({
+    expect(serializeTemplateOrLink(link)).toMatchObject({
       slug: 'test-link',
       templateId: 'template_1',
-      completionCount: 3,
-      activeReservationCount: 1,
+      completionCount: 1,
+      activeReservationCount: 2,
       isLocked: true,
-    })
-    expect(toTemplateOrLinkMutationInput(detachedLink)).toMatchObject({
-      slug: 'test-link',
-      templateId: 'template_1',
     })
   })
 

@@ -49,7 +49,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isCheckoutLinkRecord(record: CheckoutLinkTemplate | CheckoutLink): record is CheckoutLink {
-  return typeof (record as Partial<CheckoutLink>).slug === 'string'
+  return typeof (record as { slug?: unknown }).slug === 'string'
 }
 
 export function pickExplicitParsedOverrides<TInput extends Record<string, unknown>>(

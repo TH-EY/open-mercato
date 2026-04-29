@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { z } from 'zod'
 import { makeCrudRoute } from '@open-mercato/shared/lib/crud/factory'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
@@ -6,7 +5,13 @@ import { CustomerDeal, CustomerDealPersonLink, CustomerDealCompanyLink } from '.
 import { dealCreateSchema, dealUpdateSchema } from '../../data/validators'
 import { E } from '#generated/entities.ids.generated'
 import { resolveTranslations } from '@open-mercato/shared/lib/i18n/server'
-import { parseScopedCommandInput } from '../utils'
+import {
+  applyEntityIdRestriction,
+  consumeAdvancedFilterState,
+  findMatchingEntityIdsWithQueryEngine,
+  findMatchingEntityIdsBySearchTokensAcrossSources,
+  parseScopedCommandInput,
+} from '../utils'
 import type { EntityManager } from '@mikro-orm/postgresql'
 import {
   createCustomersCrudOpenApi,
@@ -15,6 +20,7 @@ import {
 } from '../openapi'
 import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { escapeLikePattern } from '@open-mercato/shared/lib/db/escapeLikePattern'
+import { mergeAdvancedFilters } from '@open-mercato/shared/lib/crud/advanced-filter-integration'
 
 const rawBodySchema = z.object({}).passthrough()
 
@@ -108,6 +114,9 @@ const crud = makeCrudRoute<unknown, unknown, DealListQuery>({
       'expected_close_at',
       'owner_user_id',
       'source',
+      'closure_outcome',
+      'loss_reason_id',
+      'loss_notes',
       'organization_id',
       'tenant_id',
       'created_at',
@@ -122,10 +131,44 @@ const crud = makeCrudRoute<unknown, unknown, DealListQuery>({
       title: 'title',
       value: 'value_amount',
     },
-    buildFilters: async (query: any) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    buildFilters: async (query: any, ctx) => {
+      const advancedQuery = { ...query }
+      const advancedFilterState = consumeAdvancedFilterState(query)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const filters: Record<string, any> = {}
       if (query.search) {
-        filters.title = { $ilike: `%${escapeLikePattern(query.search)}%` }
+        const matchingIds = ctx
+          ? await findMatchingEntityIdsBySearchTokensAcrossSources({
+              ctx,
+              query: query.search,
+              sources: [
+                {
+                  entityType: E.customers.customer_deal,
+                  fields: [
+                    'title',
+                    'description',
+                    'status',
+                    'pipeline_stage',
+                    'source',
+                    'value_amount',
+                    'value_currency',
+                    'cf:competitive_risk',
+                    'cf:implementation_complexity',
+                  ],
+                },
+              ],
+            })
+          : null
+        if (matchingIds !== null && matchingIds.length > 0) {
+          applyEntityIdRestriction(filters, matchingIds)
+        } else {
+          const searchPattern = `%${escapeLikePattern(query.search)}%`
+          filters.$or = [
+            { title: { $ilike: searchPattern } },
+            { description: { $ilike: searchPattern } },
+          ]
+        }
       }
       if (query.status) {
         filters.status = { $eq: query.status }
@@ -138,6 +181,18 @@ const crud = makeCrudRoute<unknown, unknown, DealListQuery>({
       }
       if (query.pipelineStageId) {
         filters.pipeline_stage_id = { $eq: query.pipelineStageId }
+      }
+      if (ctx && advancedFilterState) {
+        const advancedFilters = mergeAdvancedFilters(
+          { ...filters },
+          advancedQuery as Record<string, unknown>,
+        )
+        const matchedIds = await findMatchingEntityIdsWithQueryEngine({
+          ctx,
+          entityId: E.customers.customer_deal,
+          filters: advancedFilters,
+        })
+        applyEntityIdRestriction(filters, matchedIds)
       }
       return filters
     },
@@ -199,12 +254,14 @@ const crud = makeCrudRoute<unknown, unknown, DealListQuery>({
       }
       const personIds = normalizeUuidList(allPersonCandidates)
       const companyIds = normalizeUuidList(allCompanyCandidates)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(ctx as any).__dealsFilters = {
         personIds,
         companyIds,
       }
     },
     afterList: async (payload, ctx) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const filters = ((ctx as any).__dealsFilters || {}) as {
         personIds?: string[]
         companyIds?: string[]
@@ -215,19 +272,12 @@ const crud = makeCrudRoute<unknown, unknown, DealListQuery>({
       const items = Array.isArray(payload.items) ? payload.items : []
       if (!items.length) return
       const scopeSource = (items[0] ?? {}) as Record<string, unknown>
-      const fallbackTenantId =
-        (typeof scopeSource.tenantId === 'string' && scopeSource.tenantId.trim().length
-          ? scopeSource.tenantId
-          : typeof (scopeSource as any).tenant_id === 'string' && (scopeSource as any).tenant_id.trim().length
-            ? (scopeSource as any).tenant_id
-            : null) ?? (ctx as any)?.auth?.tenantId ?? null
-      const fallbackOrganizationId =
-        (typeof scopeSource.organizationId === 'string' && scopeSource.organizationId.trim().length
-          ? scopeSource.organizationId
-          : typeof (scopeSource as any).organization_id === 'string' &&
-              (scopeSource as any).organization_id.trim().length
-            ? (scopeSource as any).organization_id
-            : null) ?? (ctx as any)?.auth?.orgId ?? null
+      const tenantIdRaw = scopeSource.tenantId ?? scopeSource.tenant_id
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const fallbackTenantId = (typeof tenantIdRaw === 'string' && tenantIdRaw.trim().length ? tenantIdRaw : null) ?? (ctx as any)?.auth?.tenantId ?? null
+      const orgIdRaw = scopeSource.organizationId ?? scopeSource.organization_id
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const fallbackOrganizationId = (typeof orgIdRaw === 'string' && orgIdRaw.trim().length ? orgIdRaw : null) ?? (ctx as any)?.auth?.orgId ?? null
       const ids = items
         .map((item: unknown) => {
           if (!item || typeof item !== 'object') return null
@@ -263,25 +313,20 @@ const crud = makeCrudRoute<unknown, unknown, DealListQuery>({
         const personMemberships = new Map<string, Set<string>>()
         allPersonLinks.forEach((link) => {
           const deal = link.deal
-          const dealId =
-            typeof deal === 'string'
-              ? deal
-              : deal && typeof deal === 'object' && 'id' in deal && typeof (deal as any).id === 'string'
-                ? (deal as any).id
-                : null
+          const dealRecord = deal && typeof deal === 'object' ? deal as unknown as Record<string, unknown> : null
+          const dealId = typeof deal === 'string' ? deal
+            : dealRecord && typeof dealRecord.id === 'string' ? dealRecord.id
+            : null
           if (!dealId) return
           const personRef = link.person
-          const personId =
-            typeof personRef === 'string'
-              ? personRef
-              : personRef && typeof personRef === 'object' && 'id' in personRef && typeof (personRef as any).id === 'string'
-                ? (personRef as any).id
-                : null
+          const personRecord = personRef && typeof personRef === 'object' ? personRef as unknown as Record<string, unknown> : null
+          const personId = typeof personRef === 'string' ? personRef
+            : personRecord && typeof personRecord.id === 'string' ? personRecord.id
+            : null
           if (!personId) return
-          const label =
-            personRef && typeof personRef === 'object' && 'displayName' in personRef && typeof (personRef as any).displayName === 'string'
-              ? (personRef as any).displayName
-              : ''
+          const label = personRecord && typeof personRecord.displayName === 'string'
+            ? personRecord.displayName
+            : ''
           const bucket = personAssignments.get(dealId) ?? []
           if (!bucket.some((entry) => entry.id === personId)) {
             bucket.push({ id: personId, label })
@@ -296,25 +341,20 @@ const crud = makeCrudRoute<unknown, unknown, DealListQuery>({
         const companyMemberships = new Map<string, Set<string>>()
         allCompanyLinks.forEach((link) => {
           const deal = link.deal
-          const dealId =
-            typeof deal === 'string'
-              ? deal
-              : deal && typeof deal === 'object' && 'id' in deal && typeof (deal as any).id === 'string'
-                ? (deal as any).id
-                : null
+          const dealRecord = deal && typeof deal === 'object' ? deal as unknown as Record<string, unknown> : null
+          const dealId = typeof deal === 'string' ? deal
+            : dealRecord && typeof dealRecord.id === 'string' ? dealRecord.id
+            : null
           if (!dealId) return
           const companyRef = link.company
-          const companyId =
-            typeof companyRef === 'string'
-              ? companyRef
-              : companyRef && typeof companyRef === 'object' && 'id' in companyRef && typeof (companyRef as any).id === 'string'
-                ? (companyRef as any).id
-                : null
+          const companyRecord = companyRef && typeof companyRef === 'object' ? companyRef as unknown as Record<string, unknown> : null
+          const companyId = typeof companyRef === 'string' ? companyRef
+            : companyRecord && typeof companyRecord.id === 'string' ? companyRecord.id
+            : null
           if (!companyId) return
-          const label =
-            companyRef && typeof companyRef === 'object' && 'displayName' in companyRef && typeof (companyRef as any).displayName === 'string'
-              ? (companyRef as any).displayName
-              : ''
+          const label = companyRecord && typeof companyRecord.displayName === 'string'
+            ? companyRecord.displayName
+            : ''
           const bucket = companyAssignments.get(dealId) ?? []
           if (!bucket.some((entry) => entry.id === companyId)) {
             bucket.push({ id: companyId, label })

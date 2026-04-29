@@ -7,6 +7,8 @@ import { apiCall } from '@open-mercato/ui/backend/utils/apiCall'
 import { Spinner } from '@open-mercato/ui/primitives/spinner'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { DEFAULT_SETTINGS, hydrateCustomerTodoSettings, type CustomerTodoWidgetSettings } from './config'
+import { resolveExampleIntegrationHref } from '../../../lib/interactionCompatibility'
+import { resolveTodoHref } from '../../../components/detail/utils'
 
 type TodoLinkSummary = {
   id: string
@@ -14,6 +16,12 @@ type TodoLinkSummary = {
   todoSource: string
   todoTitle: string | null
   createdAt: string
+  _integrations?: {
+    example?: {
+      href?: string | null
+    }
+    [key: string]: unknown
+  }
   entity: {
     id: string | null
     displayName: string | null
@@ -50,6 +58,9 @@ async function loadTodos(settings: CustomerTodoWidgetSettings): Promise<TodoLink
         todoSource: typeof data.todoSource === 'string' ? data.todoSource : '',
         todoTitle: typeof data.todoTitle === 'string' ? data.todoTitle : null,
         createdAt: typeof data.createdAt === 'string' ? data.createdAt : '',
+        _integrations: data._integrations && typeof data._integrations === 'object'
+          ? (data._integrations as TodoLinkSummary['_integrations'])
+          : undefined,
         entity: {
           id: typeof entity.id === 'string' ? entity.id : null,
           displayName: typeof entity.displayName === 'string' ? entity.displayName : null,
@@ -67,11 +78,11 @@ function formatDate(value: string | null, locale?: string): string {
   return date.toLocaleString(locale ?? undefined)
 }
 
-function resolveDetailHref(entity: { id: string | null; kind: string | null }): string | null {
-  if (!entity.id) return null
-  if (entity.kind === 'company') return `/backend/customers/companies/${encodeURIComponent(entity.id)}`
-  if (entity.kind === 'person') return `/backend/customers/people/${encodeURIComponent(entity.id)}`
-  return `/backend/customers/people/${encodeURIComponent(entity.id)}`
+function resolveDetailHref(entity: { id: string | null; kind: string | null } | null | undefined): string | null {
+  if (!entity?.id) return null
+  if (entity.kind === 'company') return `/backend/customers/companies-v2/${encodeURIComponent(entity.id)}`
+  if (entity.kind === 'person') return `/backend/customers/people-v2/${encodeURIComponent(entity.id)}`
+  return `/backend/customers/people-v2/${encodeURIComponent(entity.id)}`
 }
 
 const CustomerTodosWidget: React.FC<DashboardWidgetComponentProps<CustomerTodoWidgetSettings>> = ({
@@ -126,7 +137,7 @@ const CustomerTodosWidget: React.FC<DashboardWidgetComponentProps<CustomerTodoWi
             type="number"
             min={1}
             max={20}
-            className="w-24 rounded-md border px-2 py-1 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            className="w-24 rounded-md border px-2 py-1 text-sm focus-visible:border-ring focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             value={hydrated.pageSize}
             onChange={(event) => {
               const next = Number(event.target.value)
@@ -154,6 +165,8 @@ const CustomerTodosWidget: React.FC<DashboardWidgetComponentProps<CustomerTodoWi
           {items.map((item) => {
             const createdLabel = formatDate(item.createdAt, locale)
             const href = resolveDetailHref(item.entity)
+            const exampleHref = resolveExampleIntegrationHref(item)
+            const taskHref = exampleHref ?? resolveTodoHref(item.todoSource, item.todoId)
             return (
               <li key={item.id} className="rounded-md border p-3">
                 <div className="flex items-start justify-between gap-3 text-sm font-medium">
@@ -168,13 +181,18 @@ const CustomerTodosWidget: React.FC<DashboardWidgetComponentProps<CustomerTodoWi
                     <p className="text-xs text-muted-foreground">{item.todoSource}</p>
                   ) : null}
                 </div>
-                {href ? (
-                  <div className="mt-2 text-xs">
+                <div className="mt-2 flex flex-wrap gap-3 text-xs">
+                  {href ? (
                     <Link className="text-primary hover:underline" href={href}>
                       {t('customers.widgets.common.viewRecord')}
                     </Link>
-                  </div>
-                ) : null}
+                  ) : null}
+                  {taskHref ? (
+                    <Link className="text-primary hover:underline" href={taskHref}>
+                      {t('customers.workPlan.customerTodos.table.actions.openTask')}
+                    </Link>
+                  ) : null}
+                </div>
               </li>
             )
           })}

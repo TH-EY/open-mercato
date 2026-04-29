@@ -6,6 +6,7 @@ import type { DataEngine } from '@open-mercato/shared/lib/data/engine'
 import { Organization, Tenant } from '@open-mercato/core/modules/directory/data/entities'
 import { organizationCreateSchema, organizationUpdateSchema } from '@open-mercato/core/modules/directory/data/validators'
 import { rebuildHierarchyForTenant } from '@open-mercato/core/modules/directory/lib/hierarchy'
+import { enforceTenantSelection } from '@open-mercato/core/modules/auth/lib/tenantAccess'
 import { E } from '#generated/entities.ids.generated'
 import type { CrudEmitContext, CrudEventsConfig, CrudIndexerConfig } from '@open-mercato/shared/lib/crud/types'
 import {
@@ -19,7 +20,6 @@ import {
   setCustomFieldsIfAny,
   emitCrudSideEffects,
   emitCrudUndoSideEffects,
-  requireTenantScope,
   requireId,
   buildChanges,
 } from '@open-mercato/shared/lib/commands/helpers'
@@ -199,7 +199,7 @@ async function restoreChildParents(em: EntityManager, tenantId: string, snapshot
       toPersist.push(child)
     }
   }
-  if (toPersist.length) await em.persistAndFlush(toPersist)
+  if (toPersist.length) await em.persist(toPersist).flush()
 }
 
 function normalizeChildIds(ids: readonly string[], exclude: string[]): string[] {
@@ -239,7 +239,7 @@ async function assignChildren(
       toPersist.push(child)
     }
   }
-  if (toPersist.length) await em.persistAndFlush(toPersist)
+  if (toPersist.length) await em.persist(toPersist).flush()
 }
 
 async function clearRemovedChildren(em: EntityManager, tenantId: string, recordId: string, desiredChildIds: Set<string>): Promise<void> {
@@ -248,7 +248,7 @@ async function clearRemovedChildren(em: EntityManager, tenantId: string, recordI
   const toPersist = current.filter((child) => !desiredChildIds.has(String(child.id)))
   if (!toPersist.length) return
   for (const child of toPersist) child.parentId = null
-  await em.persistAndFlush(toPersist)
+  await em.persist(toPersist).flush()
 }
 
 async function resolveUniqueSlug(em: EntityManager, tenantId: string, baseSlug: string, excludeId?: string): Promise<string> {
@@ -274,8 +274,8 @@ const createOrganizationCommand: CommandHandler<Record<string, unknown>, Organiz
   async execute(rawInput, ctx) {
     const { parsed, custom } = parseWithCustomFields(organizationCreateSchema, rawInput)
     const em = (ctx.container.resolve('em') as EntityManager)
-    const authTenantId = ctx.auth?.tenantId ?? null
-    const tenantId = requireTenantScope(authTenantId, parsed.tenantId ?? null)
+    const tenantId = await enforceTenantSelection(ctx, parsed.tenantId ?? null)
+    if (!tenantId) throw new CrudHttpError(400, { error: 'Tenant scope required' })
 
     const parentId = parsed.parentId ?? null
     if (parentId) {
@@ -431,8 +431,8 @@ const updateOrganizationCommand: CommandHandler<Record<string, unknown>, Organiz
     const existing = await em.findOne(Organization, { id: parsed.id, deletedAt: null })
     if (!existing) throw new CrudHttpError(404, { error: 'Not found' })
 
-    const authTenantId = ctx.auth?.tenantId ?? null
-    const tenantId = requireTenantScope(authTenantId, parsed.tenantId ?? resolveTenantIdFromEntity(existing))
+    const tenantId = await enforceTenantSelection(ctx, parsed.tenantId ?? resolveTenantIdFromEntity(existing))
+    if (!tenantId) throw new CrudHttpError(400, { error: 'Tenant scope required' })
 
     const parentId = parsed.parentId ?? null
     if (parentId) {
@@ -639,8 +639,8 @@ const deleteOrganizationCommand: CommandHandler<{ body: any; query: Record<strin
     const existing = await em.findOne(Organization, { id, deletedAt: null })
     if (!existing) throw new CrudHttpError(404, { error: 'Not found' })
 
-    const authTenantId = ctx.auth?.tenantId ?? null
-    const tenantId = requireTenantScope(authTenantId, resolveTenantIdFromEntity(existing))
+    const tenantId = await enforceTenantSelection(ctx, resolveTenantIdFromEntity(existing))
+    if (!tenantId) throw new CrudHttpError(400, { error: 'Tenant scope required' })
 
     const parentId = existing.parentId ?? null
     const childSnapshotsBefore = await loadChildParentSnapshots(
@@ -669,7 +669,7 @@ const deleteOrganizationCommand: CommandHandler<{ body: any; query: Record<strin
       toPersist.push(child)
     }
     toPersist.push(deleted)
-    if (toPersist.length) await em.persistAndFlush(toPersist)
+    if (toPersist.length) await em.persist(toPersist).flush()
     setUndoMeta(deleted, { childParentsBefore: childSnapshotsBefore })
 
     await rebuildHierarchyForTenant(em, tenantId)

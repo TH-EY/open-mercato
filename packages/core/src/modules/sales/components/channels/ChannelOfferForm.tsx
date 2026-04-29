@@ -1097,7 +1097,7 @@ function ProductSelectInput({
                       </div>
                       </div>
                     {hasConflict ? (
-                      <div className="flex items-center justify-between gap-2 text-xs text-amber-700">
+                      <div className="flex items-center justify-between gap-2 text-xs text-status-warning-text">
                         <span className="truncate">
                           {t('sales.channels.offers.form.productHasOffer', 'Already has an offer for this channel.')}
                         </span>
@@ -1782,7 +1782,7 @@ function PriceOverridesEditor({
 
   return (
     <div className="space-y-4">
-      <div className="rounded border bg-muted/60 px-3 py-2">
+      <div className="rounded border bg-muted/50 px-3 py-2">
         <div className="text-xs uppercase text-muted-foreground">
           {t('sales.channels.offers.pricing.basePriceLabel', 'Original product price')}
         </div>
@@ -1966,7 +1966,7 @@ function ProductVariantsList({ variants }: { variants: ProductVariantPreview[] }
             <div className="min-w-0">
               <div className="text-xs font-medium">{variant.name}</div>
               {variant.sku ? (
-                <div className="text-[11px] text-muted-foreground">SKU · {variant.sku}</div>
+                <div className="text-overline text-muted-foreground">SKU · {variant.sku}</div>
               ) : null}
             </div>
           </div>

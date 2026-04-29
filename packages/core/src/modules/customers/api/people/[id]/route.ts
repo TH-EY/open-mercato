@@ -12,19 +12,36 @@ import {
   CustomerActivity,
   CustomerTagAssignment,
   CustomerTag,
+  CustomerLabelAssignment,
+  CustomerLabel,
   CustomerDealPersonLink,
   CustomerDeal,
   CustomerTodoLink,
+  CustomerInteraction,
 } from '../../../data/entities'
 import { User } from '@open-mercato/core/modules/auth/data/entities'
 import { loadCustomFieldValues } from '@open-mercato/shared/lib/crud/custom-fields'
 import { E } from '#generated/entities.ids.generated'
 import { mergePersonCustomFieldValues, resolvePersonCustomFieldRouting } from '../../../lib/customFieldRouting'
+import {
+  CUSTOMER_INTERACTION_ACTIVITY_ADAPTER_SOURCE,
+  EXAMPLE_TODO_SOURCE,
+  CUSTOMER_INTERACTION_TODO_ADAPTER_SOURCE,
+  mapInteractionRecordToActivitySummary,
+  mapInteractionRecordToTodoSummary,
+} from '../../../lib/interactionCompatibility'
+import { resolveCustomerInteractionFeatureFlags } from '../../../lib/interactionFeatureFlags'
+import { hydrateCanonicalInteractions } from '../../../lib/interactionReadModel'
 import type { QueryEngine } from '@open-mercato/shared/lib/query/types'
 import type { EntityId } from '@open-mercato/shared/modules/entities'
 import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
-import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { findWithDecryption, findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { parseBooleanFromUnknown, parseBooleanToken } from '@open-mercato/shared/lib/boolean'
+import { loadPersonCompanyLinks, summarizePersonCompanies } from '../../../lib/personCompanies'
+
+export const metadata = {
+  GET: { requireAuth: true, requireFeatures: ['customers.people.view'] },
+}
 
 const paramsSchema = z.object({
   id: z.string().uuid(),
@@ -226,7 +243,7 @@ async function resolveTodoDetails(
 
   const idsBySource = new Map<string, Set<string>>()
   for (const link of links) {
-    const source = typeof link.todoSource === 'string' && link.todoSource.trim().length > 0 ? link.todoSource : 'example:todo'
+    const source = typeof link.todoSource === 'string' && link.todoSource.trim().length > 0 ? link.todoSource : EXAMPLE_TODO_SOURCE
     const id = typeof link.todoId === 'string' && link.todoId.trim().length > 0 ? link.todoId : String(link.todoId ?? '')
     if (!id) continue
     if (!idsBySource.has(source)) idsBySource.set(source, new Set<string>())
@@ -380,7 +397,9 @@ export async function GET(_req: Request, ctx: { params?: { id?: string } }) {
   const includeAddresses = includeTokens.has('addresses')
   const includeComments = includeTokens.has('comments') || includeTokens.has('notes')
   const includeDeals = includeTokens.has('deals')
+  const includeInteractions = includeTokens.has('interactions')
   const includeTodos = includeTokens.has('todos') || includeTokens.has('tasks')
+  const plannedPreviewLimit = 5
 
   let statusCode = 500
   let profileMeta: Record<string, unknown> | undefined
@@ -395,6 +414,7 @@ export async function GET(_req: Request, ctx: { params?: { id?: string } }) {
   let customFields: Record<string, unknown> = {}
   let viewerUserId: string | null = null
   let profile: CustomerPersonProfile | null = null
+  let companies: Array<{ linkId: string | null; companyId: string; displayName: string; isPrimary: boolean; synthetic?: boolean }> = []
 
   try {
     const parse = paramsSchema.safeParse({ id: ctx.params?.id })
@@ -424,12 +444,14 @@ export async function GET(_req: Request, ctx: { params?: { id?: string } }) {
     profiler.mark('container_resolved')
 
     const scope = await resolveOrganizationScopeForRequest({ container, auth, request: _req })
+    const interactionFlags = await resolveCustomerInteractionFeatureFlags(container, scope?.tenantId ?? auth.tenantId)
+    const interactionMode = interactionFlags.unified ? 'canonical' : 'legacy'
     profiler.mark('scope_resolved', {
       scopedOrganizations: Array.isArray(scope?.filterIds) ? scope.filterIds.length : 0,
     })
     const em = (container.resolve('em') as EntityManager)
 
-    const person = await em.findOne(CustomerEntity, { id: parse.data.id, kind: 'person', deletedAt: null })
+    const person = await findOneWithDecryption(em, CustomerEntity, { id: parse.data.id, kind: 'person', deletedAt: null }, {}, { tenantId: auth.tenantId ?? null, organizationId: auth.orgId ?? null })
     profiler.mark('person_loaded', { found: !!person })
     if (!person) {
       statusCode = 404
@@ -452,11 +474,12 @@ export async function GET(_req: Request, ctx: { params?: { id?: string } }) {
       return forbidden('Access denied')
     }
 
-    profile = await em.findOne(CustomerPersonProfile, { entity: person })
+    profile = await findOneWithDecryption(em, CustomerPersonProfile, { entity: person }, { populate: ['company'] }, { tenantId: person.tenantId ?? auth.tenantId ?? null, organizationId: person.organizationId ?? auth.orgId ?? null })
     profiler.mark('profile_loaded', { found: !!profile })
+    companies = summarizePersonCompanies(profile, await loadPersonCompanyLinks(em, person))
 
     if (includeAddresses) {
-      addresses = await em.find(CustomerAddress, { entity: person.id }, { orderBy: { isPrimary: 'desc', createdAt: 'desc' } })
+      addresses = await findWithDecryption(em, CustomerAddress, { entity: person.id }, { orderBy: { isPrimary: 'desc', createdAt: 'desc' } }, { tenantId: person.tenantId ?? auth.tenantId ?? null, organizationId: person.organizationId ?? auth.orgId ?? null })
       profiler.mark('addresses_loaded', { count: addresses.length })
     }
 
@@ -469,18 +492,91 @@ export async function GET(_req: Request, ctx: { params?: { id?: string } }) {
     )
     profiler.mark('tags_loaded', { count: tagAssignments.length })
 
+    const labelAssignments = await findWithDecryption(
+      em,
+      CustomerLabelAssignment,
+      { entity: person.id },
+      { populate: ['label'] },
+      { tenantId: person.tenantId ?? auth.tenantId ?? null, organizationId: person.organizationId ?? auth.orgId ?? null },
+    )
+    profiler.mark('labels_loaded', { count: labelAssignments.length })
+
     if (includeComments) {
-      comments = await em.find(CustomerComment, { entity: person.id }, { orderBy: { createdAt: 'desc' }, limit: 50 })
+      comments = await findWithDecryption(em, CustomerComment, { entity: person.id }, { orderBy: { createdAt: 'desc' }, limit: 50 }, { tenantId: person.tenantId ?? auth.tenantId ?? null, organizationId: person.organizationId ?? auth.orgId ?? null })
       profiler.mark('comments_loaded', { count: comments.length })
     }
 
-    if (includeActivities) {
-      activities = await em.find(CustomerActivity, { entity: person.id }, { orderBy: { occurredAt: 'desc', createdAt: 'desc' }, limit: 50 })
+    const shouldLoadCanonicalInteractions = includeInteractions || includeActivities || includeTodos
+    const canonicalInteractionRows = shouldLoadCanonicalInteractions
+      ? await findWithDecryption(
+          em,
+          CustomerInteraction,
+          interactionFlags.unified
+            ? { entity: person.id, deletedAt: null }
+            : { entity: person.id },
+          { orderBy: { scheduledAt: 'asc', createdAt: 'desc' }, limit: 100 },
+          { tenantId: person.tenantId ?? auth.tenantId ?? null, organizationId: person.organizationId ?? auth.orgId ?? null },
+        )
+      : []
+    profiler.mark('canonical_interactions_loaded', { count: canonicalInteractionRows.length })
+    const canonicalActiveInteractions = canonicalInteractionRows.filter((interaction) => !interaction.deletedAt)
+    const canonicalInteractions = shouldLoadCanonicalInteractions
+      ? await hydrateCanonicalInteractions({
+          em,
+          container,
+          auth,
+          selectedOrganizationId: scope?.selectedId ?? auth.orgId ?? null,
+          interactions: canonicalActiveInteractions,
+          enrich: includeInteractions,
+        })
+      : []
+    profiler.mark('canonical_interactions_hydrated', { count: canonicalInteractions.length })
+
+    const plannedPreviewInteractions = shouldLoadCanonicalInteractions
+      ? (() => {
+          const sorted = [...canonicalInteractions]
+            .filter((interaction) => interaction.status === 'planned' && interaction.interactionType !== 'task')
+            .sort((left, right) => {
+              const leftTime = new Date(left.scheduledAt ?? left.createdAt).getTime()
+              const rightTime = new Date(right.scheduledAt ?? right.createdAt).getTime()
+              if (leftTime === rightTime) return left.id.localeCompare(right.id)
+              return leftTime - rightTime
+            })
+          return sorted.slice(0, plannedPreviewLimit)
+        })()
+      : await hydrateCanonicalInteractions({
+          em,
+          container,
+          auth,
+          selectedOrganizationId: scope?.selectedId ?? auth.orgId ?? null,
+          interactions: await findWithDecryption(
+            em,
+            CustomerInteraction,
+            {
+              entity: person.id,
+              organizationId: person.organizationId,
+              tenantId: person.tenantId,
+              deletedAt: null,
+              status: 'planned',
+              interactionType: { $ne: 'task' },
+            },
+            { orderBy: { scheduledAt: 'ASC', createdAt: 'ASC' }, limit: plannedPreviewLimit },
+            { tenantId: person.tenantId ?? auth.tenantId ?? null, organizationId: person.organizationId ?? auth.orgId ?? null },
+          ),
+          enrich: true,
+        })
+
+    if (includeActivities && !interactionFlags.unified) {
+      activities = await findWithDecryption(em, CustomerActivity, { entity: person.id }, { orderBy: { occurredAt: 'desc', createdAt: 'desc' }, limit: 50 }, { tenantId: person.tenantId ?? auth.tenantId ?? null, organizationId: person.organizationId ?? auth.orgId ?? null })
       profiler.mark('activities_loaded', { count: activities.length })
     }
 
-    if (includeTodos) {
-      todoLinks = await em.find(CustomerTodoLink, { entity: person.id }, { orderBy: { createdAt: 'desc' }, limit: 50 })
+    if (includeInteractions) {
+      profiler.mark('interactions_loaded', { count: canonicalInteractions.length })
+    }
+
+    if (includeTodos && !interactionFlags.unified) {
+      todoLinks = await findWithDecryption(em, CustomerTodoLink, { entity: person.id }, { orderBy: { createdAt: 'desc' }, limit: 50 }, { tenantId: person.tenantId ?? auth.tenantId ?? null, organizationId: person.organizationId ?? auth.orgId ?? null })
       profiler.mark('todo_links_loaded', { count: todoLinks.length })
       if (todoLinks.length) {
         const queryEngine = (container.resolve('queryEngine') as QueryEngine)
@@ -499,6 +595,23 @@ export async function GET(_req: Request, ctx: { params?: { id?: string } }) {
       }
     }
 
+    const canonicalActivityBridgeIds = new Set(
+      canonicalInteractionRows
+        .filter((interaction) => interaction.source === CUSTOMER_INTERACTION_ACTIVITY_ADAPTER_SOURCE)
+        .map((interaction) => interaction.id),
+    )
+    const canonicalTodoBridgeIds = new Set(
+      canonicalInteractionRows
+        .filter((interaction) => interaction.source === CUSTOMER_INTERACTION_TODO_ADAPTER_SOURCE)
+        .map((interaction) => interaction.id),
+    )
+    const canonicalActivityItems = canonicalInteractions
+      .filter((interaction) => interaction.interactionType !== 'task')
+      .map((interaction) => mapInteractionRecordToActivitySummary(interaction))
+    const canonicalTodoItems = canonicalInteractions
+      .filter((interaction) => interaction.interactionType === 'task')
+      .map((interaction) => mapInteractionRecordToTodoSummary(interaction))
+
     const authorIds = new Set<string>()
     if (includeActivities) {
       for (const activity of activities) {
@@ -513,7 +626,7 @@ export async function GET(_req: Request, ctx: { params?: { id?: string } }) {
     if (viewerUserId) authorIds.add(viewerUserId)
 
     if (authorIds.size) {
-      const users = await em.find(User, { id: { $in: Array.from(authorIds) } })
+      const users = await findWithDecryption(em, User, { id: { $in: Array.from(authorIds) } }, {}, { tenantId: person.tenantId ?? auth.tenantId ?? null, organizationId: person.organizationId ?? auth.orgId ?? null })
       userMap = new Map(
         users.map((user) => [
           user.id,
@@ -578,7 +691,58 @@ export async function GET(_req: Request, ctx: { params?: { id?: string } }) {
     profiler.mark('custom_fields_merged', { keys: Object.keys(customFields).length })
 
     const viewerUserIdFinal = viewerUserId
+    const counts = {
+      tags: tagAssignments.length + labelAssignments.length,
+      comments: includeComments
+        ? comments.length
+        : await em.count(CustomerComment, {
+            entity: person.id,
+            organizationId: person.organizationId,
+            tenantId: person.tenantId,
+          }),
+      activities: await em.count(CustomerInteraction, {
+        entity: person.id,
+        organizationId: person.organizationId,
+        tenantId: person.tenantId,
+        deletedAt: null,
+        interactionType: { $ne: 'task' },
+      }),
+      interactions: await em.count(CustomerInteraction, {
+        entity: person.id,
+        organizationId: person.organizationId,
+        tenantId: person.tenantId,
+        deletedAt: null,
+      }),
+      todos: interactionFlags.unified
+        ? await em.count(CustomerInteraction, {
+            entity: person.id,
+            organizationId: person.organizationId,
+            tenantId: person.tenantId,
+            deletedAt: null,
+            interactionType: 'task',
+          })
+        : await em.count(CustomerTodoLink, {
+            entity: person.id,
+            organizationId: person.organizationId,
+            tenantId: person.tenantId,
+          }),
+      addresses: includeAddresses
+        ? addresses.length
+        : await em.count(CustomerAddress, {
+            entity: person.id,
+            organizationId: person.organizationId,
+            tenantId: person.tenantId,
+          }),
+      deals: includeDeals
+        ? deals.length
+        : await em.count(CustomerDealPersonLink, {
+            person: person.id,
+          }),
+      companies: companies.length,
+    }
+
     const response = NextResponse.json({
+      interactionMode,
       person: {
         id: person.id,
         displayName: person.displayName,
@@ -589,6 +753,8 @@ export async function GET(_req: Request, ctx: { params?: { id?: string } }) {
         status: person.status,
         lifecycleStage: person.lifecycleStage,
         source: person.source,
+        temperature: person.temperature,
+        renewalQuarter: person.renewalQuarter,
         nextInteractionAt: person.nextInteractionAt ? person.nextInteractionAt.toISOString() : null,
         nextInteractionName: person.nextInteractionName,
         nextInteractionRefId: person.nextInteractionRefId,
@@ -617,7 +783,16 @@ export async function GET(_req: Request, ctx: { params?: { id?: string } }) {
           }
         : null,
       customFields,
-      tags: serializeTags(tagAssignments),
+      tags: [
+        ...serializeTags(tagAssignments),
+        ...labelAssignments
+          .map((a) => {
+            const label = a.label as CustomerLabel | string | null
+            if (!label || typeof label === 'string') return null
+            return { id: label.id, label: label.label, color: null }
+          })
+          .filter((t): t is { id: string; label: string; color: null } => t !== null),
+      ],
       addresses: includeAddresses
         ? addresses.map((address) => ({
             id: address.id,
@@ -654,20 +829,44 @@ export async function GET(_req: Request, ctx: { params?: { id?: string } }) {
           })
         : [],
       activities: includeActivities
-        ? activities.map((activity) => ({
-            id: activity.id,
-            activityType: activity.activityType,
-            subject: activity.subject,
-            body: activity.body,
-            occurredAt: activity.occurredAt ? activity.occurredAt.toISOString() : null,
-            dealId: activity.deal ? (typeof activity.deal === 'string' ? activity.deal : activity.deal.id) : null,
-            authorUserId: activity.authorUserId,
-            authorName: activity.authorUserId ? userMap.get(activity.authorUserId)?.name ?? null : null,
-            authorEmail: activity.authorUserId ? userMap.get(activity.authorUserId)?.email ?? null : null,
-            createdAt: activity.createdAt.toISOString(),
-            appearanceIcon: activity.appearanceIcon ?? null,
-            appearanceColor: activity.appearanceColor ?? null,
-          }))
+        ? (
+            interactionFlags.unified
+              ? canonicalActivityItems
+              : [
+                  ...activities
+                    .filter((activity) => !canonicalActivityBridgeIds.has(activity.id))
+                    .map((activity) => ({
+                      id: activity.id,
+                      activityType: activity.activityType,
+                      subject: activity.subject,
+                      body: activity.body,
+                      occurredAt: activity.occurredAt ? activity.occurredAt.toISOString() : null,
+                      dealId: activity.deal ? (typeof activity.deal === 'string' ? activity.deal : activity.deal.id) : null,
+                      authorUserId: activity.authorUserId,
+                      authorName: activity.authorUserId ? userMap.get(activity.authorUserId)?.name ?? null : null,
+                      authorEmail: activity.authorUserId ? userMap.get(activity.authorUserId)?.email ?? null : null,
+                      createdAt: activity.createdAt.toISOString(),
+                      appearanceIcon: activity.appearanceIcon ?? null,
+                      appearanceColor: activity.appearanceColor ?? null,
+                    })),
+                  ...canonicalActivityItems.filter(
+                    (activity) =>
+                      canonicalInteractions.some(
+                        (interaction) =>
+                          interaction.id === activity.id &&
+                          interaction.source === CUSTOMER_INTERACTION_ACTIVITY_ADAPTER_SOURCE,
+                      ),
+                  ),
+                ].sort((left, right) => {
+                  const leftTime = new Date(left.occurredAt ?? left.createdAt).getTime()
+                  const rightTime = new Date(right.occurredAt ?? right.createdAt).getTime()
+                  if (leftTime === rightTime) return right.id.localeCompare(left.id)
+                  return rightTime - leftTime
+                }).slice(0, 50)
+          )
+        : [],
+      interactions: includeInteractions
+        ? canonicalInteractions
         : [],
       deals: includeDeals
         ? deals.map((deal) => ({
@@ -675,38 +874,78 @@ export async function GET(_req: Request, ctx: { params?: { id?: string } }) {
             title: deal.title,
             status: deal.status,
             pipelineStage: deal.pipelineStage,
+            pipelineId: deal.pipelineId ?? null,
+            pipelineStageId: deal.pipelineStageId ?? null,
             valueAmount: deal.valueAmount,
             valueCurrency: deal.valueCurrency,
             probability: deal.probability,
             expectedCloseAt: deal.expectedCloseAt ? deal.expectedCloseAt.toISOString() : null,
             ownerUserId: deal.ownerUserId,
             source: deal.source,
+            closureOutcome: deal.closureOutcome ?? null,
+            lossReasonId: deal.lossReasonId ?? null,
+            lossNotes: deal.lossNotes ?? null,
             createdAt: deal.createdAt.toISOString(),
             updatedAt: deal.updatedAt.toISOString(),
           }))
         : [],
       todos: includeTodos
-        ? todoLinks.map((link) => {
-            const source = typeof link.todoSource === 'string' && link.todoSource.trim().length > 0 ? link.todoSource : 'example:todo'
-            const key = `${source}:${link.todoId}`
-            const detail = todoDetails.get(key)
-            return {
-              id: link.id,
-              todoId: link.todoId,
-              todoSource: source,
-              createdAt: link.createdAt.toISOString(),
-              createdByUserId: link.createdByUserId,
-              title: detail?.title ?? null,
-              isDone: detail?.isDone ?? null,
-              priority: detail?.priority ?? null,
-              severity: detail?.severity ?? null,
-              description: detail?.description ?? null,
-              dueAt: detail?.dueAt ?? null,
-              todoOrganizationId: detail?.organizationId ?? null,
-              customValues: detail?.customValues ?? null,
-            }
-          })
+        ? (
+            interactionFlags.unified
+              ? canonicalTodoItems
+              : [
+                  ...todoLinks
+                    .filter((link) => !canonicalTodoBridgeIds.has(link.todoId))
+                    .map((link) => {
+                      const source = typeof link.todoSource === 'string' && link.todoSource.trim().length > 0 ? link.todoSource : EXAMPLE_TODO_SOURCE
+                      const key = `${source}:${link.todoId}`
+                      const detail = todoDetails.get(key)
+                      return {
+                        id: link.id,
+                        todoId: link.todoId,
+                        todoSource: source,
+                        createdAt: link.createdAt.toISOString(),
+                        createdByUserId: link.createdByUserId,
+                        title: detail?.title ?? null,
+                        isDone: detail?.isDone ?? null,
+                        priority: detail?.priority ?? null,
+                        severity: detail?.severity ?? null,
+                        description: detail?.description ?? null,
+                        dueAt: detail?.dueAt ?? null,
+                        todoOrganizationId: detail?.organizationId ?? null,
+                        customValues: detail?.customValues ?? null,
+                      }
+                    }),
+                  ...canonicalTodoItems.filter(
+                    (todo) =>
+                      canonicalInteractions.some(
+                        (interaction) =>
+                          interaction.id === todo.todoId &&
+                          interaction.source === CUSTOMER_INTERACTION_TODO_ADAPTER_SOURCE,
+                      ),
+                  ),
+                ].sort((left, right) => {
+                  const leftTime = new Date(left.createdAt).getTime()
+                  const rightTime = new Date(right.createdAt).getTime()
+                  if (leftTime === rightTime) return right.id.localeCompare(left.id)
+                  return rightTime - leftTime
+                }).slice(0, 50)
+          )
         : [],
+      isPrimary: companies.some((entry) => entry.isPrimary),
+      companies: companies.map((entry) => ({
+        id: entry.companyId,
+        displayName: entry.displayName,
+        isPrimary: entry.isPrimary,
+      })),
+      company: (() => {
+        const primaryCompany = companies.find((entry) => entry.isPrimary) ?? companies[0] ?? null
+        return primaryCompany
+          ? { id: primaryCompany.companyId, displayName: primaryCompany.displayName }
+          : null
+      })(),
+      plannedActivitiesPreview: plannedPreviewInteractions,
+      counts,
       viewer: {
         userId: viewerUserIdFinal,
         name: viewerUserIdFinal ? userMap.get(viewerUserIdFinal)?.name ?? null : null,
@@ -716,14 +955,8 @@ export async function GET(_req: Request, ctx: { params?: { id?: string } }) {
     statusCode = 200
     profileMeta = {
       include: Array.from(includeTokens),
-      counts: {
-        tags: tagAssignments.length,
-        comments: comments.length,
-        activities: activities.length,
-        todos: todoLinks.length,
-        addresses: addresses.length,
-        deals: deals.length,
-      },
+      interactionMode,
+      counts,
     }
     profiler.mark('response_ready', { status: statusCode })
     return response
@@ -740,10 +973,11 @@ const personDetailQuerySchema = z.object({
   include: z
     .string()
     .optional()
-    .describe('Comma-separated list of relations to include (addresses, comments, activities, deals, todos).'),
+    .describe('Comma-separated list of relations to include (addresses, comments, activities, interactions, deals, todos).'),
 }).passthrough()
 
 const personDetailResponseSchema = z.object({
+  interactionMode: z.enum(['canonical', 'legacy']),
   person: z.object({
     id: z.string().uuid(),
     displayName: z.string().nullable().optional(),
@@ -837,6 +1071,34 @@ const personDetailResponseSchema = z.object({
       appearanceColor: z.string().nullable().optional(),
     }),
   ),
+  interactions: z.array(
+    z.object({
+      id: z.string().uuid(),
+      entityId: z.string().uuid().nullable().optional(),
+      interactionType: z.string(),
+      title: z.string().nullable().optional(),
+      body: z.string().nullable().optional(),
+      status: z.string(),
+      scheduledAt: z.string().nullable().optional(),
+      occurredAt: z.string().nullable().optional(),
+      priority: z.number().nullable().optional(),
+      authorUserId: z.string().uuid().nullable().optional(),
+      ownerUserId: z.string().uuid().nullable().optional(),
+      dealId: z.string().uuid().nullable().optional(),
+      organizationId: z.string().uuid().nullable().optional(),
+      tenantId: z.string().uuid().nullable().optional(),
+      authorName: z.string().nullable().optional(),
+      authorEmail: z.string().nullable().optional(),
+      dealTitle: z.string().nullable().optional(),
+      customValues: z.record(z.string(), z.unknown()).nullable().optional(),
+      appearanceIcon: z.string().nullable().optional(),
+      appearanceColor: z.string().nullable().optional(),
+      source: z.string().nullable().optional(),
+      _integrations: z.record(z.string(), z.unknown()).optional(),
+      createdAt: z.string(),
+      updatedAt: z.string(),
+    }),
+  ),
   deals: z.array(
     z.object({
       id: z.string().uuid(),
@@ -849,6 +1111,9 @@ const personDetailResponseSchema = z.object({
       expectedCloseAt: z.string().nullable().optional(),
       ownerUserId: z.string().uuid().nullable().optional(),
       source: z.string().nullable().optional(),
+      closureOutcome: z.string().nullable().optional(),
+      lossReasonId: z.string().uuid().nullable().optional(),
+      lossNotes: z.string().nullable().optional(),
       createdAt: z.string(),
       updatedAt: z.string(),
     }),
@@ -870,6 +1135,14 @@ const personDetailResponseSchema = z.object({
       customValues: z.record(z.string(), z.unknown()).nullable().optional(),
     }),
   ),
+  isPrimary: z.boolean(),
+  companies: z.array(
+    z.object({
+      id: z.string().uuid(),
+      displayName: z.string(),
+      isPrimary: z.boolean(),
+    }),
+  ),
   viewer: z.object({
     userId: z.string().uuid().nullable(),
     name: z.string().nullable(),
@@ -887,7 +1160,7 @@ export const openApi: OpenApiRouteDoc = {
   methods: {
     GET: {
       summary: 'Fetch person with related data',
-      description: 'Returns a person customer record with optional related resources such as addresses, comments, activities, deals, and todos.',
+      description: 'Returns a person customer record with optional related resources such as addresses, comments, activities, interactions, deals, and todos.',
       query: personDetailQuerySchema,
       responses: [
         { status: 200, description: 'Person detail payload', schema: personDetailResponseSchema },

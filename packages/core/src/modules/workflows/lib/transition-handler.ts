@@ -414,7 +414,7 @@ export async function executeTransition(
       const failedActivities = results.filter(r => !r.success)
 
       if (failedActivities.length > 0) {
-        const continueOnFailure = transition.continueOnActivityFailure ?? true
+        const continueOnFailure = transition.continueOnActivityFailure ?? false
 
         // Log activity failures
         await logTransitionEvent(em, {
@@ -970,6 +970,6 @@ async function logTransitionEvent(
     occurredAt: new Date(),
   })
 
-  await em.persistAndFlush(workflowEvent)
+  await em.persist(workflowEvent).flush()
   return workflowEvent
 }

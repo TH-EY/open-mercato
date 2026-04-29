@@ -1,18 +1,33 @@
+import Link from 'next/link'
 import { Page, PageBody } from '@open-mercato/ui/backend/Page'
-import DictionarySettings from '../../../components/DictionarySettings'
-import AddressFormatSettings from '../../../components/AddressFormatSettings'
-import PipelineSettings from '../../../components/PipelineSettings'
+import { Button } from '@open-mercato/ui/primitives/button'
+import { resolveTranslations } from '@open-mercato/shared/lib/i18n/server'
+import CustomersConfigurationSections from '../../../components/CustomersConfigurationSections'
 
-export default function CustomersConfigurationPage() {
+export default async function CustomersConfigurationPage({
+  searchParams,
+}: {
+  searchParams?: { returnTo?: string | string[] }
+}) {
+  const { translate } = await resolveTranslations()
+  const returnTo = typeof searchParams?.returnTo === 'string' && searchParams.returnTo.trim().length
+    ? searchParams.returnTo.trim()
+    : null
+
   return (
     <Page>
-    <PageBody>
-      <div className="space-y-8">
-        <AddressFormatSettings />
-        <PipelineSettings />
-        <DictionarySettings />
-      </div>
-    </PageBody>
+      <PageBody>
+        <div className="space-y-8">
+          {returnTo ? (
+            <Button asChild variant="outline" size="sm">
+              <Link href={returnTo}>
+                {translate('common.back', 'Back')}
+              </Link>
+            </Button>
+          ) : null}
+          <CustomersConfigurationSections />
+        </div>
+      </PageBody>
     </Page>
   )
 }

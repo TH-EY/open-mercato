@@ -43,6 +43,8 @@ export class OnboardingService {
       existing.organizationId = null
       existing.userId = null
       existing.lastEmailSentAt = now
+      existing.preparationCompletedAt = null
+      existing.readyEmailSentAt = null
       await this.em.flush()
       return { request: existing, token }
     }
@@ -64,7 +66,7 @@ export class OnboardingService {
       createdAt: now,
       updatedAt: now,
     })
-    await this.em.persistAndFlush(request)
+    await this.em.persist(request).flush()
     return { request, token }
   }
 
@@ -81,6 +83,18 @@ export class OnboardingService {
   async findByToken(token: string) {
     const tokenHash = hashToken(token)
     return this.em.findOne(OnboardingRequest, { tokenHash })
+  }
+
+  async findById(id: string) {
+    return this.em.findOne(OnboardingRequest, { id })
+  }
+
+  async findLatestByTenantId(tenantId: string) {
+    return this.em.findOne(
+      OnboardingRequest,
+      { tenantId, deletedAt: null },
+      { orderBy: { updatedAt: 'DESC', createdAt: 'DESC' } },
+    )
   }
 
   async startProcessing(request: OnboardingRequest, startedAt: Date) {
@@ -110,6 +124,16 @@ export class OnboardingService {
     request.userId = data.userId
     request.processingStartedAt = null
     request.passwordHash = null
+    await this.em.flush()
+  }
+
+  async markReadyEmailSent(request: OnboardingRequest, sentAt: Date) {
+    request.readyEmailSentAt = sentAt
+    await this.em.flush()
+  }
+
+  async markPreparationCompleted(request: OnboardingRequest, completedAt: Date) {
+    request.preparationCompletedAt = completedAt
     await this.em.flush()
   }
 }

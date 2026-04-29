@@ -6,6 +6,7 @@ import {
   emitCrudSideEffects,
   emitCrudUndoSideEffects,
   requireId,
+  snapshotsEqual,
 } from '@open-mercato/shared/lib/commands/helpers'
 import type { DataEngine } from '@open-mercato/shared/lib/data/engine'
 import type { EntityManager } from '@mikro-orm/postgresql'
@@ -18,6 +19,7 @@ import {
   CustomerDeal,
   CustomerDealCompanyLink,
   CustomerActivity,
+  CustomerInteraction,
   CustomerTodoLink,
   CustomerEntity,
   CustomerPersonProfile,
@@ -48,22 +50,35 @@ import {
 import type { CrudIndexerConfig, CrudEventsConfig } from '@open-mercato/shared/lib/crud/types'
 import { E } from '#generated/entities.ids.generated'
 import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { CUSTOMER_ENTITY_ID } from '../lib/customFieldRouting'
+import { CustomFieldValue } from '@open-mercato/core/modules/entities/data/entities'
 
 const COMPANY_ENTITY_ID = 'customers:customer_company_profile'
+const INTERACTION_ENTITY_ID = 'customers:customer_interaction'
 
 const companyCrudIndexer: CrudIndexerConfig<CustomerEntity> = {
   entityType: E.customers.customer_company_profile,
 }
 
-const companyCrudEvents: CrudEventsConfig = {
+const companyCrudEvents: CrudEventsConfig<CustomerEntity> = {
   module: 'customers',
   entity: 'company',
   persistent: true,
   buildPayload: (ctx) => ({
     id: ctx.identifiers.id,
+    entityId: ctx.entity?.id ?? ctx.identifiers.id,
     organizationId: ctx.identifiers.organizationId,
     tenantId: ctx.identifiers.tenantId,
   }),
+}
+
+function companyEntityIndexEntry(entity: CustomerEntity): QueryIndexEventEntry {
+  return {
+    entityType: E.customers.customer_entity,
+    recordId: entity.id,
+    tenantId: entity.tenantId,
+    organizationId: entity.organizationId,
+  }
 }
 
 type CompanyAddressSnapshot = {
@@ -115,6 +130,27 @@ type CompanyTodoSnapshot = {
   createdByUserId: string | null
 }
 
+type CompanyInteractionSnapshot = {
+  id: string
+  interactionType: string
+  title: string | null
+  body: string | null
+  status: string
+  scheduledAt: Date | null
+  occurredAt: Date | null
+  priority: number | null
+  authorUserId: string | null
+  ownerUserId: string | null
+  appearanceIcon: string | null
+  appearanceColor: string | null
+  source: string | null
+  dealId: string | null
+  createdAt: Date
+  updatedAt: Date
+  deletedAt: Date | null
+  custom?: Record<string, unknown>
+}
+
 type CompanySnapshot = {
   entity: {
     id: string
@@ -160,6 +196,7 @@ type CompanySnapshot = {
   comments: CompanyCommentSnapshot[]
   activities: CompanyActivitySnapshot[]
   todos: CompanyTodoSnapshot[]
+  interactions: CompanyInteractionSnapshot[]
 }
 
 type CompanyUndoPayload = {
@@ -203,6 +240,7 @@ async function loadCompanySnapshot(em: EntityManager, id: string): Promise<Compa
     { tenantId: entity.tenantId, organizationId: entity.organizationId },
   )
   const todoLinks = await em.find(CustomerTodoLink, { entity }, { orderBy: { createdAt: 'asc' } })
+  const interactions = await em.find(CustomerInteraction, { entity }, { orderBy: { createdAt: 'asc' } })
   const custom = await loadCustomFieldSnapshot(em, {
     entityId: COMPANY_ENTITY_ID,
     recordId: profile.id,
@@ -307,6 +345,33 @@ async function loadCompanySnapshot(em: EntityManager, id: string): Promise<Compa
       createdAt: todo.createdAt,
       createdByUserId: todo.createdByUserId ?? null,
     })),
+    interactions: await Promise.all(
+      interactions.map(async (interaction) => ({
+        id: interaction.id,
+        interactionType: interaction.interactionType,
+        title: interaction.title ?? null,
+        body: interaction.body ?? null,
+        status: interaction.status,
+        scheduledAt: interaction.scheduledAt ?? null,
+        occurredAt: interaction.occurredAt ?? null,
+        priority: interaction.priority ?? null,
+        authorUserId: interaction.authorUserId ?? null,
+        ownerUserId: interaction.ownerUserId ?? null,
+        appearanceIcon: interaction.appearanceIcon ?? null,
+        appearanceColor: interaction.appearanceColor ?? null,
+        source: interaction.source ?? null,
+        dealId: interaction.dealId ?? null,
+        createdAt: interaction.createdAt,
+        updatedAt: interaction.updatedAt,
+        deletedAt: interaction.deletedAt ?? null,
+        custom: await loadCustomFieldSnapshot(em, {
+          entityId: INTERACTION_ENTITY_ID,
+          recordId: interaction.id,
+          tenantId: entity.tenantId,
+          organizationId: entity.organizationId,
+        }),
+      })),
+    ),
   }
 }
 
@@ -354,6 +419,7 @@ const createCompanyCommand: CommandHandler<CompanyCreateInput, { entityId: strin
     const nextInteractionRefId = normalizeOptionalString(parsed.nextInteraction?.refId)
     const nextInteractionIcon = normalizeOptionalString(parsed.nextInteraction?.icon)
     const nextInteractionColor = normalizeHexColor(parsed.nextInteraction?.color)
+    const primaryPhone = normalizeOptionalString(parsed.primaryPhone)
     const entity = em.create(CustomerEntity, {
       organizationId: parsed.organizationId,
       tenantId: parsed.tenantId,
@@ -362,7 +428,7 @@ const createCompanyCommand: CommandHandler<CompanyCreateInput, { entityId: strin
       description: parsed.description ?? null,
       ownerUserId: parsed.ownerUserId ?? null,
       primaryEmail: parsed.primaryEmail ?? null,
-      primaryPhone: parsed.primaryPhone ?? null,
+      primaryPhone,
       status: parsed.status ?? null,
       lifecycleStage: parsed.lifecycleStage ?? null,
       source: parsed.source ?? null,
@@ -408,6 +474,7 @@ const createCompanyCommand: CommandHandler<CompanyCreateInput, { entityId: strin
       indexer: companyCrudIndexer,
       events: companyCrudEvents,
     })
+    await emitQueryIndexUpsertEvents(ctx, [companyEntityIndexEntry(entity)])
 
     return { entityId: entity.id, companyId: profile.id }
   },
@@ -433,15 +500,33 @@ const createCompanyCommand: CommandHandler<CompanyCreateInput, { entityId: strin
     }
   },
   undo: async ({ logEntry, ctx }) => {
+    const payload = extractUndoPayload<CompanyUndoPayload>(logEntry) ?? null
     const entityId = logEntry?.resourceId
     if (!entityId) return
     const em = (ctx.container.resolve('em') as EntityManager).fork()
     const entity = await em.findOne(CustomerEntity, { id: entityId })
     if (!entity) return
-    await em.nativeDelete(CustomerCompanyProfile, { entity })
-    await em.nativeDelete(CustomerTagAssignment, { entity })
+    const profile = await em.findOne(CustomerCompanyProfile, { entity })
+    const identifiers = {
+      id: payload?.after?.profile.id ?? profile?.id ?? entity.id,
+      organizationId: entity.organizationId,
+      tenantId: entity.tenantId,
+    }
+    await em.nativeDelete(CustomerCompanyProfile, { entity, organizationId: entity.organizationId, tenantId: entity.tenantId })
+    await em.nativeDelete(CustomerTagAssignment, { entity, organizationId: entity.organizationId, tenantId: entity.tenantId })
     em.remove(entity)
     await em.flush()
+
+    const de = (ctx.container.resolve('dataEngine') as DataEngine)
+    await emitCrudUndoSideEffects({
+      dataEngine: de,
+      action: 'deleted',
+      entity,
+      identifiers,
+      indexer: companyCrudIndexer,
+      events: companyCrudEvents,
+    })
+    await emitQueryIndexDeleteEvents(ctx, [companyEntityIndexEntry(entity)])
   },
 }
 
@@ -467,7 +552,7 @@ const updateCompanyCommand: CommandHandler<CompanyUpdateInput, { entityId: strin
     if (parsed.description !== undefined) record.description = parsed.description ?? null
     if (parsed.ownerUserId !== undefined) record.ownerUserId = parsed.ownerUserId ?? null
     if (parsed.primaryEmail !== undefined) record.primaryEmail = parsed.primaryEmail ?? null
-    if (parsed.primaryPhone !== undefined) record.primaryPhone = parsed.primaryPhone ?? null
+    if (parsed.primaryPhone !== undefined) record.primaryPhone = normalizeOptionalString(parsed.primaryPhone)
     if (parsed.status !== undefined) record.status = parsed.status ?? null
     if (parsed.lifecycleStage !== undefined) record.lifecycleStage = parsed.lifecycleStage ?? null
     if (parsed.source !== undefined) record.source = parsed.source ?? null
@@ -516,6 +601,7 @@ const updateCompanyCommand: CommandHandler<CompanyUpdateInput, { entityId: strin
       indexer: companyCrudIndexer,
       events: companyCrudEvents,
     })
+    await emitQueryIndexUpsertEvents(ctx, [companyEntityIndexEntry(record)])
 
     return { entityId: record.id }
   },
@@ -528,6 +614,9 @@ const updateCompanyCommand: CommandHandler<CompanyUpdateInput, { entityId: strin
     const before = snapshots.before as CompanySnapshot | undefined
     if (!before) return null
     const afterSnapshot = snapshots.after as CompanySnapshot | undefined
+    if (afterSnapshot && snapshotsEqual(before, afterSnapshot)) {
+      return { skipLog: true }
+    }
     return {
       actionLabel: translate('customers.audit.companies.update', 'Update company'),
       resourceKind: 'customers.company',
@@ -672,6 +761,7 @@ const updateCompanyCommand: CommandHandler<CompanyUpdateInput, { entityId: strin
       indexer: companyCrudIndexer,
       events: companyCrudEvents,
     })
+    await emitQueryIndexUpsertEvents(ctx, [companyEntityIndexEntry(entity)])
 
     const resetValues = buildCustomFieldResetMap(before.custom, payload?.after?.custom)
     if (Object.keys(resetValues).length) {
@@ -700,12 +790,17 @@ const deleteCompanyCommand: CommandHandler<{ body?: Record<string, unknown>; que
       const profile = await em.findOne(CustomerCompanyProfile, { entity: record })
       await em.nativeUpdate(CustomerPersonProfile, { company: record }, { company: null })
       await em.nativeDelete(CustomerDealCompanyLink, { company: record })
-      await em.nativeDelete(CustomerActivity, { entity: record })
-      await em.nativeDelete(CustomerTodoLink, { entity: record })
-      await em.nativeDelete(CustomerCompanyProfile, { entity: record })
-      await em.nativeDelete(CustomerAddress, { entity: record })
-      await em.nativeDelete(CustomerComment, { entity: record })
-      await em.nativeDelete(CustomerTagAssignment, { entity: record })
+      await em.nativeDelete(CustomerActivity, { entity: record, organizationId: record.organizationId, tenantId: record.tenantId })
+      await em.nativeDelete(CustomerInteraction, { entity: record, organizationId: record.organizationId, tenantId: record.tenantId })
+      await em.nativeDelete(CustomerTodoLink, { entity: record, organizationId: record.organizationId, tenantId: record.tenantId })
+      await em.nativeDelete(CustomerCompanyProfile, { entity: record, organizationId: record.organizationId, tenantId: record.tenantId })
+      await em.nativeDelete(CustomerAddress, { entity: record, organizationId: record.organizationId, tenantId: record.tenantId })
+      await em.nativeDelete(CustomerComment, { entity: record, organizationId: record.organizationId, tenantId: record.tenantId })
+      await em.nativeDelete(CustomerTagAssignment, { entity: record, organizationId: record.organizationId, tenantId: record.tenantId })
+      if (profile) {
+        await em.nativeDelete(CustomFieldValue, { entityId: COMPANY_ENTITY_ID, recordId: profile.id })
+      }
+      await em.nativeDelete(CustomFieldValue, { entityId: CUSTOMER_ENTITY_ID, recordId: record.id })
       em.remove(record)
       await em.flush()
 
@@ -741,6 +836,14 @@ const deleteCompanyCommand: CommandHandler<{ body?: Record<string, unknown>; que
           indexDeletes.push({
             entityType: E.customers.customer_todo_link,
             recordId: todo.id,
+            tenantId: record.tenantId,
+            organizationId: record.organizationId,
+          })
+        }
+        for (const interaction of snapshot.interactions ?? []) {
+          indexDeletes.push({
+            entityType: E.customers.customer_interaction,
+            recordId: interaction.id,
             tenantId: record.tenantId,
             organizationId: record.organizationId,
           })
@@ -781,6 +884,7 @@ const deleteCompanyCommand: CommandHandler<{ body?: Record<string, unknown>; que
         events: companyCrudEvents,
       })
 
+      await emitQueryIndexDeleteEvents(ctx, [companyEntityIndexEntry(record)])
       await emitQueryIndexDeleteEvents(ctx, indexDeletes)
       await emitQueryIndexUpsertEvents(ctx, memberUpserts)
       await emitQueryIndexUpsertEvents(ctx, dealUpserts)
@@ -886,6 +990,7 @@ const deleteCompanyCommand: CommandHandler<{ body?: Record<string, unknown>; que
       const beforeComments = (before as { comments?: CompanyCommentSnapshot[] }).comments ?? []
       const beforeAddresses = (before as { addresses?: CompanyAddressSnapshot[] }).addresses ?? []
       const beforeTodos = (before as { todos?: CompanyTodoSnapshot[] }).todos ?? []
+      const beforeInteractions = (before as { interactions?: CompanyInteractionSnapshot[] }).interactions ?? []
 
       const relatedDealIds = new Set<string>()
       for (const link of beforeDeals) relatedDealIds.add(link.dealId)
@@ -935,7 +1040,7 @@ const deleteCompanyCommand: CommandHandler<{ body?: Record<string, unknown>; que
         await em.flush()
       }
 
-      await em.nativeDelete(CustomerActivity, { entity })
+      await em.nativeDelete(CustomerActivity, { entity, organizationId: entity.organizationId, tenantId: entity.tenantId })
       for (const activity of beforeActivities) {
         const restoredActivity = em.create(CustomerActivity, {
           id: activity.id,
@@ -957,7 +1062,7 @@ const deleteCompanyCommand: CommandHandler<{ body?: Record<string, unknown>; que
       }
       await em.flush()
 
-      await em.nativeDelete(CustomerComment, { entity })
+      await em.nativeDelete(CustomerComment, { entity, organizationId: entity.organizationId, tenantId: entity.tenantId })
       for (const comment of beforeComments) {
         const restoredComment = em.create(CustomerComment, {
           id: comment.id,
@@ -977,7 +1082,7 @@ const deleteCompanyCommand: CommandHandler<{ body?: Record<string, unknown>; que
       }
       await em.flush()
 
-      await em.nativeDelete(CustomerAddress, { entity })
+      await em.nativeDelete(CustomerAddress, { entity, organizationId: entity.organizationId, tenantId: entity.tenantId })
       for (const address of beforeAddresses) {
         const restoredAddress = em.create(CustomerAddress, {
           id: address.id,
@@ -1000,7 +1105,7 @@ const deleteCompanyCommand: CommandHandler<{ body?: Record<string, unknown>; que
       }
       await em.flush()
 
-      await em.nativeDelete(CustomerTodoLink, { entity })
+      await em.nativeDelete(CustomerTodoLink, { entity, organizationId: entity.organizationId, tenantId: entity.tenantId })
       for (const todo of beforeTodos) {
         const restoredTodo = em.create(CustomerTodoLink, {
           id: todo.id,
@@ -1017,6 +1122,46 @@ const deleteCompanyCommand: CommandHandler<{ body?: Record<string, unknown>; que
       await em.flush()
 
       const de = (ctx.container.resolve('dataEngine') as DataEngine)
+      await em.nativeDelete(CustomerInteraction, { entity, organizationId: entity.organizationId, tenantId: entity.tenantId })
+      for (const interaction of beforeInteractions) {
+        const restoredInteraction = em.create(CustomerInteraction, {
+          id: interaction.id,
+          organizationId: entity.organizationId,
+          tenantId: entity.tenantId,
+          entity,
+          interactionType: interaction.interactionType,
+          title: interaction.title,
+          body: interaction.body,
+          status: interaction.status,
+          scheduledAt: interaction.scheduledAt,
+          occurredAt: interaction.occurredAt,
+          priority: interaction.priority,
+          authorUserId: interaction.authorUserId,
+          ownerUserId: interaction.ownerUserId,
+          dealId: interaction.dealId,
+          source: interaction.source,
+          appearanceIcon: interaction.appearanceIcon,
+          appearanceColor: interaction.appearanceColor,
+          createdAt: interaction.createdAt,
+          updatedAt: interaction.updatedAt,
+          deletedAt: interaction.deletedAt,
+        })
+        em.persist(restoredInteraction)
+      }
+      await em.flush()
+      for (const interaction of beforeInteractions) {
+        if (!interaction.custom || !Object.keys(interaction.custom).length) continue
+        await setCustomFieldsIfAny({
+          dataEngine: de,
+          entityId: INTERACTION_ENTITY_ID,
+          recordId: interaction.id,
+          organizationId: entity.organizationId,
+          tenantId: entity.tenantId,
+          values: interaction.custom,
+          notify: false,
+        })
+      }
+
       await emitCrudUndoSideEffects({
         dataEngine: de,
         action: 'created',
@@ -1063,6 +1208,14 @@ const deleteCompanyCommand: CommandHandler<{ body?: Record<string, unknown>; que
           organizationId: entity.organizationId,
         })
       }
+      for (const interaction of beforeInteractions ?? []) {
+        childUpserts.push({
+          entityType: E.customers.customer_interaction,
+          recordId: interaction.id,
+          tenantId: entity.tenantId,
+          organizationId: entity.organizationId,
+        })
+      }
       const memberUpserts: QueryIndexEventEntry[] = []
       for (const member of beforeMembers ?? []) {
         if (member.profileId) {
@@ -1090,6 +1243,7 @@ const deleteCompanyCommand: CommandHandler<{ body?: Record<string, unknown>; que
       if (Object.keys(resetValues).length) {
         await setCompanyCustomFields(ctx, profile.id, entity.organizationId, entity.tenantId, resetValues)
       }
+      await emitQueryIndexUpsertEvents(ctx, [companyEntityIndexEntry(entity)])
       await emitQueryIndexUpsertEvents(ctx, childUpserts)
       await emitQueryIndexUpsertEvents(ctx, memberUpserts)
       await emitQueryIndexUpsertEvents(ctx, dealUpserts)

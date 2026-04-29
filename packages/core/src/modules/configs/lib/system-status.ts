@@ -60,6 +60,7 @@ const CATEGORY_METADATA: Record<
 }
 
 const SYSTEM_STATUS_DOC_BASE = 'https://docs.openmercato.com/docs/framework/operations/system-status'
+const DEFAULT_SQLITE_CACHE_PATH = './.mercato/cache/cache.db'
 
 function maskConnectionCredentials(raw: string | undefined): string | undefined {
   if (typeof raw !== 'string') return raw
@@ -246,7 +247,7 @@ export const SYSTEM_STATUS_VARIABLES: SystemStatusVariableDefinition[] = [
     labelKey: 'configs.systemStatus.variables.cacheSqlitePath.label',
     descriptionKey: 'configs.systemStatus.variables.cacheSqlitePath.description',
     docUrl: `${SYSTEM_STATUS_DOC_BASE}#cache_sqlite_path`,
-    defaultValue: './data/cache.db',
+    defaultValue: DEFAULT_SQLITE_CACHE_PATH,
   },
   {
     key: 'SCHEDULE_AUTO_REINDEX',
@@ -273,7 +274,7 @@ export const SYSTEM_STATUS_VARIABLES: SystemStatusVariableDefinition[] = [
     labelKey: 'configs.systemStatus.variables.forceQueryIndexOnPartialIndexes.label',
     descriptionKey: 'configs.systemStatus.variables.forceQueryIndexOnPartialIndexes.description',
     docUrl: `${SYSTEM_STATUS_DOC_BASE}#force_query_index_on_partial_indexes`,
-    defaultValue: 'true',
+    defaultValue: 'false',
   },
   {
     key: 'ENTITIES_BACKCOMPAT_EAV_FOR_CUSTOM',

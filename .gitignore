@@ -13,9 +13,9 @@
 .turbo
 
 # testing
-/coverage
-/test-results
-/playwright-report
+coverage/
+test-results/
+playwright-report/
 published-app/
 
 # next.js
@@ -72,6 +72,12 @@ packages/**/dist/
 # runtime/event state
 .events/
 
+# runtime SQLite cache (default CACHE_SQLITE_PATH target); rewritten on every dev run
+/data/*.db
+/data/*.db-journal
+/data/*.db-wal
+/data/*.db-shm
+
 # prevent accidental check-in of transpiled JS alongside TS sources
 src/**/*.js
 src/**/*.jsx
@@ -85,7 +91,6 @@ public/uploads/*
 apps/mercato/storage/*
 apps/mercato/storage/attachments/*
 storage
-apps/mercato/data
 packages/client/src/generated/openapi.types.ts
 package-lock.json
 
@@ -104,6 +109,8 @@ newrelic_agent.log
 
 # Dev Container auto-generated compose volumes
 .devcontainer/docker-compose.volumes.yml
+# Dev Container personal overrides (local bind mounts, env vars, etc.)
+.devcontainer/docker-compose.local.yml
 
 # OpenCode local config (generated at runtime, may contain secrets)
 docker/opencode/opencode.jsonc

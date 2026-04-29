@@ -5,6 +5,7 @@ import { UserAcl, RoleAcl, User, UserRole } from '@open-mercato/core/modules/aut
 import { ApiKey } from '@open-mercato/core/modules/api_keys/data/entities'
 import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { matchFeature as sharedMatchFeature, hasAllFeatures as sharedHasAllFeatures } from '@open-mercato/shared/lib/auth/featureMatch'
+import { filterGrantsByEnabledModules, getOwningModuleId, getEnabledModuleIds } from '@open-mercato/shared/security/enabledModulesRegistry'
 
 interface AclData {
   isSuperAdmin: boolean
@@ -274,6 +275,8 @@ export class RbacService {
           if (organizations !== null) {
             if (acl.organizationsJson == null) {
               organizations = null
+            } else if (Array.isArray(acl.organizationsJson) && acl.organizationsJson.includes('__all__')) {
+              organizations = null
             } else {
               organizations = Array.from(new Set([...(organizations || []), ...acl.organizationsJson]))
             }
@@ -335,11 +338,12 @@ export class RbacService {
         if (Array.isArray(r.featuresJson)) for (const f of r.featuresJson) if (!features.includes(f)) features.push(f)
         if (organizations !== null) {
           if (r.organizationsJson == null) organizations = null
+          else if (Array.isArray(r.organizationsJson) && r.organizationsJson.includes('__all__')) organizations = null
           else organizations = Array.from(new Set([...(organizations || []), ...r.organizationsJson]))
         }
       }
     }
-    if (organizations && orgId && !organizations.includes(orgId)) {
+    if (organizations && orgId && !organizations.includes(orgId) && !organizations.includes('__all__')) {
       // Out-of-scope org; caller will enforce
     }
     const result = { isSuperAdmin: isSuper, features, organizations }
@@ -385,8 +389,13 @@ export class RbacService {
   async userHasAllFeatures(userId: string, required: string[], scope: { tenantId: string | null; organizationId: string | null }): Promise<boolean> {
     if (!required.length) return true
     const acl = await this.loadAcl(userId, scope)
-    if (acl.isSuperAdmin) return true
-    if (acl.organizations && scope.organizationId && !acl.organizations.includes(scope.organizationId)) return false
-    return this.hasAllFeatures(required, acl.features)
+    if (acl.isSuperAdmin) {
+      const enabledIds = getEnabledModuleIds()
+      if (!enabledIds.length) return true
+      const enabledSet = new Set(enabledIds)
+      return required.every((feature) => enabledSet.has(getOwningModuleId(feature)))
+    }
+    if (acl.organizations && scope.organizationId && !acl.organizations.includes(scope.organizationId) && !acl.organizations.includes('__all__')) return false
+    return this.hasAllFeatures(required, filterGrantsByEnabledModules(acl.features))
   }
 }

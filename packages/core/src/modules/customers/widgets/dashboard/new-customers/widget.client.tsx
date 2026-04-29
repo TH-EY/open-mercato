@@ -56,8 +56,8 @@ async function loadNewCustomers(settings: CustomerNewCustomersSettings): Promise
 
 function resolveDetailHref(item: NewCustomerItem): string | null {
   if (!item.id || !item.kind) return null
-  if (item.kind === 'company') return `/backend/customers/companies/${encodeURIComponent(item.id)}`
-  if (item.kind === 'person') return `/backend/customers/people/${encodeURIComponent(item.id)}`
+  if (item.kind === 'company') return `/backend/customers/companies-v2/${encodeURIComponent(item.id)}`
+  if (item.kind === 'person') return `/backend/customers/people-v2/${encodeURIComponent(item.id)}`
   return null
 }
 
@@ -126,7 +126,7 @@ const CustomerNewCustomersWidget: React.FC<DashboardWidgetComponentProps<Custome
             type="number"
             min={1}
             max={20}
-            className="w-24 rounded-md border px-2 py-1 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            className="w-24 rounded-md border px-2 py-1 text-sm focus-visible:border-ring focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             value={hydrated.pageSize}
             onChange={(event) => {
               const next = Number(event.target.value)
@@ -140,7 +140,7 @@ const CustomerNewCustomersWidget: React.FC<DashboardWidgetComponentProps<Custome
           </label>
           <select
             id="customer-new-customers-kind"
-            className="w-full rounded-md border px-2 py-1 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            className="w-full rounded-md border px-2 py-1 text-sm focus-visible:border-ring focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             value={hydrated.kind}
             onChange={(event) => {
               const value = event.target.value

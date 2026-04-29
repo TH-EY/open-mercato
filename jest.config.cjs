@@ -2,7 +2,6 @@
 const isGitHubActions = process.env.GITHUB_ACTIONS === 'true'
 
 module.exports = {
-  preset: 'ts-jest',
   testEnvironment: 'node',
   watchman: false,
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
@@ -28,6 +27,7 @@ module.exports = {
     '^@open-mercato/ai-assistant/(.*)$': '<rootDir>/packages/ai-assistant/src/$1',
     '^@open-mercato/ai-assistant$': '<rootDir>/packages/ai-assistant/src/index.ts',
     '^@open-mercato/shared/(.*)$': '<rootDir>/packages/shared/src/$1',
+    '^@open-mercato/ui/(.*)$': '<rootDir>/packages/ui/src/$1',
     '^@/\\.mercato/generated/(.*)$': '<rootDir>/apps/mercato/.mercato/generated/$1',
     '^@/generated/(.*)$': '<rootDir>/apps/mercato/.mercato/generated/$1',
     '^@/(.*)$': '<rootDir>/apps/mercato/src/$1',
@@ -35,7 +35,7 @@ module.exports = {
   },
   transform: {
     '^.+\\.(t|j)sx?$': [
-      'ts-jest',
+      '<rootDir>/scripts/jest-mikroorm-transformer.cjs',
       {
         tsconfig: {
           jsx: 'react-jsx',
@@ -43,6 +43,9 @@ module.exports = {
       },
     ],
   },
+  transformIgnorePatterns: [
+    'node_modules/(?!(@mikro-orm)/)',
+  ],
   testMatch: ['**/__tests__/**/*.test.(ts|tsx)'],
   setupFiles: ['<rootDir>/jest.setup.ts'],
   setupFilesAfterEnv: ['<rootDir>/jest.dom.setup.ts'],

@@ -6,6 +6,7 @@ import Image from 'next/image'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import { Button } from '../primitives/button'
 import { IconButton } from '../primitives/icon-button'
+import { Checkbox } from '../primitives/checkbox'
 import { Separator } from '../primitives/separator'
 import { FlashMessages } from './FlashMessages'
 import { QueryProvider } from '../theme/QueryProvider'
@@ -27,6 +28,7 @@ import { resolveInjectedIcon } from './injection/resolveInjectedIcon'
 import { useEventBridge } from './injection/eventBridge'
 import { StatusBadgeInjectionSpot } from './injection/StatusBadgeInjectionSpot'
 import { UmesDevToolsPanel } from './devtools'
+import { BackendChromeProvider, useBackendChrome } from './BackendChromeProvider'
 import {
   BACKEND_LAYOUT_FOOTER_INJECTION_SPOT_ID,
   BACKEND_LAYOUT_TOP_INJECTION_SPOT_ID,
@@ -40,8 +42,14 @@ import {
   GLOBAL_SIDEBAR_STATUS_BADGES_INJECTION_SPOT_ID,
 } from './injection/spotIds'
 
+export type ShellLogo = {
+  src: string
+  alt?: string
+}
+
 export type AppShellProps = {
   productName?: string
+  logo?: ShellLogo
   email?: string
   groups: {
     id?: string
@@ -53,6 +61,8 @@ export type AppShellProps = {
       title: string
       defaultTitle?: string
       icon?: React.ReactNode
+      iconName?: string
+      iconMarkup?: string
       enabled?: boolean
       hidden?: boolean
       pageContext?: 'main' | 'admin' | 'settings' | 'profile'
@@ -62,6 +72,8 @@ export type AppShellProps = {
         title: string
         defaultTitle?: string
         icon?: React.ReactNode
+        iconName?: string
+        iconMarkup?: string
         enabled?: boolean
         hidden?: boolean
         pageContext?: 'main' | 'admin' | 'settings' | 'profile'
@@ -106,6 +118,7 @@ function convertInjectedMenuItemToSidebarItem(item: InjectionMenuItem, title: st
     title,
     defaultTitle: title,
     icon: resolveInjectedIcon(item.icon) ?? undefined,
+    iconName: item.icon,
     enabled: true,
     hidden: false,
     pageContext: 'main',
@@ -295,6 +308,25 @@ function resolveItemKey(item: { id?: string; href: string }): string {
   return item.href
 }
 
+function SerializedIcon({ markup }: { markup: string }) {
+  return <span aria-hidden="true" dangerouslySetInnerHTML={{ __html: markup }} />
+}
+
+function renderIcon(
+  icon: React.ReactNode | undefined,
+  iconName: string | undefined,
+  iconMarkup: string | undefined,
+  fallback: React.ReactNode,
+) {
+  if (icon) return icon
+  if (iconName) {
+    const resolved = resolveInjectedIcon(iconName)
+    if (resolved) return resolved
+  }
+  if (iconMarkup) return <SerializedIcon markup={iconMarkup} />
+  return fallback
+}
+
 const HeaderContext = createContext<{
   setBreadcrumb: (b?: Breadcrumb) => void
   setTitle: (t?: string) => void
@@ -363,11 +395,30 @@ function Chevron({ open }: { open: boolean }) {
   )
 }
 
-export function AppShell({ productName, email, groups, rightHeaderSlot, children, sidebarCollapsedDefault = false, currentTitle, breadcrumb, adminNavApi, version, settingsSectionTitle, settingsPathPrefixes = [], settingsSections, profileSections, profileSectionTitle, profilePathPrefixes = [], mobileSidebarSlot }: AppShellProps) {
+export function AppShell(props: AppShellProps) {
+  return (
+    <QueryProvider>
+      <BackendChromeProvider adminNavApi={props.adminNavApi}>
+        <AppShellBody {...props} />
+      </BackendChromeProvider>
+    </QueryProvider>
+  )
+}
+
+function AppShellBody({ productName, logo, email, groups, rightHeaderSlot, children, sidebarCollapsedDefault = false, currentTitle, breadcrumb, version, settingsSectionTitle, settingsPathPrefixes = [], settingsSections, profileSections, profileSectionTitle, profilePathPrefixes = [], mobileSidebarSlot }: AppShellProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const t = useT()
   const locale = useLocale()
+  const { payload: chromePayload, isReady: isChromeReady, isLoading: isChromeLoading } = useBackendChrome()
+  const resolvedGroups = React.useMemo(
+    () => AppShell.cloneGroups(chromePayload?.groups ?? groups),
+    [chromePayload?.groups, groups],
+  )
+  const resolvedSettingsSections = chromePayload?.settingsSections ?? settingsSections
+  const resolvedSettingsPathPrefixes = chromePayload?.settingsPathPrefixes ?? settingsPathPrefixes
+  const resolvedProfileSections = chromePayload?.profileSections ?? profileSections
+  const resolvedProfilePathPrefixes = chromePayload?.profilePathPrefixes ?? profilePathPrefixes
   const { items: mainSidebarInjectedMenuItems } = useInjectedMenuItems('menu:sidebar:main')
   const { items: settingsSidebarInjectedMenuItems } = useInjectedMenuItems('menu:sidebar:settings')
   const { items: profileSidebarInjectedMenuItems } = useInjectedMenuItems('menu:sidebar:profile')
@@ -378,9 +429,9 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
   // Initialize from server-provided prop only to avoid hydration flicker
   const [collapsed, setCollapsed] = React.useState(sidebarCollapsedDefault)
   // Maintain internal nav state so we can augment it client-side
-  const [navGroups, setNavGroups] = React.useState(AppShell.cloneGroups(groups))
+  const [navGroups, setNavGroups] = React.useState(resolvedGroups)
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>(() =>
-    Object.fromEntries(groups.map((g) => [resolveGroupKey(g), true])) as Record<string, boolean>
+    Object.fromEntries(resolvedGroups.map((g) => [resolveGroupKey(g), true])) as Record<string, boolean>
   )
   const [customizing, setCustomizing] = React.useState(false)
   const [customDraft, setCustomDraft] = React.useState<SidebarCustomizationDraft | null>(null)
@@ -406,14 +457,14 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
   const isOnSettingsPath = React.useMemo(() => {
     if (!pathname) return false
     if (pathname === '/backend/settings') return true
-    return settingsPathPrefixes.some((prefix) => pathname.startsWith(prefix))
-  }, [pathname, settingsPathPrefixes])
+    return resolvedSettingsPathPrefixes.some((prefix) => pathname.startsWith(prefix))
+  }, [pathname, resolvedSettingsPathPrefixes])
 
   const isOnProfilePath = React.useMemo(() => {
     if (!pathname) return false
     if (pathname === '/backend/profile') return true
-    return profilePathPrefixes.some((prefix) => pathname.startsWith(prefix))
-  }, [pathname, profilePathPrefixes])
+    return resolvedProfilePathPrefixes.some((prefix) => pathname.startsWith(prefix))
+  }, [pathname, resolvedProfilePathPrefixes])
 
   const sidebarMode: 'main' | 'settings' | 'profile' =
     isOnSettingsPath ? 'settings' :
@@ -442,7 +493,7 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
       const parsed = JSON.parse(savedOpen) as Record<string, boolean>
       setOpenGroups((prev) => {
         const next = { ...prev }
-        for (const group of groups) {
+        for (const group of resolvedGroups) {
           const key = resolveGroupKey(group)
           if (key in parsed) next[key] = !!parsed[key]
           else if (group.name in parsed) next[key] = !!parsed[group.name]
@@ -452,7 +503,7 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
     } catch {
       // ignore localStorage errors to avoid breaking hydration
     }
-  }, [groups])
+  }, [resolvedGroups])
 
   const toggleGroup = (groupId: string) => setOpenGroups((prev) => ({ ...prev, [groupId]: prev[groupId] === false }))
 
@@ -703,7 +754,7 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
 
   const asideWidth = effectiveCollapsed ? '72px' : expandedSidebarWidth
   // Use min-h-svh so the border extends with tall content; no overflow so sticky bottom works
-  const asideClassesBase = `border-r bg-background/60 py-4 min-h-svh`;
+  const asideClassesBase = `border-r bg-background/80 py-4 min-h-svh`;
 
   // Persist collapse state to localStorage and cookie
   React.useEffect(() => {
@@ -743,128 +794,12 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
   // Keep navGroups in sync when server-provided groups change
   React.useEffect(() => {
     if (customizing && customDraft && originalNavRef.current) {
-      originalNavRef.current = filterMainSidebarGroups(AppShell.cloneGroups(groups))
+      originalNavRef.current = filterMainSidebarGroups(AppShell.cloneGroups(resolvedGroups))
       setNavGroups(applyCustomizationDraft(originalNavRef.current, customDraft))
       return
     }
-    setNavGroups(AppShell.cloneGroups(groups))
-  }, [groups, customizing, customDraft])
-
-  // Optional: full refresh from adminNavApi, used to reflect RBAC/org/entity changes without page reload
-  React.useEffect(() => {
-    let cancelled = false
-    function indexIcons(groupsToIndex: AppShellProps['groups']): Map<string, React.ReactNode | undefined> {
-      const map = new Map<string, React.ReactNode | undefined>()
-      for (const g of groupsToIndex) {
-        for (const i of g.items) {
-          map.set(i.href, i.icon)
-          if (i.children) for (const c of i.children) map.set(c.href, c.icon)
-        }
-      }
-      return map
-    }
-    function mergePreservingIcons(oldG: AppShellProps['groups'], newG: AppShellProps['groups']): AppShellProps['groups'] {
-      const iconMap = indexIcons(oldG)
-      const merged = newG.map((g) => ({
-        id: g.id,
-        name: g.name,
-        defaultName: g.defaultName,
-        items: g.items.map((i) => ({
-          href: i.href,
-          title: i.title,
-          defaultTitle: i.defaultTitle,
-          enabled: i.enabled,
-          hidden: i.hidden,
-          icon: i.icon ?? iconMap.get(i.href),
-          pageContext: i.pageContext,
-          children: i.children?.map((c) => ({
-            href: c.href,
-            title: c.title,
-            defaultTitle: c.defaultTitle,
-            enabled: c.enabled,
-            hidden: c.hidden,
-            icon: c.icon ?? iconMap.get(c.href),
-            pageContext: c.pageContext,
-          })),
-        })),
-      }))
-      return merged
-    }
-    async function refreshFullNav() {
-      if (!adminNavApi) return
-      try {
-        const call = await apiCall<{ groups?: unknown[] }>(adminNavApi, { credentials: 'include' as any })
-        if (!call.ok) return
-        const data = call.result
-        if (cancelled) return
-        const nextGroups = Array.isArray(data?.groups) ? data.groups : []
-        if (nextGroups.length) setNavGroups((prev) => AppShell.cloneGroups(mergePreservingIcons(prev, nextGroups as any)))
-      } catch {}
-    }
-    // Refresh on window focus
-    const onFocus = () => refreshFullNav()
-    window.addEventListener('focus', onFocus)
-    return () => { cancelled = true; window.removeEventListener('focus', onFocus) }
-  }, [adminNavApi])
-
-  // Refresh sidebar when other parts of the app dispatch an explicit event
-  React.useEffect(() => {
-    if (!adminNavApi) return
-    const api = adminNavApi as string
-    let cancelled = false
-    function indexIcons(groupsToIndex: AppShellProps['groups']): Map<string, React.ReactNode | undefined> {
-      const map = new Map<string, React.ReactNode | undefined>()
-      for (const g of groupsToIndex) {
-        for (const i of g.items) {
-          map.set(i.href, i.icon)
-          if (i.children) for (const c of i.children) map.set(c.href, c.icon)
-        }
-      }
-      return map
-    }
-    function mergePreservingIcons(oldG: AppShellProps['groups'], newG: AppShellProps['groups']): AppShellProps['groups'] {
-      const iconMap = indexIcons(oldG)
-      const merged = newG.map((g) => ({
-        id: g.id,
-        name: g.name,
-        defaultName: g.defaultName,
-        items: g.items.map((i) => ({
-          href: i.href,
-          title: i.title,
-          defaultTitle: i.defaultTitle,
-          enabled: i.enabled,
-          hidden: i.hidden,
-          icon: i.icon ?? iconMap.get(i.href),
-          pageContext: i.pageContext,
-          children: i.children?.map((c) => ({
-            href: c.href,
-            title: c.title,
-            defaultTitle: c.defaultTitle,
-            enabled: c.enabled,
-            hidden: c.hidden,
-            icon: c.icon ?? iconMap.get(c.href),
-            pageContext: c.pageContext,
-          })),
-        })),
-      }))
-      return merged
-    }
-    async function refreshFullNav() {
-      try {
-        const call = await apiCall<{ groups?: unknown[] }>(api, { credentials: 'include' as any })
-        if (!call.ok) return
-        const data = call.result
-        if (cancelled) return
-        const nextGroups = Array.isArray(data?.groups) ? data.groups : []
-        if (nextGroups.length) setNavGroups((prev) => AppShell.cloneGroups(mergePreservingIcons(prev, nextGroups as any)))
-      } catch {}
-    }
-    const onRefresh = () => { refreshFullNav() }
-    window.addEventListener('om:refresh-sidebar', onRefresh as any)
-    return () => { cancelled = true; window.removeEventListener('om:refresh-sidebar', onRefresh as any) }
-  }, [adminNavApi])
-
-  // adminNavApi already includes user entities; no extra fetch
+    setNavGroups(AppShell.cloneGroups(resolvedGroups))
+  }, [resolvedGroups, customizing, customDraft])
 
   function renderSectionSidebar(
     sections: SectionNavGroup[],
@@ -880,7 +815,7 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
         {!hideHeader && (
           <div className={`flex items-center ${compact ? 'justify-center' : 'justify-between'} mb-2`}>
             <Link href="/backend" className="flex items-center gap-2" aria-label={t('appShell.goToDashboard')}>
-              <Image src="/open-mercato.svg" alt={resolvedProductName} width={32} height={32} className="rounded m-4" />
+              <Image src={logo?.src ?? "/open-mercato.svg"} alt={logo?.alt ?? resolvedProductName} width={32} height={32} className="rounded m-4" />
               {!compact && <div className="text-m font-semibold">{resolvedProductName}</div>}
             </Link>
           </div>
@@ -944,7 +879,12 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
                       <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded bg-foreground" />
                     )}
                     <span className={`flex items-center justify-center shrink-0 ${compact ? '' : 'text-muted-foreground'}`}>
-                      {item.icon ?? (item.href.includes('/backend/entities/user/') && item.href.endsWith('/records') ? DataTableIcon : DefaultIcon)}
+                      {renderIcon(
+                        item.icon,
+                        item.iconName,
+                        item.iconMarkup,
+                        item.href.includes('/backend/entities/user/') && item.href.endsWith('/records') ? DataTableIcon : DefaultIcon,
+                      )}
                     </span>
                     {!compact && <span className="truncate">{label}</span>}
                   </Link>
@@ -980,9 +920,41 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
   }
 
   function renderSidebar(compact: boolean, hideHeader?: boolean) {
-    if (sidebarMode === 'settings' && settingsSections && settingsSections.length > 0) {
+    if (!isChromeReady && isChromeLoading && resolvedGroups.length === 0) {
+      return (
+        <div className="flex flex-col min-h-full gap-3" data-testid="backend-chrome-loading">
+          {!hideHeader ? (
+            <div className={`flex items-center ${compact ? 'justify-center' : 'justify-between'} mb-2`}>
+              <Link href="/backend" className="flex items-center gap-2" aria-label={t('appShell.goToDashboard')}>
+                <Image src={logo?.src ?? "/open-mercato.svg"} alt={logo?.alt ?? resolvedProductName} width={32} height={32} className="rounded m-4" />
+                {!compact && <div className="text-m font-semibold">{resolvedProductName}</div>}
+              </Link>
+            </div>
+          ) : null}
+          <div className="flex flex-1 flex-col gap-3 pr-1">
+            <div className="space-y-3">
+              <div className="h-8 rounded bg-muted/50" />
+              <div className="space-y-2 pl-1">
+                <div className="h-8 rounded bg-muted/50" />
+                <div className="h-8 rounded bg-muted/50" />
+                <div className="h-8 rounded bg-muted/50" />
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="h-8 rounded bg-muted/50" />
+              <div className="space-y-2 pl-1">
+                <div className="h-8 rounded bg-muted/50" />
+                <div className="h-8 rounded bg-muted/50" />
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    if (sidebarMode === 'settings' && resolvedSettingsSections && resolvedSettingsSections.length > 0) {
       const mergedSettingsSections = mergeSectionGroupsWithInjected(
-        settingsSections,
+        resolvedSettingsSections,
         settingsSidebarInjectedMenuItems,
         t,
       )
@@ -994,9 +966,9 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
       )
     }
 
-    if (sidebarMode === 'profile' && profileSections && profileSections.length > 0) {
+    if (sidebarMode === 'profile' && resolvedProfileSections && resolvedProfileSections.length > 0) {
       const mergedProfileSections = mergeSectionGroupsWithInjected(
-        profileSections,
+        resolvedProfileSections,
         profileSidebarInjectedMenuItems,
         t,
       )
@@ -1044,11 +1016,9 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
           >
             <span className="text-xs font-medium text-muted-foreground">{placeholder}</span>
             <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-foreground"
+              <Checkbox
                 checked={!hidden}
-                onChange={(event) => setItemHidden(itemKey, !event.target.checked)}
+                onCheckedChange={(next) => setItemHidden(itemKey, next !== true)}
                 disabled={savingPreferences}
                 aria-label={t('appShell.sidebarCustomizationShowItem')}
                 title={t('appShell.sidebarCustomizationShowItem')}
@@ -1058,7 +1028,7 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
                 onChange={(event) => setItemLabel(itemKey, event.target.value)}
                 placeholder={placeholder}
                 disabled={savingPreferences}
-                className="h-8 flex-1 rounded border bg-background px-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+                className="h-8 flex-1 rounded border bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
               />
             </div>
             {baseItem.children && baseItem.children.length > 0 ? (
@@ -1073,7 +1043,7 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
 
     const customizationEditor = customizing ? (
       customDraft ? (
-        <div className="flex flex-col gap-3 rounded border border-dashed bg-muted/20 p-3">
+        <div className="flex flex-col gap-3 rounded border border-dashed bg-muted/30 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-sm font-semibold">{t('appShell.sidebarCustomizationHeading')}</div>
             <div className="flex items-center gap-2">
@@ -1105,7 +1075,7 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
           </div>
           <p className="text-xs text-muted-foreground">{t('appShell.sidebarCustomizationHint', { locale: localeLabel })}</p>
           {canApplyToRoles ? (
-            <div className="flex flex-col gap-2 rounded border bg-background/70 p-3 shadow-sm">
+            <div className="flex flex-col gap-2 rounded border bg-background/80 p-3 shadow-sm">
               <div>
                 <div className="text-sm font-semibold">{t('appShell.sidebarApplyToRolesTitle')}</div>
                 <p className="text-xs text-muted-foreground">{t('appShell.sidebarApplyToRolesDescription')}</p>
@@ -1116,12 +1086,10 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
                     const checked = selectedRoleIds.includes(role.id)
                     const willClear = role.hasPreference && !checked
                     return (
-                      <label key={role.id} className="flex items-center gap-2 rounded border bg-background px-2 py-1 text-sm shadow-sm">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 accent-foreground"
+                      <label key={role.id} className="flex items-center gap-2 rounded-md border bg-background px-2 py-1 text-sm shadow-sm cursor-pointer">
+                        <Checkbox
                           checked={checked}
-                          onChange={() => toggleRoleSelection(role.id)}
+                          onCheckedChange={() => toggleRoleSelection(role.id)}
                           disabled={savingPreferences}
                         />
                         <span className="flex-1 truncate">{role.name}</span>
@@ -1157,7 +1125,7 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
                         onChange={(event) => setGroupLabel(groupId, event.target.value)}
                         placeholder={placeholder}
                         disabled={savingPreferences}
-                        className="mt-1 h-8 w-full rounded border bg-background px-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+                        className="mt-1 h-8 w-full rounded border bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                       />
                     </div>
                     <div className="flex items-center gap-1 self-start">
@@ -1192,7 +1160,7 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
           </div>
         </div>
       ) : (
-        <div className="rounded border border-dashed bg-muted/20 p-3 text-sm text-muted-foreground">
+        <div className="rounded border border-dashed bg-muted/30 p-3 text-sm text-muted-foreground">
           {t('appShell.sidebarCustomizationLoading')}
         </div>
       )
@@ -1203,7 +1171,7 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
         {!hideHeader && (
           <div className={`flex items-center ${compact ? 'justify-center' : 'justify-between'} mb-2`}>
             <Link href="/backend" className="flex items-center gap-2" aria-label={t('appShell.goToDashboard')}>
-              <Image src="/open-mercato.svg" alt={resolvedProductName} width={32} height={32} className="rounded m-4" />
+              <Image src={logo?.src ?? "/open-mercato.svg"} alt={logo?.alt ?? resolvedProductName} width={32} height={32} className="rounded m-4" />
               {!compact && <div className="text-m font-semibold">{resolvedProductName}</div>}
             </Link>
           </div>
@@ -1221,7 +1189,7 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
             (() => {
               const isSettingsPath = (href: string) => {
                 if (href === '/backend/settings') return true
-                return settingsPathPrefixes.some((prefix) => href.startsWith(prefix))
+                return resolvedSettingsPathPrefixes.some((prefix) => href.startsWith(prefix))
               }
 
               const isMainItem = (item: SidebarItem) => {
@@ -1291,7 +1259,12 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
                                         <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded bg-foreground" />
                                       ) : null}
                                       <span className={`flex items-center justify-center shrink-0 ${compact ? '' : 'text-muted-foreground'}`}>
-                                        {i.icon ?? DefaultIcon}
+                                        {renderIcon(
+                                          i.icon,
+                                          i.iconName,
+                                          i.iconMarkup,
+                                          DefaultIcon,
+                                        )}
                                       </span>
                                       {!compact && <span>{i.title}</span>}
                                     </Link>
@@ -1316,7 +1289,12 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
                                                 <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded bg-foreground" />
                                               ) : null}
                                               <span className={`flex items-center justify-center shrink-0 ${compact ? '' : 'text-muted-foreground'}`}>
-                                                {c.icon ?? (c.href.includes('/backend/entities/user/') && c.href.endsWith('/records') ? DataTableIcon : DefaultIcon)}
+                                                {renderIcon(
+                                                  c.icon,
+                                                  c.iconName,
+                                                  c.iconMarkup,
+                                                  c.href.includes('/backend/entities/user/') && c.href.endsWith('/records') ? DataTableIcon : DefaultIcon,
+                                                )}
                                               </span>
                                               {!compact && <span>{c.title}</span>}
                                             </Link>
@@ -1339,7 +1317,7 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
             })()
           )}
         </div>
-        <div className="sticky bottom-0 pt-4 border-t bg-background/60 backdrop-blur-sm pb-1">
+        <div className="sticky bottom-0 pt-4 border-t bg-background/80 backdrop-blur-sm pb-1">
           {shouldRenderSidebarInjectionSpots ? (
             <InjectionSpot
               spotId={BACKEND_SIDEBAR_NAV_FOOTER_INJECTION_SPOT_ID}
@@ -1453,14 +1431,18 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
   )
 
   return (
-    <QueryProvider>
     <HeaderContext.Provider value={headerCtxValue}>
     <div className={`min-h-svh lg:grid ${gridColsClass}`}>
       {/* Desktop sidebar */}
       <aside className={`${asideClassesBase} ${effectiveCollapsed ? 'px-2' : 'px-3'} hidden lg:block`} style={{ width: asideWidth }}>{renderSidebar(effectiveCollapsed)}</aside>
 
       <div className="flex min-h-svh flex-col min-w-0">
-        <header className="border-b bg-background/60 px-3 lg:px-4 py-2 lg:py-3 flex items-center justify-between gap-2">
+        <header className="border-b bg-background/80 px-3 lg:px-4 py-2 lg:py-3 flex items-center justify-between gap-2">
+          <div
+            data-testid="backend-chrome-ready"
+            data-ready={isChromeReady ? 'true' : 'false'}
+            className="hidden"
+          />
           <div className="flex items-center gap-2 min-w-0">
             {/* Mobile menu button */}
             <IconButton variant="outline" size="sm" className="lg:hidden" aria-label={t('appShell.openMenu')} onClick={() => setMobileOpen(true)}>
@@ -1533,8 +1515,8 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
             )}
           </div>
         </header>
-        <ProgressTopBar t={t} className="sticky top-0 z-10" />
-        <main className="flex-1 p-4 lg:p-6">
+        <ProgressTopBar t={t} className="sticky top-0 z-sticky" />
+        <main className="flex-1 p-4 lg:p-6 mx-auto w-full max-w-screen-2xl">
           <InjectionSpot spotId={BACKEND_LAYOUT_TOP_INJECTION_SPOT_ID} context={injectionContext} />
           <FlashMessages />
           <PartialIndexBanner />
@@ -1549,7 +1531,7 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
           {children}
           <InjectionSpot spotId={BACKEND_LAYOUT_FOOTER_INJECTION_SPOT_ID} context={injectionContext} />
         </main>
-        <footer className="border-t bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/50 px-4 py-3 flex flex-wrap items-center justify-end gap-4">
+        <footer className="border-t bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/80 px-4 py-3 flex flex-wrap items-center justify-end gap-4">
           {version ? (
             <span className="text-xs text-muted-foreground">
               {t('appShell.version', { version })}
@@ -1568,12 +1550,12 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
 
       {/* Mobile drawer */}
       {mobileOpen && (
-        <div className="lg:hidden fixed inset-0 z-50">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setMobileOpen(false)} aria-hidden="true" />
+        <div className="lg:hidden fixed inset-0 z-modal">
+          <div className="absolute inset-0 bg-black/20" onClick={() => setMobileOpen(false)} aria-hidden="true" />
           <aside className="absolute left-0 top-0 flex h-full w-[260px] flex-col bg-background border-r overflow-hidden">
             <div className="shrink-0 p-3 pb-2 flex items-center justify-between border-b">
               <Link href="/backend" className="flex items-center gap-2 text-sm font-semibold" onClick={() => setMobileOpen(false)} aria-label={t('appShell.goToDashboard')}>
-                <Image src="/open-mercato.svg" alt={resolvedProductName} width={28} height={28} className="rounded" />
+                <Image src={logo?.src ?? "/open-mercato.svg"} alt={logo?.alt ?? resolvedProductName} width={28} height={28} className="rounded" />
                 {resolvedProductName}
               </Link>
               <IconButton variant="outline" size="sm" onClick={() => setMobileOpen(false)} aria-label={t('appShell.closeMenu')}>✕</IconButton>
@@ -1593,7 +1575,6 @@ export function AppShell({ productName, email, groups, rightHeaderSlot, children
     </div>
     <UmesDevToolsPanel />
     </HeaderContext.Provider>
-    </QueryProvider>
   )
 }
 
@@ -1605,6 +1586,8 @@ AppShell.cloneGroups = function cloneGroups(groups: AppShellProps['groups']): Ap
     title: item.title,
     defaultTitle: item.defaultTitle,
     icon: item.icon,
+    iconName: item.iconName,
+    iconMarkup: item.iconMarkup,
     enabled: item.enabled,
     hidden: item.hidden,
     pageContext: item.pageContext,

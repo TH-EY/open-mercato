@@ -3,7 +3,6 @@
 import * as React from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
 import { Page, PageBody } from "@open-mercato/ui/backend/Page";
 import { ErrorMessage } from "@open-mercato/ui/backend/detail";
 import {
@@ -39,6 +38,10 @@ import {
   type ProductMediaItem,
 } from "@open-mercato/core/modules/catalog/components/products/ProductMediaManager";
 import {
+  VariantMediaReadonlyGallery,
+  type VariantMediaGroup,
+} from "@open-mercato/core/modules/catalog/components/products/VariantMediaReadonlyGallery";
+import {
   fetchOptionSchemaTemplate,
   type OptionSchemaRecord,
   type OptionSchemaTemplateSummary,
@@ -62,6 +65,7 @@ import {
   normalizePriceKindSummary,
   buildOptionValuesKey,
   buildVariantCombinations,
+  resolveVariantMediaFallback,
   normalizeProductDimensions,
   normalizeProductWeight,
   sanitizeProductDimensions,
@@ -142,6 +146,8 @@ type VariantSummaryApi = {
   sku?: string | null;
   is_default?: boolean;
   isDefault?: boolean;
+  default_media_id?: string | null;
+  defaultMediaId?: string | null;
   metadata?: Record<string, unknown> | null;
 };
 
@@ -164,6 +170,7 @@ type VariantSummary = {
   name: string;
   sku: string;
   isDefault: boolean;
+  defaultMediaId: string | null;
   prices: VariantPriceSummary[];
   optionValues: Record<string, string> | null;
 };
@@ -295,7 +302,16 @@ export default function EditCatalogProductPage({
 }) {
   const productId = params?.id ? String(params.id) : null;
   const t = useT();
-  const router = useRouter();
+  const productSubpathPrefix = productId
+    ? `/backend/catalog/products/${productId}/`
+    : null;
+  const shouldBypassUnsavedChangesGuard = React.useCallback(
+    (target: string) => {
+      if (!productSubpathPrefix) return false;
+      return target.startsWith(productSubpathPrefix);
+    },
+    [productSubpathPrefix],
+  );
   const [taxRates, setTaxRates] = React.useState<TaxRateSummary[]>([]);
   const [variants, setVariants] = React.useState<VariantSummary[]>([]);
   const [priceKinds, setPriceKinds] = React.useState<PriceKindSummary[]>([]);
@@ -310,6 +326,9 @@ export default function EditCatalogProductPage({
     channels: ProductCategorizePickerOption[];
     tags: ProductCategorizePickerOption[];
   }>({ categories: [], channels: [], tags: [] });
+  const [variantMediaGroups, setVariantMediaGroups] = React.useState<
+    VariantMediaGroup[]
+  >([]);
 
   const loadVariants = React.useCallback(async (id: string) => {
     try {
@@ -323,6 +342,7 @@ export default function EditCatalogProductPage({
       ]);
       if (!variantsRes.ok) {
         setVariants([]);
+        setVariantMediaGroups([]);
         return;
       }
       const priceMap: Record<string, VariantPriceSummary[]> = {};
@@ -351,33 +371,83 @@ export default function EditCatalogProductPage({
       const items = Array.isArray(variantsRes.result?.items)
         ? variantsRes.result?.items
         : [];
-      setVariants(
-        items
-          .map((variant) => {
-            const variantId =
-              typeof variant.id === "string" ? variant.id : null;
-            if (!variantId) return null;
-            const variantRecord = variant as Record<string, unknown>;
-            const optionValues =
-              normalizeVariantOptionValues(variantRecord?.["option_values"]) ??
-              normalizeVariantOptionValues(variantRecord?.optionValues);
-            return {
-              id: variantId,
-              name:
-                typeof variant.name === "string" && variant.name.trim().length
-                  ? variant.name
-                  : (variant.sku ?? variantId),
-              sku: typeof variant.sku === "string" ? variant.sku : "",
-              isDefault: Boolean(variant.is_default ?? variant.isDefault),
-              prices: priceMap[variantId] ?? [],
-              optionValues,
-            };
-          })
-          .filter((entry): entry is VariantSummary => Boolean(entry)),
-      );
+      const mapped = items
+        .map((variant) => {
+          const variantId =
+            typeof variant.id === "string" ? variant.id : null;
+          if (!variantId) return null;
+          const variantRecord = variant as Record<string, unknown>;
+          const optionValues =
+            normalizeVariantOptionValues(variantRecord?.["option_values"]) ??
+            normalizeVariantOptionValues(variantRecord?.optionValues);
+          return {
+            id: variantId,
+            name:
+              typeof variant.name === "string" && variant.name.trim().length
+                ? variant.name
+                : (variant.sku ?? variantId),
+            sku: typeof variant.sku === "string" ? variant.sku : "",
+            isDefault: Boolean(variant.is_default ?? variant.isDefault),
+            defaultMediaId:
+              typeof variant.default_media_id === "string"
+                ? variant.default_media_id
+                : typeof variant.defaultMediaId === "string"
+                  ? variant.defaultMediaId
+                  : null,
+            prices: priceMap[variantId] ?? [],
+            optionValues,
+          };
+        })
+        .filter((entry): entry is VariantSummary => Boolean(entry));
+      setVariants(mapped);
+
+      if (!mapped.length) {
+        setVariantMediaGroups([]);
+        return;
+      }
+      const CONCURRENCY = 5;
+      const groups: VariantMediaGroup[] = [];
+      for (let i = 0; i < mapped.length; i += CONCURRENCY) {
+        const batch = mapped.slice(i, i + CONCURRENCY);
+        const results = await Promise.all(
+          batch.map(async (variant) => {
+            try {
+              const res = await apiCall<AttachmentListResponse>(
+                `/api/attachments?entityId=${encodeURIComponent(E.catalog.catalog_product_variant)}&recordId=${encodeURIComponent(variant.id)}`,
+              );
+              if (!res.ok) return null;
+              const mediaItems: ProductMediaItem[] = (res.result?.items ?? []).map(
+                (item) => ({
+                  id: item.id,
+                  url: item.url,
+                  fileName: item.fileName,
+                  fileSize: item.fileSize,
+                  thumbnailUrl: item.thumbnailUrl ?? undefined,
+                }),
+              );
+              if (!mediaItems.length) return null;
+              return {
+                variantId: variant.id,
+                variantName: variant.name,
+                defaultMediaId: variant.defaultMediaId,
+                items: mediaItems,
+                editUrl: `/backend/catalog/products/${id}/variants/${variant.id}`,
+              } satisfies VariantMediaGroup;
+            } catch {
+              // Non-critical: variant media is optional; gallery degrades gracefully
+              return null;
+            }
+          }),
+        );
+        for (const result of results) {
+          if (result) groups.push(result);
+        }
+      }
+      setVariantMediaGroups(groups);
     } catch (err) {
       console.error("catalog.variants.fetch failed", err);
       setVariants([]);
+      setVariantMediaGroups([]);
     }
   }, []);
 
@@ -716,6 +786,10 @@ export default function EditCatalogProductPage({
             setValue={setValue}
             errors={errors}
             productId={productId ?? ""}
+            hasVariants={Boolean(
+              (values as ProductFormValues).hasVariants,
+            )}
+            variantMediaGroups={variantMediaGroups}
           />
         ),
       },
@@ -794,6 +868,7 @@ export default function EditCatalogProductPage({
             setValue={setValue}
             errors={errors}
             taxRates={taxRates}
+            isLoadingProduct={loading}
           />
         ),
       },
@@ -831,6 +906,7 @@ export default function EditCatalogProductPage({
       refreshVariants,
       t,
       taxRates,
+      variantMediaGroups,
       variants,
     ],
   );
@@ -946,11 +1022,19 @@ export default function EditCatalogProductPage({
           : null;
       };
       const productTaxRateValue = resolveTaxRateValue(values.taxRateId ?? null);
-      const defaultMediaId =
+      let defaultMediaId =
         typeof values.defaultMediaId === "string" &&
         values.defaultMediaId.trim().length
           ? values.defaultMediaId
           : null;
+      let fallbackVariantName: string | null = null;
+      if (!defaultMediaId && variants.length > 0) {
+        const fallback = resolveVariantMediaFallback(variants);
+        if (fallback) {
+          defaultMediaId = fallback.defaultMediaId;
+          fallbackVariantName = fallback.variantName;
+        }
+      }
       const defaultMediaEntry = defaultMediaId
         ? values.mediaItems.find((item) => item.id === defaultMediaId)
         : null;
@@ -958,7 +1042,9 @@ export default function EditCatalogProductPage({
         ? buildAttachmentImageUrl(defaultMediaEntry.id, {
             slug: slugifyAttachmentFileName(defaultMediaEntry.fileName),
           })
-        : null;
+        : defaultMediaId
+          ? buildAttachmentImageUrl(defaultMediaId, {})
+          : null;
       const defaultUnit = canonicalizeUnitCode(values.defaultUnit);
       const defaultSalesUnit = canonicalizeUnitCode(values.defaultSalesUnit);
       const defaultSalesUnitQuantity =
@@ -1212,9 +1298,17 @@ export default function EditCatalogProductPage({
         offersPayload,
       );
       flash(t("catalog.products.edit.success", "Product updated."), "success");
-      router.push("/backend/catalog/products");
+      if (fallbackVariantName) {
+        flash(
+          t(
+            "catalog.products.variantMedia.defaultFallbackApplied",
+            "Product thumbnail set from variant \"{name}\".",
+          ).replace("{name}", fallbackVariantName),
+          "info",
+        );
+      }
     },
-    [productId, t, taxRates, router],
+    [productId, t, taxRates, variants],
   );
 
   if (!productId) {
@@ -1278,6 +1372,7 @@ export default function EditCatalogProductPage({
           submitLabel={t("catalog.products.edit.save", "Save changes")}
           cancelHref="/backend/catalog/products"
           onSubmit={handleSubmit}
+          shouldBypassUnsavedChangesGuard={shouldBypassUnsavedChangesGuard}
         />
       </PageBody>
     </Page>
@@ -1288,10 +1383,15 @@ type ProductFormGroupProps = CrudFormGroupComponentProps & {
   values: ProductFormValues;
 };
 
-type ProductDetailsSectionProps = ProductFormGroupProps & { productId: string };
+type ProductDetailsSectionProps = ProductFormGroupProps & {
+  productId: string;
+  hasVariants: boolean;
+  variantMediaGroups: VariantMediaGroup[];
+};
 
 type ProductMetaSectionProps = ProductFormGroupProps & {
   taxRates: TaxRateSummary[];
+  isLoadingProduct?: boolean;
 };
 
 type ProductVariantsSectionProps = Omit<
@@ -1313,6 +1413,8 @@ function ProductDetailsSection({
   setValue,
   errors,
   productId,
+  hasVariants,
+  variantMediaGroups,
 }: ProductDetailsSectionProps) {
   const t = useT();
   const mediaItems = React.useMemo(
@@ -1440,6 +1542,10 @@ function ProductDetailsSection({
         onItemsChange={handleMediaItemsChange}
         onDefaultChange={handleDefaultMediaChange}
       />
+
+      {hasVariants && variantMediaGroups.length > 0 ? (
+        <VariantMediaReadonlyGallery groups={variantMediaGroups} />
+      ) : null}
     </div>
   );
 }
@@ -1796,7 +1902,7 @@ function ProductOptionsSection({ values, setValue }: ProductFormGroupProps) {
           </div>
         </div>
         {(Array.isArray(values.options) ? values.options : []).map((option) => (
-          <div key={option.id} className="rounded-md bg-muted/40 p-4">
+          <div key={option.id} className="rounded-md bg-muted/50 p-4">
             <div className="flex items-center gap-2">
               <Input
                 value={option.title}
@@ -2121,40 +2227,43 @@ function ProductVariantsSection({
         </div>
         {variants.length ? (
           <div className="overflow-x-auto rounded-md border">
-            <table className="w-full table-auto text-sm">
+            <table className="w-full min-w-[720px] table-fixed text-sm">
               <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2 font-normal">
                     {t("catalog.products.form.variants", "Variant")}
                   </th>
-                  <th className="px-3 py-2 font-normal">SKU</th>
-                  <th className="px-3 py-2 font-normal">
+                  <th className="w-40 px-3 py-2 font-normal">SKU</th>
+                  <th className="w-48 px-3 py-2 font-normal">
                     {t(
                       "catalog.products.edit.variantList.pricesHeading",
                       "Prices",
                     )}
                   </th>
-                  <th className="px-3 py-2 font-normal">
+                  <th className="w-24 px-3 py-2 font-normal">
                     {t("catalog.products.edit.variants.default", "Default")}
                   </th>
-                  <th className="px-3 py-2 font-normal text-right">
+                  <th className="w-40 px-3 py-2 font-normal text-right">
                     {t("catalog.products.edit.variantList.actions", "Actions")}
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {variants.map((variant) => (
-                  <tr key={variant.id} className="border-t hover:bg-muted/40">
+                  <tr key={variant.id} className="border-t hover:bg-muted/50">
                     <td className="px-3 py-2">
                       <Link
                         href={`/backend/catalog/products/${productId}/variants/${variant.id}`}
-                        className="text-sm font-medium hover:underline"
+                        className="block truncate text-sm font-medium hover:underline"
+                        title={variant.name || variant.id}
                       >
                         {variant.name || variant.id}
                       </Link>
                     </td>
                     <td className="px-3 py-2 text-muted-foreground">
-                      {variant.sku || "—"}
+                      <span className="block truncate" title={variant.sku || "—"}>
+                        {variant.sku || "—"}
+                      </span>
                     </td>
                     <td className="px-3 py-2">
                       {variant.prices.length ? (
@@ -2184,7 +2293,7 @@ function ProductVariantsSection({
                       {variant.isDefault ? t("common.yes", "Yes") : "—"}
                     </td>
                     <td className="px-3 py-2">
-                      <div className="flex flex-wrap justify-end gap-2">
+                      <div className="flex justify-end gap-2 whitespace-nowrap">
                         <Button asChild size="sm" variant="outline">
                           <Link
                             href={`/backend/catalog/products/${productId}/variants/${variant.id}`}
@@ -2240,13 +2349,25 @@ function ProductMetaSection({
   setValue,
   errors,
   taxRates,
+  isLoadingProduct = false,
 }: ProductMetaSectionProps) {
   const t = useT();
   const handleValue = typeof values.handle === "string" ? values.handle : "";
   const titleSource = typeof values.title === "string" ? values.title : "";
   const autoHandleEnabledRef = React.useRef(handleValue.trim().length === 0);
+  const autoHandleInitializedRef = React.useRef(false);
+  const previousTitleRef = React.useRef(titleSource);
 
   React.useEffect(() => {
+    if (isLoadingProduct) return;
+    if (!autoHandleInitializedRef.current) {
+      autoHandleInitializedRef.current = true;
+      previousTitleRef.current = titleSource;
+      return;
+    }
+    const titleChanged = titleSource !== previousTitleRef.current;
+    previousTitleRef.current = titleSource;
+    if (!titleChanged) return;
     if (!autoHandleEnabledRef.current) return;
     const normalizedTitle = titleSource.trim();
     if (!normalizedTitle) {
@@ -2259,7 +2380,7 @@ function ProductMetaSection({
     if (nextHandle !== handleValue) {
       setValue("handle", nextHandle);
     }
-  }, [titleSource, handleValue, setValue]);
+  }, [handleValue, isLoadingProduct, setValue, titleSource]);
 
   const handleHandleInputChange = React.useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {

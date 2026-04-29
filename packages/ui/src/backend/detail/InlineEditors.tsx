@@ -11,6 +11,7 @@ import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { cn } from '@open-mercato/shared/lib/utils'
 import { LoadingMessage } from './LoadingMessage'
 import { mapCrudServerErrorToFormErrors } from '../utils/serverErrors'
+import { MarkdownPreview } from '../markdown'
 
 function resolveInlineErrorMessage(err: unknown, fallbackMessage: string): string {
   const { message, fieldErrors } = mapCrudServerErrorToFormErrors(err)
@@ -35,6 +36,19 @@ function resolveInlineErrorMessage(err: unknown, fallbackMessage: string): strin
 type EditorVariant = 'default' | 'muted' | 'plain'
 
 export type InlineFieldType = 'text' | 'email' | 'tel' | 'url'
+
+const ALLOWED_INLINE_URL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:'])
+
+export function resolveSafeInlineUrlHref(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed.length) return null
+  try {
+    const parsed = new URL(trimmed)
+    return ALLOWED_INLINE_URL_PROTOCOLS.has(parsed.protocol) ? trimmed : null
+  } catch {
+    return null
+  }
+}
 
 export type InlineTextEditorProps = {
   label: string
@@ -117,7 +131,7 @@ export function InlineTextEditor({
   const containerClasses = cn(
     'group overflow-hidden',
     variant === 'muted'
-      ? 'relative rounded border bg-muted/20 p-3'
+      ? 'relative rounded border bg-muted/30 p-3'
       : variant === 'plain'
         ? 'relative flex items-center gap-3 rounded-none border-0 p-0'
         : 'rounded-lg border p-4',
@@ -256,8 +270,12 @@ export function InlineTextEditor({
       )
     }
     if (resolvedType === 'url') {
+      const safeHref = resolveSafeInlineUrlHref(baseValue)
+      if (!safeHref) {
+        return <p className={textClass}>{baseValue}</p>
+      }
       return (
-        <a className={textClass} href={baseValue} target="_blank" rel="noreferrer">
+        <a className={textClass} href={safeHref} target="_blank" rel="noopener noreferrer">
           {baseValue}
         </a>
       )
@@ -306,7 +324,7 @@ export function InlineTextEditor({
                 />
               ) : (
               <input
-                className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-full rounded-md border px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 value={draft}
                 onChange={(event) => {
                   if (error) setError(null)
@@ -373,13 +391,9 @@ type UiMarkdownEditorProps = {
   previewOptions?: { remarkPlugins?: unknown[] }
 }
 
-type MarkdownPreviewProps = {
-  children: string
-  className?: string
-  remarkPlugins?: PluggableList
-}
-
-const isTestEnv = typeof process !== 'undefined' && process.env.NODE_ENV === 'test'
+const isTestEnv =
+  typeof process !== 'undefined' &&
+  (process.env.NODE_ENV === 'test' || typeof process.env.JEST_WORKER_ID !== 'undefined')
 
 function MarkdownEditorFallback() {
   const t = useT()
@@ -403,13 +417,6 @@ const MarkdownEditorComponent: React.ComponentType<UiMarkdownEditorProps> = isTe
       ssr: false,
       loading: () => <MarkdownEditorFallback />,
     }) as unknown as React.ComponentType<UiMarkdownEditorProps>)
-
-const MarkdownPreviewComponent: React.ComponentType<MarkdownPreviewProps> = isTestEnv
-  ? ({ children, className }) => <div className={className}>{children}</div>
-  : (dynamic(() => import('react-markdown').then((mod) => mod.default as React.ComponentType<MarkdownPreviewProps>), {
-      ssr: false,
-      loading: () => null,
-    }) as unknown as React.ComponentType<MarkdownPreviewProps>)
 
 let markdownPluginsPromise: Promise<PluggableList> | null = null
 
@@ -547,7 +554,7 @@ export function InlineMultilineEditor({
 
   const containerClasses = cn(
     'group rounded-lg border p-4',
-    variant === 'muted' ? 'bg-muted/20' : null,
+    variant === 'muted' ? 'bg-muted/30' : null,
     activateOnClick && !editing ? 'cursor-pointer' : null,
     containerClassName ?? null,
   )
@@ -631,7 +638,7 @@ export function InlineMultilineEditor({
                 <Textarea
                   ref={textareaRef}
                   rows={3}
-                  className="w-full resize-none overflow-hidden rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-full resize-none overflow-hidden rounded-md border px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   placeholder={placeholder}
                   value={draft}
                   onChange={(event) => {
@@ -691,12 +698,12 @@ export function InlineMultilineEditor({
               {renderDisplay ? (
                 renderDisplay({ value, emptyLabel })
               ) : value && value.length ? (
-                <MarkdownPreviewComponent
+                <MarkdownPreview
                   remarkPlugins={markdownPlugins}
                   className="prose prose-sm max-w-none text-foreground [&>*]:my-2 [&>*:last-child]:mb-0 [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-3 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5"
                 >
                   {value}
-                </MarkdownPreviewComponent>
+                </MarkdownPreview>
               ) : (
                 <span className="text-muted-foreground">{emptyLabel}</span>
               )}
@@ -820,7 +827,7 @@ export function InlineSelectEditor({
                 renderEditor({ value: draft, onChange: setDraft })
               ) : (
                 <select
-                  className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-full rounded-md border px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
                 >

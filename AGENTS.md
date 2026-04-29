@@ -119,7 +119,7 @@ IMPORTANT: Before any research or coding, match the task to the root `AGENTS.md`
 | Integration Marketplace foundation (registry/bundles, credentials, state, health checks, logs, admin UI, integration manifests) | `packages/core/src/modules/integrations/AGENTS.md` |
 | Data Sync hub (adapters, run lifecycle, workers, mapping APIs, scheduled sync, progress linkage, admin UI) | `packages/core/src/modules/data_sync/AGENTS.md` |
 | Building outbound/inbound webhooks, Standard Webhooks signing, delivery queues, webhook admin UI, marketplace webhook settings | `packages/webhooks/AGENTS.md` + `packages/queue/AGENTS.md` + `packages/events/AGENTS.md` + `packages/core/src/modules/integrations/AGENTS.md` + `packages/ui/AGENTS.md` |
-| Building a new integration provider module (adapter, health check, credentials, bundle wiring) | `packages/core/src/modules/integrations/AGENTS.md` + `packages/core/src/modules/data_sync/AGENTS.md` + `.ai/skills/integration-builder/SKILL.md` + `.ai/specs/SPEC-041-2026-02-24-universal-module-extension-system.md` + `.ai/specs/SPEC-045-2026-02-24-integration-marketplace.md` + `.ai/specs/SPEC-045c-payment-shipping-hubs.md` (+ `.ai/specs/SPEC-044-2026-02-24-payment-gateway-integrations.md` for payment providers) |
+| Building a new integration provider module (adapter, health check, credentials, bundle wiring) | `packages/core/src/modules/integrations/AGENTS.md` + `packages/core/src/modules/data_sync/AGENTS.md` + `.ai/skills/integration-builder/SKILL.md` + `.ai/specs/implemented/SPEC-041-2026-02-24-universal-module-extension-system.md` + `.ai/specs/implemented/SPEC-045-2026-02-24-integration-marketplace.md` + `.ai/specs/implemented/SPEC-045c-payment-shipping-hubs.md` (+ `.ai/specs/implemented/SPEC-044-2026-02-24-payment-gateway-integrations.md` for payment providers) |
 | Wiring progress UX for long-running sync operations (top bar polling, job lifecycle, future SSE bridge) | `packages/core/src/modules/data_sync/AGENTS.md` + `packages/events/AGENTS.md` |
 | **Packages** | |
 | Adding reusable utilities, encryption helpers, i18n translations (`useT`/`resolveTranslations`), boolean parsing, data engine types, request scoping | `packages/shared/AGENTS.md` |
@@ -134,6 +134,8 @@ IMPORTANT: Before any research or coding, match the task to the root `AGENTS.md`
 | Adding onboarding wizard steps, tenant setup hooks (`onTenantCreated`/`seedDefaults`), welcome/invitation emails | `packages/onboarding/AGENTS.md` |
 | Adding static content pages (privacy policies, terms, legal pages) | `packages/content/AGENTS.md` |
 | Testing standalone apps with Verdaccio, publishing packages, canary releases, template scaffolding | `packages/create-app/AGENTS.md` |
+| **Migration** | |
+| Migrating custom module code from MikroORM v6 to v7 (decorators, persist/flush, Knex→Kysely, type fixes, ORM config, Jest setup) | `.ai/skills/migrate-mikro-orm/SKILL.md` |
 | **Testing** | |
 | Integration testing, creating/running Playwright tests, converting markdown test cases to TypeScript, CI test pipeline | `.ai/qa/AGENTS.md` + `.ai/skills/integration-tests/SKILL.md` |
 | **Spec Lifecycle** | |
@@ -141,6 +143,14 @@ IMPORTANT: Before any research or coding, match the task to the root `AGENTS.md`
 | Implementing a spec (or specific phases) with coordinated agents, unit tests, docs, progress tracking | `.ai/skills/implement-spec/SKILL.md` |
 | Writing new specs, updating existing specs after implementation, documenting architectural decisions, maintaining changelogs | `.ai/specs/AGENTS.md` |
 | Reviewing code changes for architecture, security, conventions, and quality compliance | `.ai/skills/code-review/SKILL.md` |
+| Migrating hardcoded colors/typography to semantic tokens, analyzing DS violations, scaffolding DS-compliant pages, reviewing DS compliance | `.ai/skills/ds-guardian/SKILL.md` + `.ai/ds-rules.md` |
+| Reviewing a GitHub PR by number (checkout, code-review, submit review, apply label) | `.ai/skills/auto-review-pr/SKILL.md` |
+| Scanning open PRs for merge readiness, listing what can be merged now, triaging blockers | `.ai/skills/merge-buddy/SKILL.md` |
+| Day-start review triage: reviewing all unreviewed PRs (newest first) in one session | `.ai/skills/review-prs/SKILL.md` |
+| Running an arbitrary autonomous task end-to-end and delivering it as a PR against `develop` (drafts a dated spec with a Progress checklist, commits it first, implements phase-by-phase with incremental commits, optionally honors external reference skills via `--skill-url`, runs the full validation gate, opens a PR with normalized pipeline labels) | `.ai/skills/auto-create-pr/SKILL.md` |
+| Resuming an in-progress PR created by `auto-create-pr`: claims the PR, re-enters an isolated worktree, reads the linked spec's Progress checklist, and continues from the first unchecked step | `.ai/skills/auto-continue-pr/SKILL.md` |
+| Post-merge housekeeping: syncing recently merged (and recently closed-unmerged) pull requests to the GitHub issue tracker — auto-closing issues they authoritatively fix via `fixes`/`closes`/`resolves` close-keywords or `closingIssuesReferences`, and leaving informational comments on issues whose PRs were closed without merging (with supersede detection) | `.ai/skills/sync-merged-pr-issues/SKILL.md` |
+| Drafting a CHANGELOG.md release entry in the house emoji-driven format (✨ Features / 🔒 Security / 🐛 Fixes / 🛠️ Improvements / 🧪 Testing / 📝 Specs & Documentation / 🚀 CI/CD) for every PR merged since the last release and delegating the edit to `auto-create-pr` so it lands as a docs PR against `develop`; honors the Supersede Credit Rule so when `auto-review-pr` has carried a fork PR forward, the original contributor is credited instead of the reviewer | `.ai/skills/auto-update-changelog/SKILL.md` |
 
 ## Core Principles
 
@@ -159,6 +169,31 @@ IMPORTANT: Before any research or coding, match the task to the root `AGENTS.md`
 4.  **Verification**: Run tests, check build, suggest user verification. Ask: "Would a staff engineer approve this?"
 5.  **Elegance**: For non-trivial changes, pause and ask "is there a more elegant way?" Skip for simple fixes.
 6.  **Autonomous bug fixing**: When given a bug report, just fix it. Point at logs/errors, then resolve. Zero hand-holding.
+
+## PR Workflow
+
+- Pipeline labels are mutually exclusive: `review`, `changes-requested`, `qa`, `qa-failed`, `merge-queue`, `blocked`, `do-not-merge`.
+- Category labels are additive: `bug`, `feature`, `refactor`, `security`, `dependencies`, `enterprise`, `documentation`.
+- Meta labels are additive: `needs-qa`, `skip-qa`, `in-progress`.
+- A ready non-draft PR should carry `review` unless it is already in another pipeline state.
+- `auto-review-pr` MUST move approved PRs to `qa` when `needs-qa` is present and `skip-qa` is absent; otherwise it MUST move them to `merge-queue`.
+- `auto-review-pr` MUST move review failures to `changes-requested`.
+- `needs-qa` is for UI changes, new features, sales or order flows, and other customer-facing behavior that needs manual exercise.
+- `skip-qa` is for docs-only, dependency-only, CI-only, test-only, typo-only, or similarly low-risk non-customer-facing changes.
+- Auto-skills that mutate PRs or issues MUST claim them first with all three signals: assignee, `in-progress` label, and a claim comment. They MUST release the `in-progress` label when finished, even on failure.
+- When an auto-skill adds or changes a PR pipeline/meta label, it MUST also leave a short PR comment explaining why that label was applied.
+- Use `gh` for manual QA transitions:
+
+```bash
+# QA pass
+gh pr edit <number> --remove-label "qa" --add-label "merge-queue"
+
+# QA fail
+gh pr edit <number> --remove-label "qa" --add-label "qa-failed"
+
+# Re-request QA after a fix
+gh pr edit <number> --remove-label "qa-failed" --add-label "qa"
+```
 
 ### Documentation and Specifications
 
@@ -217,6 +252,15 @@ All packages use the `@open-mercato/<package>` naming convention:
 | Menu injection hook | `import { useInjectedMenuItems } from '@open-mercato/ui/backend/injection/useInjectedMenuItems'` |
 | Component replacement hook | `import { useRegisteredComponent } from '@open-mercato/ui/backend/injection/useRegisteredComponent'` |
 | UI primitives | `import { Spinner } from '@open-mercato/ui/primitives/spinner'` |
+| Entity tag pill | `import { Tag } from '@open-mercato/ui/primitives/tag'` |
+| Entity tag variant map | `import type { TagMap } from '@open-mercato/ui/primitives/tag'` |
+| User / entity avatar | `import { Avatar, AvatarStack } from '@open-mercato/ui/primitives/avatar'` |
+| Keyboard shortcut key | `import { Kbd, KbdShortcut } from '@open-mercato/ui/primitives/kbd'` |
+| Inline text link button | `import { LinkButton } from '@open-mercato/ui/primitives/link-button'` |
+| Social provider button (Google/Apple/etc.) | `import { SocialButton } from '@open-mercato/ui/primitives/social-button'` |
+| Marketing CTA with brand gradient | `import { FancyButton } from '@open-mercato/ui/primitives/fancy-button'` |
+| Checkbox primitive (with indeterminate) | `import { Checkbox } from '@open-mercato/ui/primitives/checkbox'` |
+| Checkbox with label + description (form field) | `import { CheckboxField } from '@open-mercato/ui/primitives/checkbox-field'` |
 | API calls (backend pages) | `import { apiCall } from '@open-mercato/ui/backend/utils/apiCall'` |
 | CRUD forms | `import { CrudForm } from '@open-mercato/ui/backend/crud'` |
 | API interceptor types | `import type { ApiInterceptor } from '@open-mercato/shared/lib/crud/api-interceptor'` |
@@ -297,6 +341,7 @@ All paths use `src/modules/<module>/` as shorthand. See `packages/core/AGENTS.md
 - Write operations: implement via the Command pattern (see `packages/core/src/modules/customers/commands/*`)
 - Feature naming convention: `<module>.<action>` (e.g., `example.view`, `example.create`).
 - setup.ts: always declare `defaultRoleFeatures` when adding features to `acl.ts`
+- Every module with guarded routes or pages MUST declare features in `acl.ts` — never ship an empty `acl.ts` with `requireRoles` guards
 - Custom fields: use `collectCustomFieldValues()` from `@open-mercato/ui/backend/utils/customFieldValues`
 - Events: use `createModuleEvents()` with `as const` for typed emit
 - Translations: when adding entities with user-facing text fields (title, name, description, label), create `translations.ts` at module root declaring translatable fields. Run `yarn generate` after adding.
@@ -306,7 +351,8 @@ All paths use `src/modules/<module>/` as shorthand. See `packages/core/AGENTS.md
 - Component replacement: use handle-based IDs (`page:*`, `data-table:*`, `crud-form:*`, `section:*`) for deterministic overrides
 - Generated files: `apps/mercato/.mercato/generated/` — never edit manually
 - Enable modules in your app’s `src/modules.ts` (e.g. `apps/mercato/src/modules.ts`)
-- Run `npm run modules:prepare` after adding/modifying module files
+- Run `yarn generate` after adding/modifying module files
+- Agents MUST automatically run `yarn mercato configs cache structural --all-tenants` after enabling/disabling modules in `src/modules.ts`, adding/removing backend or frontend pages, or changing sidebar/navigation injection — stale `nav:*` cache can hide structural changes until it is purged
 - New integration providers MUST own their env-backed preconfiguration inside the provider package: implement preset reading/application in the provider module, apply it from `setup.ts`, expose a rerunnable provider CLI command when practical, and document the env variables. Do not add provider-specific preconfiguration logic to core modules.
 
 ## Backward Compatibility Contract
@@ -354,7 +400,7 @@ Third-party module developers depend on stable platform APIs. Any change to a **
 -   Never hand-write migrations — update ORM entities, run `yarn db:generate`
 -   Hash passwords with bcryptjs (cost >=10), never log credentials
 -   Return minimal error messages for auth (avoid revealing whether email exists)
--   RBAC: prefer declarative guards (`requireAuth`, `requireRoles`, `requireFeatures`) in page metadata
+-   RBAC: prefer declarative guards (`requireAuth`, `requireFeatures`) in page metadata; avoid `requireRoles` — role names are mutable and can be spoofed; use feature-based guards with immutable IDs from `acl.ts` instead
 -   Portal RBAC: use `requireCustomerAuth` and `requireCustomerFeatures` in page metadata for portal pages
 
 ### UI & HTTP
@@ -379,10 +425,27 @@ Third-party module developers depend on stable platform APIs. Any change to a **
 - Boolean parsing: use `parseBooleanToken`/`parseBooleanWithDefault` from `@open-mercato/shared/lib/boolean`
 - Confirm project still builds after changes
 
+## Design System Rules
+
+> Foundations (token tables, decision trees, color/spacing/typography rules): `.ai/ds-rules.md`  
+> Component reference (variants, sizes, props, examples, MUST rules per primitive): `.ai/ui-components.md`  
+> Workflow guidance (CrudForm, DataTable, Loading, Flash, Notifications, Portal): `packages/ui/AGENTS.md`
+
+- NEVER use hardcoded Tailwind status colors (`text-red-*`, `bg-green-*`, `text-amber-*`, etc.) — use `{property}-status-{status}-{role}` tokens
+- NEVER use arbitrary values (`text-[13px]`, `p-[13px]`, `rounded-[24px]`, `z-[9999]`) — use DS scale
+- NEVER add `dark:` overrides on semantic/status tokens — they already handle dark mode
+- NEVER hardcode hex/rgb in `className` — always use CSS token names
+- NEVER use hardcoded Tailwind color shades for borders (`border-gray-300`) — use `border-border`, `border-input`
+
+**Boy Scout Rule**: When touching a file that has hardcoded status colors, arbitrary text sizes, or `dark:` overrides on status colors, migrate at minimum the lines you touched to semantic tokens.
+
 ## Key Commands
 
 ```bash
-yarn dev                  # Start development server
+yarn dev                  # Start compact dev runtime; press `d` to toggle raw logs
+yarn dev:verbose          # Start dev runtime with full raw passthrough logs
+yarn dev:app              # Start compact app-only runtime
+yarn dev:app:verbose      # Start app-only runtime with raw passthrough logs
 yarn build                # Build everything
 yarn build:packages       # Build packages only
 yarn lint                 # Lint all packages
@@ -391,7 +454,8 @@ yarn generate             # Run module generators
 yarn db:generate          # Generate database migrations
 yarn db:migrate           # Apply database migrations
 yarn initialize           # Full project initialization
-yarn dev:greenfield       # Fresh dev environment setup
+yarn dev:greenfield       # Fresh compact dev boot with build/generate/reinstall stages
+yarn dev:greenfield:verbose  # Greenfield boot with full raw passthrough logs
 yarn test:integration     # Run integration tests (Playwright, headless)
 yarn test:integration:report  # View HTML test report
 ```

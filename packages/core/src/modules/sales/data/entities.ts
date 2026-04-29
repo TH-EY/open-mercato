@@ -1,14 +1,5 @@
-import {
-  Collection,
-  Entity,
-  Index,
-  ManyToOne,
-  OneToMany,
-  OptionalProps,
-  PrimaryKey,
-  Property,
-  Unique,
-} from '@mikro-orm/core'
+import { Collection, OptionalProps } from '@mikro-orm/core'
+import { Entity, Index, ManyToOne, OneToMany, PrimaryKey, Property, Unique } from '@mikro-orm/decorators/legacy'
 import { DEFAULT_ORDER_NUMBER_FORMAT, DEFAULT_QUOTE_NUMBER_FORMAT, type SalesDocumentNumberKind } from '../lib/documentNumberTokens'
 import type { ShipmentItemSnapshot } from '../lib/shipments/types'
 import type { SalesLineUomSnapshot } from '../lib/types'
@@ -1494,6 +1485,12 @@ export class SalesInvoiceLine {
   @Property({ name: 'kind', type: 'text', default: 'product' })
   kind: SalesLineKind = 'product'
 
+  @Property({ name: 'name', type: 'text', nullable: true })
+  name?: string | null
+
+  @Property({ name: 'sku', type: 'text', nullable: true })
+  sku?: string | null
+
   @Property({ name: 'description', type: 'text', nullable: true })
   description?: string | null
 
@@ -1575,6 +1572,9 @@ export class SalesCreditMemo {
   @Property({ name: 'status', type: 'text', nullable: true })
   status?: string | null
 
+  @Property({ name: 'reason', type: 'text', nullable: true })
+  reason?: string | null
+
   @Property({ name: 'issue_date', type: Date, nullable: true })
   issueDate?: Date | null
 
@@ -1642,6 +1642,12 @@ export class SalesCreditMemoLine {
 
   @Property({ name: 'line_number', type: 'integer', default: 0 })
   lineNumber: number = 0
+
+  @Property({ name: 'name', type: 'text', nullable: true })
+  name?: string | null
+
+  @Property({ name: 'sku', type: 'text', nullable: true })
+  sku?: string | null
 
   @Property({ name: 'description', type: 'text', nullable: true })
   description?: string | null

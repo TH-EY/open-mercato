@@ -2,6 +2,7 @@
 
 import type { DictionarySelectLabels } from '@open-mercato/core/modules/dictionaries/components/DictionaryEntrySelect'
 import type { CustomerDictionaryKind } from '../../lib/dictionaries'
+import { CUSTOMER_INTERACTION_TASK_SOURCE, CUSTOMER_INTERACTION_TASK_TYPE } from '../../lib/interactionCompatibility'
 
 
 export function formatDate(value?: string | null): string | null {
@@ -35,13 +36,20 @@ export function toLocalDateTimeInput(value?: string | null): string {
 export function resolveTodoHref(source: string, todoId: string | null | undefined): string | null {
   if (!todoId) return null
   if (!source) return null
+  if (source === CUSTOMER_INTERACTION_TASK_SOURCE || source === CUSTOMER_INTERACTION_TASK_TYPE) return null
   const [module] = source.split(':')
   if (!module) return null
+  if (module === 'example') {
+    return `/backend/todos/${encodeURIComponent(todoId)}/edit`
+  }
   return `/backend/${module}/todos/${encodeURIComponent(todoId)}/edit`
 }
 
 export function resolveTodoApiPath(source: string): string | null {
   if (!source) return null
+  if (source === CUSTOMER_INTERACTION_TASK_SOURCE || source === CUSTOMER_INTERACTION_TASK_TYPE) {
+    return '/api/customers/todos'
+  }
   const [module] = source.split(':')
   if (!module) return null
   return `/api/${module}/todos`
@@ -138,4 +146,29 @@ export function createDictionarySelectLabels(
     default:
       return base
   }
+}
+
+export function getInitials(name: string): string {
+  const words = name.trim().split(/\s+/)
+  if (words.length === 0 || !words[0]) return '?'
+  if (words.length === 1) return words[0].charAt(0).toUpperCase()
+  return (words[0].charAt(0) + words[words.length - 1].charAt(0)).toUpperCase()
+}
+
+export function formatCurrency(amount: number, currency?: string | null): string {
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: currency || 'PLN',
+      maximumFractionDigits: 0,
+    }).format(amount)
+  } catch {
+    return `${amount.toLocaleString()} ${currency || 'PLN'}`
+  }
+}
+
+export function formatFallbackLabel(value: string): string {
+  return value
+    .replace(/[_-]+/g, ' ')
+    .replace(/^\w/, (c) => c.toUpperCase())
 }

@@ -167,7 +167,7 @@ export function AnnualRevenueField({
 
   const containerClasses = React.useMemo(
     () =>
-      cn('group rounded border bg-muted/20 p-3', {
+      cn('group rounded border bg-muted/30 p-3', {
         'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring': !editing,
       }),
     [editing],
@@ -224,7 +224,7 @@ export function AnnualRevenueField({
               {t('customers.companies.detail.fields.annualRevenuePlaceholder', 'Enter amount')}
             </label>
             <input
-              className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full rounded-md border px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               value={draftAmount}
               onChange={(event) => {
                 setDraftAmount(event.target.value)
@@ -253,7 +253,7 @@ export function AnnualRevenueField({
               showLabelInput={false}
             />
           </div>
-          {error ? <p className="text-xs text-red-600">{error}</p> : null}
+          {error ? <p className="text-xs text-status-error-text">{error}</p> : null}
           <div className="flex items-center gap-2">
             <Button type="button" size="sm" onClick={handleSave} disabled={saving}>
               {saving ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}

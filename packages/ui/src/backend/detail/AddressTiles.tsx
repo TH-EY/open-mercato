@@ -210,6 +210,10 @@ export function AddressTiles<C = unknown>({
     }),
     [label],
   )
+  const line1FieldLabel = React.useMemo(
+    () => (format === 'street_first' ? fieldLabels.street : fieldLabels.addressLine1),
+    [fieldLabels.addressLine1, fieldLabels.street, format],
+  )
 
   const resetForm = React.useCallback(() => {
     setDraft(defaultDraft)
@@ -284,14 +288,14 @@ export function AddressTiles<C = unknown>({
   const validate = React.useCallback((): boolean => {
     const errors: Partial<Record<DraftFieldKey, string>> = {}
     if (!draft.addressLine1.trim()) {
-      errors.addressLine1 = label('validation.required', '{{field}} is required').replace('{{field}}', fieldLabels.addressLine1)
+      errors.addressLine1 = label('validation.required', '{{field}} is required').replace('{{field}}', line1FieldLabel)
     }
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors)
       return false
     }
     return true
-  }, [draft.addressLine1, fieldLabels.addressLine1, label])
+  }, [draft.addressLine1, label, line1FieldLabel])
 
   const handleSave = React.useCallback(async () => {
     if (!validate()) return
@@ -329,7 +333,7 @@ export function AddressTiles<C = unknown>({
           if (!key) return
           const fieldKey = serverFieldMap[key]
           if (!fieldKey) return
-          const fieldLabel = fieldLabels[fieldKey] ?? key
+          const fieldLabel = fieldKey === 'addressLine1' ? line1FieldLabel : (fieldLabels[fieldKey] ?? key)
           nextErrors[fieldKey] = resolveFieldMessage(detail, fieldLabel, t, labelPrefix)
         })
         setFieldErrors(nextErrors)
@@ -393,7 +397,7 @@ export function AddressTiles<C = unknown>({
     (key: string) => (
       <div
         key={key}
-        className="rounded-lg border-2 border-dashed border-muted-foreground/50 bg-muted/20 p-4 text-sm"
+        className="rounded-lg border-2 border-dashed border-muted-foreground/50 bg-muted/30 p-4 text-sm"
         onKeyDown={(event) => {
           if (!(event.metaKey || event.ctrlKey)) return
           if (event.key !== 'Enter') return
@@ -510,7 +514,7 @@ export function AddressTiles<C = unknown>({
             return (
               <div
                 key={address.id}
-                className="group rounded-lg border border-border/60 bg-card p-4 text-sm transition hover:border-border"
+                className="group rounded-lg border border-border/70 bg-card p-4 text-sm transition hover:border-border"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="space-y-1">
@@ -519,7 +523,7 @@ export function AddressTiles<C = unknown>({
                         {address.name ?? label('labelFallback', 'Address')}
                       </p>
                       {address.isPrimary ? (
-                        <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase">
+                        <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-overline font-semibold uppercase">
                           {label('primaryBadge', 'Primary')}
                         </span>
                       ) : null}

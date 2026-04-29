@@ -1,74 +1,152 @@
-import * as esbuild from 'esbuild'
 import { glob } from 'glob'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildPackage } from '../../scripts/build-package.mjs'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+const packageDir = dirname(fileURLToPath(import.meta.url))
 
-const entryPoints = await glob('src/**/*.{ts,tsx}', {
-  cwd: __dirname,
-  ignore: ['**/__tests__/**', '**/*.test.ts', '**/*.test.tsx'],
-  absolute: true,
-})
-
-if (entryPoints.length === 0) {
-  console.error('No entry points found!')
-  process.exit(1)
-}
-
-console.log(`Found ${entryPoints.length} entry points`)
-
-// Plugin to add .js extension to relative imports
-const addJsExtension = {
-  name: 'add-js-extension',
-  setup(build) {
-    build.onEnd(async (result) => {
-      if (result.errors.length > 0) return
-      const outputFiles = await glob('dist/**/*.js', { cwd: __dirname, absolute: true })
-      for (const file of outputFiles) {
-        const fileDir = dirname(file)
-        let content = readFileSync(file, 'utf-8')
-        // Add .js to relative imports that don't have an extension
-        content = content.replace(
-          /from\s+["'](\.[^"']+)["']/g,
-          (match, path) => {
-            if (path.endsWith('.js') || path.endsWith('.json')) return match
-            // Check if it's a directory with index.js
-            const resolvedPath = join(fileDir, path)
-            if (existsSync(resolvedPath) && existsSync(join(resolvedPath, 'index.js'))) {
-              return `from "${path}/index.js"`
-            }
-            return `from "${path}.js"`
-          }
-        )
-        content = content.replace(
-          /import\s*\(\s*["'](\.[^"']+)["']\s*\)/g,
-          (match, path) => {
-            if (path.endsWith('.js') || path.endsWith('.json')) return match
-            // Check if it's a directory with index.js
-            const resolvedPath = join(fileDir, path)
-            if (existsSync(resolvedPath) && existsSync(join(resolvedPath, 'index.js'))) {
-              return `import("${path}/index.js")`
-            }
-            return `import("${path}.js")`
-          }
-        )
-        writeFileSync(file, content)
-      }
-    })
+function normalizeKebabIconName(input) {
+  const trimmed = input.trim()
+  if (!trimmed) return ''
+  const withoutPrefix = trimmed.startsWith('lucide:') ? trimmed.slice('lucide:'.length) : trimmed
+  if (!withoutPrefix) return ''
+  if (!withoutPrefix.includes('-') && !withoutPrefix.includes('_') && !withoutPrefix.includes(' ') && /[A-Z]/.test(withoutPrefix)) {
+    return withoutPrefix
+      .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+      .replace(/([A-Z])([A-Z][a-z])/g, '$1-$2')
+      .toLowerCase()
   }
+  return withoutPrefix
+    .replace(/[_\s]+/g, '-')
+    .replace(/-+/g, '-')
+    .toLowerCase()
 }
 
-await esbuild.build({
-  entryPoints,
-  outdir: 'dist',
-  format: 'esm',
-  platform: 'node',
-  target: 'node18',
-  sourcemap: true,
-  jsx: 'automatic',
-  plugins: [addJsExtension],
-})
+function kebabToLucideExportName(kebab) {
+  return kebab
+    .split('-')
+    .filter(Boolean)
+    .map((part) => {
+      if (/^\d+$/.test(part)) return part
+      return part.charAt(0).toUpperCase() + part.slice(1)
+    })
+    .join('')
+}
 
-console.log('ui built successfully')
+async function generateLucideRegistry() {
+  const repoRoot = join(packageDir, '..', '..')
+  const candidateFiles = await glob(['apps/**/*.{ts,tsx}', 'packages/**/*.{ts,tsx}'], {
+    cwd: repoRoot,
+    absolute: true,
+    ignore: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/.mercato/**',
+      'packages/core/generated/**',
+      '**/__tests__/**',
+      '**/*.test.ts',
+      '**/*.test.tsx',
+      '**/*.generated.ts',
+      '**/*.generated.tsx',
+      '**/*.d.ts',
+    ],
+  })
+
+  const iconStrings = new Set()
+  const patterns = [
+    /\bicon\s*:\s*['"`]([^'"`]+)['"`]/g,
+    /\bicon\s*=\s*['"`]([^'"`]+)['"`]/g,
+  ]
+
+  for (const absPath of candidateFiles) {
+    const content = readFileSync(absPath, 'utf-8')
+    for (const pattern of patterns) {
+      pattern.lastIndex = 0
+      for (;;) {
+        const match = pattern.exec(content)
+        if (!match) break
+        const raw = match[1]
+        if (!raw) continue
+        const normalized = normalizeKebabIconName(raw)
+        if (!normalized) continue
+        iconStrings.add(normalized)
+      }
+    }
+  }
+
+  const lucide = await import('lucide-react')
+  const exportKeys = new Set(Object.keys(lucide))
+  const excludedLucideExports = new Set(['Icon'])
+
+  const resolved = []
+  for (const name of iconStrings) {
+    const exportName = kebabToLucideExportName(name)
+    if (excludedLucideExports.has(exportName)) continue
+    if (exportKeys.has(exportName)) {
+      resolved.push({ kebab: name, exportName })
+    }
+  }
+
+  resolved.sort((a, b) => a.kebab.localeCompare(b.kebab))
+  const uniqueExports = [...new Set(resolved.map((r) => r.exportName))].sort((a, b) => a.localeCompare(b))
+
+  const importSection = uniqueExports.length
+    ? `import {\n${uniqueExports.map((n) => `  ${n},`).join('\n')}\n} from 'lucide-react'\n`
+    : ``
+
+  const registryEntries = resolved.map((r) => `  '${r.kebab}': ${r.exportName},`).join('\n')
+
+  const outPath = join(packageDir, 'src/backend/icons/lucideRegistry.generated.tsx')
+  const file = `/* eslint-disable */
+// AUTO-GENERATED by @open-mercato/ui build. Do not edit by hand.
+// Generated from discovered icon string usages across the repo.
+
+import type * as React from 'react'
+import type { LucideIcon } from 'lucide-react'
+${importSection}
+export const LUCIDE_ICON_REGISTRY: Record<string, LucideIcon> = {
+${registryEntries ? `${registryEntries}\n` : ''}}
+
+function normalizeKebabIconName(input: string): string {
+  const trimmed = input.trim()
+  if (!trimmed) return ''
+  const withoutPrefix = trimmed.startsWith('lucide:') ? trimmed.slice('lucide:'.length) : trimmed
+  if (!withoutPrefix) return ''
+  if (!withoutPrefix.includes('-') && !withoutPrefix.includes('_') && !withoutPrefix.includes(' ') && /[A-Z]/.test(withoutPrefix)) {
+    return withoutPrefix
+      .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+      .replace(/([A-Z])([A-Z][a-z])/g, '$1-$2')
+      .toLowerCase()
+  }
+  return withoutPrefix
+    .replace(/[_\\s]+/g, '-')
+    .replace(/-+/g, '-')
+    .toLowerCase()
+}
+
+export function resolveRegisteredLucideIcon(name: string | undefined): LucideIcon | null {
+  if (!name) return null
+  const normalized = normalizeKebabIconName(name)
+  if (!normalized) return null
+  return (LUCIDE_ICON_REGISTRY as Record<string, LucideIcon | undefined>)[normalized] ?? null
+}
+
+export function resolveRegisteredLucideIconNode(
+  name: string | undefined,
+  className: string
+): React.ReactNode | null {
+  const Icon = resolveRegisteredLucideIcon(name)
+  if (!Icon) return null
+  return <Icon className={className} />
+}
+`
+
+  writeFileSync(outPath, file)
+  console.log(`Generated lucide registry with ${resolved.length} icons -> ${outPath}`)
+}
+
+await buildPackage(packageDir, {
+  name: 'ui',
+  beforeBuild: generateLucideRegistry,
+})

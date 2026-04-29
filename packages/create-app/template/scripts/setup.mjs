@@ -1,28 +1,26 @@
-import fs from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 
 const reinstall = process.argv.includes('--reinstall')
+const classic = process.argv.includes('--classic')
 
-function run(command, args) {
-  const result = spawnSync(command, args, {
+if (!existsSync('node_modules/cross-spawn')) {
+  const bootstrap = spawnSync('yarn', ['install'], {
     stdio: 'inherit',
     shell: process.platform === 'win32',
   })
-
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1)
-  }
+  if (bootstrap.status !== 0) process.exit(bootstrap.status ?? 1)
 }
 
-if (!fs.existsSync('.env') && fs.existsSync('.env.example')) {
-  fs.copyFileSync('.env.example', '.env')
-  console.log('[setup] Copied .env.example to .env')
-} else if (fs.existsSync('.env')) {
-  console.log('[setup] Keeping existing .env')
-}
+const result = spawnSync(
+  process.execPath,
+  ['./scripts/dev.mjs', '--setup', ...(reinstall ? ['--reinstall'] : []), ...(classic ? ['--classic'] : [])],
+  {
+    stdio: 'inherit',
+    shell: process.platform === 'win32',
+  },
+)
 
-run('yarn', ['install'])
-run('yarn', ['generate'])
-run('yarn', ['db:migrate'])
-run('yarn', reinstall ? ['initialize', '--reinstall'] : ['initialize'])
-run('yarn', ['dev'])
+if (result.status !== 0) {
+  process.exit(result.status ?? 1)
+}

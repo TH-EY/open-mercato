@@ -9,9 +9,9 @@ import { cn } from '@open-mercato/shared/lib/utils'
 import type { CustomFieldDefDto } from '@open-mercato/ui/backend/utils/customFieldDefs'
 import {
   extractDictionaryValue,
-  formatCustomFieldLabel,
   isEmptyCustomValue,
   normalizeCustomFieldKey,
+  resolveCustomFieldLabel,
   stringifyCustomValue,
 } from './customFieldUtils'
 import type { CustomFieldDisplayResources } from './hooks/useCustomFieldDisplay'
@@ -181,7 +181,7 @@ function buildDisplayEntries(
     if (!normalizedKey) return
     const entry = combined.get(normalizedKey)
     if (!entry || isEmptyCustomValue(entry.value)) return
-    const label = entry.label ?? def.label ?? formatCustomFieldLabel(entry.key)
+    const label = resolveCustomFieldLabel(entry.label ?? def.label, entry.key)
     const dictionaryMap = ensureDictionaryMap(entry.key, normalizedKey, dictionaryMaps)
     ordered.push({
       id: `${normalizedKey}-${index}`,
@@ -199,7 +199,7 @@ function buildDisplayEntries(
   combined.forEach((entry, normalizedKey) => {
     if (consumedKeys.has(normalizedKey)) return
     if (isEmptyCustomValue(entry.value)) return
-    const label = entry.label ?? formatCustomFieldLabel(entry.key)
+    const label = resolveCustomFieldLabel(entry.label, entry.key)
     const dictionaryMap = ensureDictionaryMap(entry.key, normalizedKey, dictionaryMaps)
     extras.push({
       id: normalizedKey,
@@ -250,7 +250,7 @@ export function CustomFieldValuesList({
         return (
           <div
             key={`${prefix}-${entry.normalizedKey}-${index}`}
-            className="rounded-md border border-border/60 bg-muted/10 px-3 py-2"
+            className="rounded-md border border-border/70 bg-muted/30 px-3 py-2"
           >
             <div className="text-xs font-medium text-muted-foreground">{entry.label}</div>
             <div className="mt-1 text-sm text-foreground">{content}</div>

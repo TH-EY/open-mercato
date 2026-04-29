@@ -224,6 +224,10 @@ test.describe('TC-SALES-020b: Document History Widget', () => {
       await page.goto(`/backend/sales/documents/${orderId}?kind=order`);
       await page.waitForLoadState('domcontentloaded');
 
+      const tabButtons = page.locator('[data-tab-id]');
+      await expect(tabButtons.first()).toBeVisible();
+      await expect(page.locator('[data-tab-id="items"]')).toBeVisible();
+
       // Open History tab
       const historyButton = page.getByRole('button', { name: 'History', exact: true });
       await expect(historyButton).toBeVisible({ timeout: WIDGET_LOAD_TIMEOUT });

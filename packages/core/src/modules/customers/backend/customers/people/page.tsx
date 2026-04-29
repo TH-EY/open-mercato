@@ -17,8 +17,11 @@ import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { useConfirmDialog } from '@open-mercato/ui/backend/confirm-dialog'
 import type { FilterDef, FilterValues } from '@open-mercato/ui/backend/FilterBar'
 import type { FilterOption } from '@open-mercato/ui/backend/FilterOverlay'
+import type { AdvancedFilterState } from '@open-mercato/shared/lib/query/advanced-filter'
+import { serializeAdvancedFilter } from '@open-mercato/shared/lib/query/advanced-filter'
 import {
   DictionaryValue,
+  createEmptyCustomerDictionaryMaps,
   renderDictionaryColor,
   renderDictionaryIcon,
   type CustomerDictionaryKind,
@@ -26,10 +29,15 @@ import {
 } from '../../../lib/dictionaries'
 import {
   useCustomFieldDefs,
-  filterCustomFieldDefs,
 } from '@open-mercato/ui/backend/utils/customFieldDefs'
+import {
+  mapCustomFieldKindToFilterType,
+  normalizeCustomFieldFilterOptions,
+  supportsCustomFieldColumn,
+} from '@open-mercato/ui/backend/utils/customFieldColumns'
 import { useQueryClient } from '@tanstack/react-query'
 import { ensureCustomerDictionary } from '../../../components/detail/hooks/useCustomerDictionary'
+import { CollectionPreviewCell, normalizeCollectionLabels } from '../../../components/list/CollectionPreviewCell'
 
 type PersonRow = {
   id: string
@@ -37,6 +45,16 @@ type PersonRow = {
   description?: string | null
   email?: string | null
   phone?: string | null
+  firstName?: string | null
+  lastName?: string | null
+  preferredName?: string | null
+  jobTitle?: string | null
+  department?: string | null
+  seniority?: string | null
+  timezone?: string | null
+  linkedInUrl?: string | null
+  twitterUrl?: string | null
+  companyEntityId?: string | null
   status?: string | null
   lifecycleStage?: string | null
   nextInteractionAt?: string | null
@@ -59,20 +77,6 @@ type DictionaryMap = CustomerDictionaryMap
 
 const NO_MATCH_TAG_SENTINEL = '__no_match__'
 
-function createEmptyDictionaryMaps(): Record<DictionaryKindKey, DictionaryMap> {
-  return {
-    statuses: {},
-    sources: {},
-    'lifecycle-stages': {},
-    'address-types': {},
-    'activity-types': {},
-    'deal-statuses': {},
-    'pipeline-stages': {},
-    'job-titles': {},
-    industries: {},
-  }
-}
-
 function formatDate(value: string | null | undefined, fallback: string): string {
   if (!value) return fallback
   const date = new Date(value)
@@ -87,6 +91,16 @@ function mapApiItem(item: Record<string, unknown>): PersonRow | null {
   const description = typeof item.description === 'string' ? item.description : null
   const email = typeof item.primary_email === 'string' ? item.primary_email : null
   const phone = typeof item.primary_phone === 'string' ? item.primary_phone : null
+  const firstName = typeof item.first_name === 'string' ? item.first_name : null
+  const lastName = typeof item.last_name === 'string' ? item.last_name : null
+  const preferredName = typeof item.preferred_name === 'string' ? item.preferred_name : null
+  const jobTitle = typeof item.job_title === 'string' ? item.job_title : null
+  const department = typeof item.department === 'string' ? item.department : null
+  const seniority = typeof item.seniority === 'string' ? item.seniority : null
+  const timezone = typeof item.timezone === 'string' ? item.timezone : null
+  const linkedInUrl = typeof item.linked_in_url === 'string' ? item.linked_in_url : null
+  const twitterUrl = typeof item.twitter_url === 'string' ? item.twitter_url : null
+  const companyEntityId = typeof item.company_entity_id === 'string' ? item.company_entity_id : null
   const status = typeof item.status === 'string' ? item.status : null
   const lifecycleStage = typeof item.lifecycle_stage === 'string' ? item.lifecycle_stage : null
   const nextInteractionAt = typeof item.next_interaction_at === 'string' ? item.next_interaction_at : null
@@ -107,6 +121,16 @@ function mapApiItem(item: Record<string, unknown>): PersonRow | null {
     description,
     email,
     phone,
+    firstName,
+    lastName,
+    preferredName,
+    jobTitle,
+    department,
+    seniority,
+    timezone,
+    linkedInUrl,
+    twitterUrl,
+    companyEntityId,
     status,
     lifecycleStage,
     nextInteractionAt,
@@ -123,20 +147,26 @@ export default function CustomersPeoplePage() {
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
   const [rows, setRows] = React.useState<PersonRow[]>([])
   const [page, setPage] = React.useState(1)
-  const [pageSize] = React.useState(20)
+  const [pageSize, setPageSize] = React.useState(20)
+  const [sorting, setSorting] = React.useState<import('@tanstack/react-table').SortingState>([])
   const [total, setTotal] = React.useState(0)
   const [totalPages, setTotalPages] = React.useState(1)
   const [search, setSearch] = React.useState('')
   const [filterValues, setFilterValues] = React.useState<FilterValues>({})
+  const [advancedFilterState, setAdvancedFilterState] = React.useState<AdvancedFilterState>({ logic: 'and', conditions: [] })
   const [isLoading, setIsLoading] = React.useState(true)
   const [reloadToken, setReloadToken] = React.useState(0)
   const [cacheStatus, setCacheStatus] = React.useState<'hit' | 'miss' | null>(null)
-  const [dictionaryMaps, setDictionaryMaps] = React.useState<Record<DictionaryKindKey, DictionaryMap>>(createEmptyDictionaryMaps())
+  const [dictionaryMaps, setDictionaryMaps] = React.useState<Record<DictionaryKindKey, DictionaryMap>>(createEmptyCustomerDictionaryMaps())
   const [tagIdToLabel, setTagIdToLabel] = React.useState<Record<string, string>>({})
   const scopeVersion = useOrganizationScopeVersion()
   const queryClient = useQueryClient()
   const t = useT()
   const router = useRouter()
+  const handlePageSizeChange = React.useCallback((newSize: number) => {
+    setPageSize(newSize)
+    setPage(1)
+  }, [])
   const fetchDictionaryEntries = React.useCallback(async (kind: DictionaryKindKey) => {
     try {
       const data = await ensureCustomerDictionary(queryClient, kind, scopeVersion)
@@ -227,7 +257,7 @@ export default function CustomersPeoplePage() {
     let cancelled = false
     async function loadAll() {
       if (cancelled) return
-      setDictionaryMaps(createEmptyDictionaryMaps())
+      setDictionaryMaps(createEmptyCustomerDictionaryMaps())
       await Promise.all([
         fetchDictionaryEntries('statuses'),
         fetchDictionaryEntries('sources'),
@@ -272,6 +302,7 @@ export default function CustomersPeoplePage() {
       label: t('customers.people.list.filters.tags'),
       type: 'tags',
       loadOptions: loadTagOptions,
+      formatValue: (value: string) => tagIdToLabel[value] ?? value,
     },
     {
       id: 'createdAt',
@@ -299,12 +330,16 @@ export default function CustomersPeoplePage() {
       label: t('customers.people.list.filters.hasNextInteraction'),
       type: 'checkbox',
     },
-  ], [dictionaryOptions.lifecycleStages, dictionaryOptions.sources, dictionaryOptions.statuses, loadDictionaryOptions, loadTagOptions, t])
+  ], [dictionaryOptions.lifecycleStages, dictionaryOptions.sources, dictionaryOptions.statuses, loadDictionaryOptions, loadTagOptions, tagIdToLabel, t])
 
   const queryParams = React.useMemo(() => {
     const params = new URLSearchParams()
     params.set('page', String(page))
     params.set('pageSize', String(pageSize))
+    if (sorting.length > 0) {
+      params.set('sort', sorting[0].id)
+      params.set('order', sorting[0].desc ? 'desc' : 'asc')
+    }
     if (search.trim()) params.set('search', search.trim())
     const status = filterValues.status
     if (typeof status === 'string' && status.trim()) params.set('status', status)
@@ -331,16 +366,16 @@ export default function CustomersPeoplePage() {
       if (value === true) params.set(queryKey, 'true')
       if (value === false) params.set(queryKey, 'false')
     }
-    const tagLabels = Array.isArray(filterValues.tagIds)
+    const tagValues = Array.isArray(filterValues.tagIds)
       ? filterValues.tagIds
           .map((value) => (typeof value === 'string' ? value.trim() : String(value || '').trim()))
           .filter((value) => value.length > 0)
       : []
-    if (tagLabels.length > 0) {
-      const normalizedTagIds = tagLabels
-        .map((label) => tagLabelToId[label])
+    if (tagValues.length > 0) {
+      const normalizedTagIds = tagValues
+        .map((value) => (typeof tagIdToLabel[value] === 'string' ? value : tagLabelToId[value]))
         .filter((id): id is string => typeof id === 'string' && id.length > 0)
-      if (normalizedTagIds.length === tagLabels.length && normalizedTagIds.length > 0) {
+      if (normalizedTagIds.length === tagValues.length && normalizedTagIds.length > 0) {
         params.set('tagIds', normalizedTagIds.join(','))
       } else {
         params.set('tagIdsEmpty', 'true')
@@ -364,8 +399,12 @@ export default function CustomersPeoplePage() {
         if (stringValue) params.set(key, stringValue)
       }
     })
+    const advancedParams = serializeAdvancedFilter(advancedFilterState)
+    for (const [key, val] of Object.entries(advancedParams)) {
+      params.set(key, val)
+    }
     return params.toString()
-  }, [filterValues, page, pageSize, search, tagLabelToId])
+  }, [advancedFilterState, filterValues, page, pageSize, search, sorting, tagIdToLabel, tagLabelToId])
 
   const currentParams = React.useMemo(() => Object.fromEntries(new URLSearchParams(queryParams)), [queryParams])
   const exportConfig = React.useMemo(() => ({
@@ -446,6 +485,52 @@ export default function CustomersPeoplePage() {
     }
   }, [confirm, handleRefresh, t])
 
+  const handleBulkDelete = React.useCallback(async (selectedRows: PersonRow[]) => {
+    const confirmed = await confirm({
+      title: t('customers.people.list.bulkDelete.title', 'Delete {count} people?', { count: selectedRows.length }),
+      description: t('customers.people.list.bulkDelete.description', 'This action cannot be undone.'),
+      variant: 'destructive',
+    })
+    if (!confirmed) return false
+    let deletedCount = 0
+    const failedIds: string[] = []
+    for (const row of selectedRows) {
+      try {
+        await apiCallOrThrow(`/api/customers/people?id=${encodeURIComponent(row.id)}`, {
+          method: 'DELETE',
+          headers: { 'content-type': 'application/json' },
+        })
+        deletedCount++
+      } catch (err) {
+        failedIds.push(row.id)
+        console.warn('[customers.people.list] bulk delete failed', row.id, err)
+      }
+    }
+    if (deletedCount > 0) {
+      setRows((prev) => {
+        const succeeded = new Set(selectedRows.map((r) => r.id).filter((id) => !failedIds.includes(id)))
+        return prev.filter((r) => !succeeded.has(r.id))
+      })
+      setTotal((prev) => Math.max(0, prev - deletedCount))
+      if (failedIds.length === 0) {
+        flash(t('customers.people.list.bulkDelete.success', '{count} people deleted', { count: deletedCount }), 'success')
+      } else {
+        flash(
+          t('customers.people.list.bulkDelete.partial', '{deleted} of {total} people deleted; {failed} failed', {
+            deleted: deletedCount,
+            total: selectedRows.length,
+            failed: failedIds.length,
+          }),
+          'warning',
+        )
+      }
+      setReloadToken((prev) => prev + 1)
+    } else if (failedIds.length > 0) {
+      flash(t('customers.people.list.bulkDelete.failed', 'Failed to delete {count} people', { count: failedIds.length }), 'error')
+    }
+    return deletedCount > 0
+  }, [confirm, t])
+
   const handleFiltersApply = React.useCallback((values: FilterValues) => {
     const next: FilterValues = {}
     Object.entries(values).forEach(([key, value]) => {
@@ -455,13 +540,17 @@ export default function CustomersPeoplePage() {
     })
     const rawTags = Array.isArray(values.tagIds) ? (values.tagIds as string[]) : []
     const sanitizedTags = rawTags
-      .map((tag) => (typeof tag === 'string' ? tag.trim() : ''))
+      .map((tag) => {
+        const normalized = typeof tag === 'string' ? tag.trim() : ''
+        if (!normalized) return ''
+        return tagIdToLabel[normalized] ?? normalized
+      })
       .filter((tag) => tag.length > 0)
     if (sanitizedTags.length) next.tagIds = sanitizedTags
     else delete next.tagIds
     setFilterValues(next)
     setPage(1)
-  }, [setFilterValues, setPage])
+  }, [setFilterValues, setPage, tagIdToLabel])
 
   const handleFiltersClear = React.useCallback(() => {
     setFilterValues({})
@@ -486,15 +575,15 @@ export default function CustomersPeoplePage() {
       if (value == null) return noValue
       if (Array.isArray(value)) {
         if (!value.length) return noValue
-        const normalized = value
-          .map((item) => {
+        const normalized = normalizeCollectionLabels(
+          value.map((item) => {
             if (item == null) return ''
-            if (typeof item === 'string') return item.trim()
-            return String(item).trim()
-          })
-          .filter((item) => item.length > 0)
+            if (typeof item === 'string') return item
+            return String(item)
+          }),
+        )
         if (!normalized.length) return noValue
-        return <span className="text-sm">{normalized.join(', ')}</span>
+        return <CollectionPreviewCell labels={normalized} maxVisible={2} />
       }
       if (typeof value === 'boolean') {
         return (
@@ -514,8 +603,9 @@ export default function CustomersPeoplePage() {
       {
         accessorKey: 'name',
         header: t('customers.people.list.columns.name'),
+        meta: { alwaysVisible: true, columnChooserGroup: 'Basic Info', filterKey: 'display_name', maxWidth: '240px' },
         cell: ({ row }) => (
-          <Link href={`/backend/customers/people/${row.original.id}`} className="font-medium hover:underline">
+          <Link href={`/backend/customers/people-v2/${row.original.id}`} className="font-medium hover:underline">
             {row.original.name}
           </Link>
         ),
@@ -523,22 +613,32 @@ export default function CustomersPeoplePage() {
       {
         accessorKey: 'email',
         header: t('customers.people.list.columns.email'),
+        meta: { columnChooserGroup: 'Contact', filterKey: 'primary_email', maxWidth: '220px' },
         cell: ({ row }) => row.original.email || <span className="text-muted-foreground text-sm">{t('customers.people.list.noValue')}</span>,
       },
       {
         accessorKey: 'status',
         header: t('customers.people.list.columns.status'),
+        meta: { filterType: 'select' as const, filterOptions: dictionaryOptions.statuses, columnChooserGroup: 'Basic Info' },
         cell: ({ row }) => renderDictionaryCell('statuses', row.original.status),
       },
       {
         accessorKey: 'lifecycleStage',
         header: t('customers.people.list.columns.lifecycleStage'),
+        meta: {
+          filterType: 'select' as const,
+          filterOptions: dictionaryOptions.lifecycleStages,
+          columnChooserGroup: 'Basic Info',
+          filterKey: 'lifecycle_stage',
+        },
         cell: ({ row }) => renderDictionaryCell('lifecycle-stages', row.original.lifecycleStage),
       },
       {
         accessorKey: 'nextInteractionAt',
         header: t('customers.people.list.columns.nextInteraction'),
         meta: {
+          columnChooserGroup: 'Dates',
+          filterKey: 'next_interaction_at',
           tooltipContent: (row: PersonRow) => {
             if (!row.nextInteractionAt) return undefined
             const date = formatDate(row.nextInteractionAt, '')
@@ -573,23 +673,96 @@ export default function CustomersPeoplePage() {
       {
         accessorKey: 'source',
         header: t('customers.people.list.columns.source'),
+        meta: { filterType: 'select' as const, filterOptions: dictionaryOptions.sources, columnChooserGroup: 'Basic Info' },
         cell: ({ row }) => renderDictionaryCell('sources', row.original.source),
+      },
+      {
+        accessorKey: 'firstName',
+        header: t('customers.people.form.firstName', 'First name'),
+        meta: { columnChooserGroup: 'Profile', hidden: true, filterKey: 'person_profile.first_name' },
+        cell: ({ row }) => row.original.firstName || noValue,
+      },
+      {
+        accessorKey: 'lastName',
+        header: t('customers.people.form.lastName', 'Last name'),
+        meta: { columnChooserGroup: 'Profile', hidden: true, filterKey: 'person_profile.last_name' },
+        cell: ({ row }) => row.original.lastName || noValue,
+      },
+      {
+        accessorKey: 'preferredName',
+        header: t('customers.people.form.preferredName', 'Preferred name'),
+        meta: { columnChooserGroup: 'Profile', hidden: true, filterKey: 'person_profile.preferred_name' },
+        cell: ({ row }) => row.original.preferredName || noValue,
+      },
+      {
+        accessorKey: 'jobTitle',
+        header: t('customers.people.form.jobTitle', 'Job title'),
+        meta: { columnChooserGroup: 'Profile', hidden: true, filterKey: 'person_profile.job_title' },
+        cell: ({ row }) => row.original.jobTitle || noValue,
+      },
+      {
+        accessorKey: 'department',
+        header: t('customers.people.detail.fields.department', 'Department'),
+        meta: { columnChooserGroup: 'Profile', hidden: true, filterKey: 'person_profile.department' },
+        cell: ({ row }) => row.original.department || noValue,
+      },
+      {
+        accessorKey: 'seniority',
+        header: t('customers.people.detail.fields.seniority', 'Seniority'),
+        meta: { columnChooserGroup: 'Profile', hidden: true, filterKey: 'person_profile.seniority' },
+        cell: ({ row }) => row.original.seniority || noValue,
+      },
+      {
+        accessorKey: 'timezone',
+        header: t('customers.people.detail.fields.timezone', 'Timezone'),
+        meta: { columnChooserGroup: 'Profile', hidden: true, filterKey: 'person_profile.timezone' },
+        cell: ({ row }) => row.original.timezone || noValue,
+      },
+      {
+        accessorKey: 'linkedInUrl',
+        header: t('customers.people.detail.fields.linkedIn', 'LinkedIn'),
+        meta: { columnChooserGroup: 'Socials', hidden: true, filterKey: 'person_profile.linked_in_url' },
+        cell: ({ row }) => row.original.linkedInUrl || noValue,
+      },
+      {
+        accessorKey: 'twitterUrl',
+        header: t('customers.people.detail.fields.twitter', 'Twitter'),
+        meta: { columnChooserGroup: 'Socials', hidden: true, filterKey: 'person_profile.twitter_url' },
+        cell: ({ row }) => row.original.twitterUrl || noValue,
+      },
+      {
+        accessorKey: 'description',
+        header: t('customers.people.form.description', 'Description'),
+        meta: { columnChooserGroup: 'Notes', hidden: true, filterKey: 'description' },
+        cell: ({ row }) => row.original.description || noValue,
       },
     ]
 
-    const customColumns = filterCustomFieldDefs(customFieldDefs, 'list').map<ColumnDef<PersonRow>>((def) => ({
-      accessorKey: `cf_${def.key}`,
-      header: def.label || def.key,
-      cell: ({ getValue }) => renderCustomFieldCell(getValue()),
-    }))
+    const customColumns = customFieldDefs
+      .filter((def) => supportsCustomFieldColumn(def))
+      .map<ColumnDef<PersonRow>>((def) => ({
+        accessorKey: `cf_${def.key}`,
+        header: def.label || def.key,
+        meta: {
+          columnChooserGroup: def.group?.title ?? 'Custom Fields',
+          filterGroup: def.group?.title ?? 'Custom Fields',
+          filterType: mapCustomFieldKindToFilterType(def.kind),
+          filterOptions: normalizeCustomFieldFilterOptions(def.options),
+          hidden: def.listVisible === false,
+          maxWidth: '220px',
+        },
+        cell: ({ getValue }) => renderCustomFieldCell(getValue()),
+      }))
 
     return [...baseColumns, ...customColumns]
-  }, [customFieldDefs, dictionaryMaps, t])
+  }, [customFieldDefs, dictionaryMaps, dictionaryOptions, t])
 
   return (
     <Page>
       <PageBody>
         <DataTable<PersonRow>
+          stickyFirstColumn
+          stickyActionsColumn
           title={t('customers.people.list.title')}
           refreshButton={{
             label: t('customers.people.list.actions.refresh'),
@@ -603,6 +776,7 @@ export default function CustomersPeoplePage() {
             </Button>
           )}
           columns={columns}
+          columnChooser={{ auto: true }}
           data={rows}
           exporter={exportConfig}
           searchValue={search}
@@ -614,19 +788,30 @@ export default function CustomersPeoplePage() {
           onFiltersClear={handleFiltersClear}
           entityIds={[E.customers.customer_entity, E.customers.customer_person_profile]}
           perspective={{ tableId: 'customers.people.list' }}
-          onRowClick={(row) => router.push(`/backend/customers/people/${row.id}`)}
+          onRowClick={(row) => router.push(`/backend/customers/people-v2/${row.id}`)}
+          sortable
+          sorting={sorting}
+          onSortingChange={setSorting}
+          bulkActions={[
+            {
+              id: 'delete',
+              label: t('customers.people.list.bulkDelete.action', 'Delete selected'),
+              destructive: true,
+              onExecute: handleBulkDelete,
+            },
+          ]}
           rowActions={(row) => (
             <RowActions
               items={[
                 {
                   id: 'view',
                   label: t('customers.people.list.actions.view'),
-                  onSelect: () => { router.push(`/backend/customers/people/${row.id}`) },
+                  onSelect: () => { router.push(`/backend/customers/people-v2/${row.id}`) },
                 },
                 {
                   id: 'open-new-tab',
                   label: t('customers.people.list.actions.openInNewTab'),
-                  onSelect: () => window.open(`/backend/customers/people/${row.id}`, '_blank', 'noopener'),
+                  onSelect: () => window.open(`/backend/customers/people-v2/${row.id}`, '_blank', 'noopener'),
                 },
                 {
                   id: 'delete',
@@ -637,7 +822,15 @@ export default function CustomersPeoplePage() {
               ]}
             />
           )}
-          pagination={{ page, pageSize, total, totalPages, onPageChange: setPage, cacheStatus }}
+          advancedFilter={{
+              auto: true,
+              value: advancedFilterState,
+              onChange: setAdvancedFilterState,
+              onApply: () => { setPage(1) },
+              onClear: () => { setAdvancedFilterState({ logic: 'and', conditions: [] }); setPage(1) },
+            }}
+          virtualized
+          pagination={{ page, pageSize, total, totalPages, onPageChange: setPage, cacheStatus, pageSizeOptions: [10, 25, 50, 100], onPageSizeChange: handlePageSizeChange }}
           isLoading={isLoading}
         />
       </PageBody>

@@ -1,4 +1,4 @@
-import { Entity, PrimaryKey, Property, ManyToOne, Unique, Index } from '@mikro-orm/core'
+import { Entity, Index, ManyToOne, PrimaryKey, Property, Unique } from '@mikro-orm/decorators/legacy'
 
 @Entity({ tableName: 'users' })
 export class User {
@@ -46,8 +46,8 @@ export class Role {
   @Property({ type: 'text' })
   name!: string
 
-  @Property({ name: 'tenant_id', type: 'uuid', nullable: true })
-  tenantId?: string | null
+  @Property({ name: 'tenant_id', type: 'uuid' })
+  tenantId!: string
 
   @Property({ name: 'created_at', type: Date, onCreate: () => new Date() })
   createdAt: Date = new Date()

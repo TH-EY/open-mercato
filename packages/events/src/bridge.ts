@@ -30,17 +30,33 @@ function getDatabaseUrl(): string | null {
   return value && value.length > 0 ? value : null
 }
 
+function getPgBridgeConnectionString(): string | null {
+  const connectionString = getDatabaseUrl()
+  if (!connectionString) return null
+
+  try {
+    const url = new URL(connectionString)
+    for (const key of ['sslmode', 'sslcert', 'sslkey', 'sslrootcert', 'sslcrl']) {
+      url.searchParams.delete(key)
+    }
+    return url.toString()
+  } catch {
+    return connectionString
+  }
+}
+
 function getPublisherPool(): InstanceType<typeof Pool> | null {
   if (publisherPool !== undefined) return publisherPool
-  const connectionString = getDatabaseUrl()
+  const connectionString = getPgBridgeConnectionString()
   if (!connectionString) {
     publisherPool = null
     return null
   }
+  const ssl = getSslConfig()
   publisherPool = new Pool({
     connectionString,
-    ssl: getSslConfig(),
     max: 2,
+    ...(ssl ? { ssl } : {}),
   })
   return publisherPool
 }
@@ -85,13 +101,14 @@ function scheduleReconnect(): void {
 
 async function ensureCrossProcessListener(): Promise<void> {
   if (listenerClient || listenerConnectPromise || listeners.size === 0) return
-  const connectionString = getDatabaseUrl()
+  const connectionString = getPgBridgeConnectionString()
   if (!connectionString) return
 
   listenerConnectPromise = (async () => {
+    const ssl = getSslConfig()
     const client = new Client({
       connectionString,
-      ssl: getSslConfig(),
+      ...(ssl ? { ssl } : {}),
     })
 
     client.on('notification', (message: PgNotificationMessage) => {

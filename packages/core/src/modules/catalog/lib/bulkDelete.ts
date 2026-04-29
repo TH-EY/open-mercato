@@ -1,8 +1,8 @@
 import type { AwilixContainer } from 'awilix'
 import type { CommandBus, CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import { invalidateCrudCache } from '@open-mercato/shared/lib/crud/cache'
-import { createQueue, type Queue } from '@open-mercato/queue'
-import { getRedisUrl } from '@open-mercato/shared/lib/redis/connection'
+import { runWithCacheTenant } from '@open-mercato/cache'
+import { createModuleQueue, type Queue } from '@open-mercato/queue'
 import type { ProgressService, ProgressServiceContext } from '../../progress/lib/progressService'
 
 export const CATALOG_PRODUCT_BULK_DELETE_QUEUE = 'catalog-product-bulk-delete'
@@ -31,12 +31,8 @@ export function getCatalogQueue(queueName: string): Queue<Record<string, unknown
   const existing = queues.get(queueName)
   if (existing) return existing
 
-  const created = process.env.QUEUE_STRATEGY === 'async'
-    ? createQueue<Record<string, unknown>>(queueName, 'async', {
-      connection: { url: getRedisUrl('QUEUE') },
-      concurrency: Math.max(1, Number.parseInt(process.env.CATALOG_QUEUE_CONCURRENCY ?? '3', 10) || 3),
-    })
-    : createQueue<Record<string, unknown>>(queueName, 'local')
+  const concurrency = Math.max(1, Number.parseInt(process.env.CATALOG_QUEUE_CONCURRENCY ?? '3', 10) || 3)
+  const created = createModuleQueue<Record<string, unknown>>(queueName, { concurrency })
 
   queues.set(queueName, created)
   return created
@@ -106,20 +102,22 @@ export async function deleteCatalogProductsWithProgress(params: {
   }
 
   const summary: CatalogProductBulkDeleteSummary = { affectedCount }
-  for (const id of deletedIds) {
-    await invalidateCrudCache(
-      container,
-      'catalog.product',
-      {
-        id,
-        organizationId: scope.organizationId,
-        tenantId: scope.tenantId,
-      },
-      scope.tenantId,
-      'bulk-delete:catalog.products',
-      BULK_DELETE_CACHE_ALIASES,
-    )
-  }
+  await runWithCacheTenant(scope.tenantId, async () => {
+    for (const id of deletedIds) {
+      await invalidateCrudCache(
+        container,
+        'catalog.product',
+        {
+          id,
+          organizationId: scope.organizationId,
+          tenantId: scope.tenantId,
+        },
+        scope.tenantId,
+        'bulk-delete:catalog.products',
+        BULK_DELETE_CACHE_ALIASES,
+      )
+    }
+  })
   await progressService.completeJob(progressJobId, { resultSummary: summary }, progressContext)
 
   return summary

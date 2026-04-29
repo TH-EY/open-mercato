@@ -9,9 +9,9 @@ import { VersionHistoryDetail } from './VersionHistoryDetail'
 import { formatDate } from '@open-mercato/core/modules/audit_logs/lib/display-helpers'
 import { apiCallOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
 import { markRedoConsumed, markUndoSuccess } from '@open-mercato/ui/backend/operations/store'
-import { getVersionHistoryStatusLabel } from './labels'
+import { getVersionHistoryActionLabel, getVersionHistoryStatusLabel } from './labels'
 import { useAuditPermissions, canUndoEntry, canRedoEntry } from './useAuditPermissions'
-import { Notice } from '@open-mercato/ui/primitives/Notice'
+import { Alert, AlertDescription } from '@open-mercato/ui/primitives/alert'
 import { humanizeResourceKind } from './labels'
 
 export type VersionHistoryPanelProps = {
@@ -142,12 +142,12 @@ export function VersionHistoryPanel({
   return (
     <>
       <div
-        className="fixed inset-0 z-40 bg-black/20"
+        className="fixed inset-0 z-overlay bg-black/20"
         onClick={() => onOpenChange(false)}
         aria-hidden="true"
       />
       <div
-        className="fixed right-0 top-0 z-50 h-full w-full max-w-md border-l bg-background shadow-lg"
+        className="fixed right-0 top-0 z-modal h-full w-full max-w-md border-l bg-background shadow-lg"
         role="dialog"
         aria-modal="true"
         aria-label={t('audit_logs.version_history.title')}
@@ -189,9 +189,11 @@ export function VersionHistoryPanel({
             ) : (
               <div className="space-y-3">
                 {shouldAutoCheck && !permissions.isLoading && !permissions.canViewTenant && permissions.currentUserId ? (
-                  <Notice compact>
-                    {t('audit_logs.hint.view_self_only', 'Showing only your own changes. Contact an administrator for broader access.')}
-                  </Notice>
+                  <Alert variant="info">
+                    <AlertDescription>
+                      {t('audit_logs.hint.view_self_only', 'Showing only your own changes. Contact an administrator for broader access.')}
+                    </AlertDescription>
+                  </Alert>
                 ) : null}
 
                 {isInitialLoading ? (
@@ -221,6 +223,7 @@ export function VersionHistoryPanel({
                   <div className="divide-y rounded-lg border">
                     {visibleEntries.map((entry) => {
                       const statusLabel = getVersionHistoryStatusLabel(entry.executionState, t)
+                      const actionLabel = getVersionHistoryActionLabel(entry, t)
                       const isRelatedEntry = entry.parentResourceKind != null
                       const entryCanUndo = canUndoRedo !== undefined
                         ? canUndoRedo
@@ -237,23 +240,23 @@ export function VersionHistoryPanel({
                       return (
                         <div
                           key={entry.id}
-                          className={`flex items-start justify-between gap-3 py-3 transition-colors hover:bg-muted/40 ${isRelatedEntry ? 'pl-8 pr-4 border-l-2 border-l-muted-foreground/20' : 'px-4'}`}
+                          className={`flex items-start justify-between gap-3 py-3 transition-colors hover:bg-muted/50 ${isRelatedEntry ? 'pl-8 pr-4 border-l-2 border-l-muted-foreground/20' : 'px-4'}`}
                         >
                           <Button
                             type="button"
                             variant="ghost"
-                            className="flex-1 text-left flex flex-col gap-1"
+                            className="h-auto min-w-0 flex-1 flex-col items-start justify-start gap-1 whitespace-normal px-0 py-0 text-left hover:bg-transparent"
                             onClick={() => setSelectedEntry(entry)}
                           >
                             {isRelatedEntry ? (
-                              <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-medium">
+                              <span className="text-overline uppercase tracking-wider text-muted-foreground/70 font-medium">
                                 {humanizeResourceKind(entry.resourceKind, t)}
                               </span>
                             ) : null}
-                            <div className="text-sm font-medium">
-                              {entry.actionLabel || entry.commandId}
+                            <div className="break-words text-sm font-medium">
+                              {actionLabel}
                             </div>
-                            <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+                            <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                               <span>{entry.actorUserName || entry.actorUserId || t('audit_logs.common.none')}</span>
                               <span>•</span>
                               <span>{formatDate(entry.createdAt)}</span>
@@ -265,7 +268,8 @@ export function VersionHistoryPanel({
                             {canUndo ? (
                               <Button
                                 variant="ghost"
-                                size="icon"
+                                size="sm"
+                                className="h-8 gap-1 px-2 text-xs"
                                 aria-label={t('audit_logs.actions.undo')}
                                 onClick={(event) => {
                                   event.stopPropagation()
@@ -274,12 +278,14 @@ export function VersionHistoryPanel({
                                 disabled={undoingToken === entry.undoToken || Boolean(redoingId)}
                               >
                                 <Undo2 className="size-4" aria-hidden="true" />
+                                <span>{t('audit_logs.actions.undo')}</span>
                               </Button>
                             ) : null}
                             {showRedo ? (
                               <Button
                                 variant="ghost"
-                                size="icon"
+                                size="sm"
+                                className="h-8 gap-1 px-2 text-xs"
                                 aria-label={t('audit_logs.actions.redo')}
                                 onClick={(event) => {
                                   event.stopPropagation()
@@ -288,6 +294,7 @@ export function VersionHistoryPanel({
                                 disabled={!canRedo || redoingId === entry.id || Boolean(undoingToken)}
                               >
                                 <RotateCcw className="size-4" aria-hidden="true" />
+                                <span>{t('audit_logs.actions.redo')}</span>
                               </Button>
                             ) : null}
                           </div>

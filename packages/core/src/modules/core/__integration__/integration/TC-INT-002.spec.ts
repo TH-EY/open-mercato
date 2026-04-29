@@ -35,8 +35,8 @@ test.describe('TC-INT-002: Customer to Deal to Quote to Order Flow', () => {
       await page.locator('form').getByRole('textbox').first().fill(companyName);
       await page.getByPlaceholder('https://example.com').fill('https://example.com');
       await page.locator('form').getByRole('button', { name: /Create Company/i }).click();
-      await expect(page).toHaveURL(/\/backend\/customers\/companies\/[0-9a-f-]{36}$/i);
-      companyId = page.url().match(/\/backend\/customers\/companies\/([0-9a-f-]{36})$/i)?.[1] ?? null;
+      await expect(page).toHaveURL(/\/backend\/customers\/companies-v2\/[0-9a-f-]{36}$/i);
+      companyId = page.url().match(/\/backend\/customers\/companies-v2\/([0-9a-f-]{36})$/i)?.[1] ?? null;
 
       await page.goto('/backend/customers/people/create');
       await page.locator('form').getByRole('textbox').first().fill(personFirst);
@@ -49,8 +49,8 @@ test.describe('TC-INT-002: Customer to Deal to Quote to Order Flow', () => {
         .first()
         .selectOption({ label: companyName });
       await page.getByRole('button', { name: 'Create Person' }).first().click();
-      await expect(page).toHaveURL(/\/backend\/customers\/people\/[0-9a-f-]{36}$/i);
-      personId = page.url().match(/\/backend\/customers\/people\/([0-9a-f-]{36})$/i)?.[1] ?? null;
+      await expect(page).toHaveURL(/\/backend\/customers\/people-v2\/[0-9a-f-]{36}$/i);
+      personId = page.url().match(/\/backend\/customers\/people-v2\/([0-9a-f-]{36})$/i)?.[1] ?? null;
 
       await page.goto('/backend/customers/deals/create');
       await page.locator('form').getByRole('textbox').first().fill(dealTitle);
@@ -66,12 +66,12 @@ test.describe('TC-INT-002: Customer to Deal to Quote to Order Flow', () => {
       await page.getByRole('button', { name: 'Create deal' }).first().click();
       await expect(page).toHaveURL(/\/backend\/customers\/deals$/i);
 
-      await page.getByRole('textbox', { name: /Search deals/i }).fill(dealTitle);
+      await page.getByPlaceholder(/Search by title/i).fill(dealTitle);
       await page.locator('tr').filter({ hasText: dealTitle }).first().click();
       await expect(page).toHaveURL(/\/backend\/customers\/deals\/[0-9a-f-]{36}$/i);
       dealId = page.url().match(/\/backend\/customers\/deals\/([0-9a-f-]{36})$/i)?.[1] ?? null;
 
-      await createSalesDocument(page, { kind: 'order', customerQuery: companyName });
+      await createSalesDocument(page, { kind: 'order', customerQuery: companyName, preferApi: true, token });
       await expect(page).toHaveURL(/kind=order$/i);
     } finally {
       await deleteEntityIfExists(request, token, '/api/customers/deals', dealId);

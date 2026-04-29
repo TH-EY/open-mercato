@@ -1,16 +1,17 @@
 // Note: Generated files and DI container are imported statically to avoid ESM/CJS interop issues.
 // Commands that need to run before generation (e.g., `init`) handle missing modules gracefully.
 
-import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { runWorker } from '@open-mercato/queue/worker'
-import type { Module } from '@open-mercato/shared/modules/registry'
+import type { Module, ModuleWorker } from '@open-mercato/shared/modules/registry'
 import { getCliModules, hasCliModules, registerCliModules } from './registry'
 export { getCliModules, hasCliModules, registerCliModules }
 import { parseBooleanToken } from '@open-mercato/shared/lib/boolean'
 import { getSslConfig } from '@open-mercato/shared/lib/db/ssl'
-import { getRedisUrl } from '@open-mercato/shared/lib/redis/connection'
+import { getRedisUrl, getRedisUrlOrThrow } from '@open-mercato/shared/lib/redis/connection'
 import { resolveInitDerivedSecrets } from './lib/init-secrets'
 import { parseModuleInstallArgs } from './lib/module-install-args'
+import { resolveNextBuildIdCandidate } from './lib/next-build-id'
+import { acquireServerStartLock } from './lib/server-start-lock'
 // Lazy-imported to avoid pulling in `testcontainers` (devDependency) at startup
 const lazyIntegration = () => import('./lib/testing/integration')
 import type { ChildProcess } from 'node:child_process'
@@ -19,15 +20,222 @@ import fs from 'node:fs'
 
 let envLoaded = false
 
+async function runWithCapturedExitCode(action: () => Promise<void>): Promise<number> {
+  const previousExitCode = process.exitCode
+  process.exitCode = undefined
+
+  try {
+    await action()
+    return process.exitCode ?? 0
+  } finally {
+    process.exitCode = previousExitCode
+  }
+}
+
+function getRegisteredCliWorkers(modules: Module[] = getCliModules()): ModuleWorker[] {
+  const allWorkers: ModuleWorker[] = []
+  for (const mod of modules) {
+    if (mod.workers) {
+      allWorkers.push(...mod.workers)
+    }
+  }
+  return allWorkers
+}
+
 export function padByCodePointWidth(value: string, targetWidth: number): string {
   const valueWidth = [...value].length
   if (valueWidth >= targetWidth) return value
   return `${value}${' '.repeat(targetWidth - valueWidth)}`
 }
 
+type ErrorWithCause = {
+  message?: string
+  code?: string
+  cause?: unknown
+  errors?: unknown[]
+}
+
+const TURBOPACK_CORRUPTION_PATTERNS = [
+  'Failed to restore task data (corrupted database or bug)',
+  'Unable to open static sorted file',
+  'TurbopackInternalError',
+]
+
+const BUILTIN_CLI_MODULE_IDS = new Set(['queue', 'generate', 'db', 'server', 'test'])
+
+function collectNestedErrors(error: unknown, seen = new Set<unknown>()): ErrorWithCause[] {
+  if (!error || seen.has(error)) {
+    return []
+  }
+
+  seen.add(error)
+
+  if (typeof error !== 'object') {
+    return [{ message: String(error) }]
+  }
+
+  const current = error as ErrorWithCause
+  const nested: ErrorWithCause[] = [current]
+
+  if (Array.isArray(current.errors)) {
+    for (const item of current.errors) {
+      nested.push(...collectNestedErrors(item, seen))
+    }
+  }
+
+  if (current.cause) {
+    nested.push(...collectNestedErrors(current.cause, seen))
+  }
+
+  return nested
+}
+
+function getDatabaseTargetLabel(): string {
+  const rawUrl = process.env.DATABASE_URL?.trim()
+  if (!rawUrl) {
+    return 'the database configured by DATABASE_URL'
+  }
+
+  try {
+    const parsed = new URL(rawUrl)
+    const host = parsed.hostname || 'localhost'
+    const port = parsed.port || '5432'
+    const database = parsed.pathname.replace(/^\/+/, '') || '(default database)'
+    return `PostgreSQL at ${host}:${port}/${database}`
+  } catch {
+    return 'the database configured by DATABASE_URL'
+  }
+}
+
+function getFallbackErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  const nestedErrors = collectNestedErrors(error)
+
+  return nestedErrors
+    .map((item) => item.message?.trim() ?? '')
+    .find((item) => item.length > 0)
+    ?? (typeof message === 'string' && message.trim().length > 0 ? message : 'Unknown error')
+}
+
+function detectDatabaseConnectionIssue(
+  error: unknown,
+): { target: string; reason: 'refused the connection' | 'could not be resolved' } | null {
+  const nestedErrors = collectNestedErrors(error)
+  const hasConnectionRefused = nestedErrors.some((item) =>
+    item.code === 'ECONNREFUSED' || /ECONNREFUSED|Connection refused|connect ECONNREFUSED/i.test(item.message || ''),
+  )
+  const hasDnsFailure = nestedErrors.some((item) =>
+    item.code === 'ENOTFOUND'
+      || item.code === 'EAI_AGAIN'
+      || /ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(item.message || ''),
+  )
+
+  if (!hasConnectionRefused && !hasDnsFailure) {
+    return null
+  }
+
+  return {
+    target: getDatabaseTargetLabel(),
+    reason: hasConnectionRefused ? 'refused the connection' : 'could not be resolved',
+  }
+}
+
+function formatCliFailureMessage(modName: string, cmdName: string, error: unknown): string {
+  const fallbackMessage = getFallbackErrorMessage(error)
+  const databaseIssue = detectDatabaseConnectionIssue(error)
+
+  const isDatabaseCommand = modName === 'db' && ['migrate', 'generate', 'greenfield'].includes(cmdName)
+  const isDatabaseBackedRuntimeCommand =
+    (modName === 'queue' && ['worker', 'status', 'clear'].includes(cmdName)) ||
+    (modName === 'scheduler' && ['start'].includes(cmdName)) ||
+    (modName === 'configs' && ['cache'].includes(cmdName))
+
+  if (isDatabaseCommand && databaseIssue) {
+    return `${databaseIssue.target} is not reachable: it ${databaseIssue.reason}. Start the database service or fix DATABASE_URL in .env, then retry \`yarn db:${cmdName}\`.`
+  }
+
+  if (isDatabaseBackedRuntimeCommand && databaseIssue) {
+    return `${databaseIssue.target} is not reachable: it ${databaseIssue.reason}. This command needs PostgreSQL. Start the database service or fix DATABASE_URL in .env, then retry \`yarn mercato ${modName} ${cmdName}\`.`
+  }
+
+  return fallbackMessage
+}
+
+function formatInitFailureMessage(error: unknown): string {
+  const fallbackMessage = getFallbackErrorMessage(error)
+  const databaseIssue = detectDatabaseConnectionIssue(error)
+
+  if (databaseIssue) {
+    return `${databaseIssue.target} is not reachable: it ${databaseIssue.reason}. Start PostgreSQL or fix DATABASE_URL in .env, then retry \`yarn initialize\`.`
+  }
+
+  return fallbackMessage
+}
+
+async function ensureDatabaseExists(dbUrl: string): Promise<boolean> {
+  let parsed: URL
+  try {
+    parsed = new URL(dbUrl)
+  } catch {
+    return true
+  }
+
+  const dbName = parsed.pathname.replace(/^\/+/, '')
+  if (!dbName) return true
+
+  const maintenanceUrl = new URL(dbUrl)
+  maintenanceUrl.pathname = '/postgres'
+
+  const { Client } = await import('pg')
+  const adminClient = new Client({ connectionString: maintenanceUrl.toString(), ssl: getSslConfig() })
+
+  try {
+    await adminClient.connect()
+
+    const result = await adminClient.query('SELECT 1 FROM pg_database WHERE datname = $1', [dbName])
+    if (result.rows.length > 0) return true
+
+    console.log(`   Database "${dbName}" does not exist. Attempting to create it...`)
+    try {
+      await adminClient.query(`CREATE DATABASE "${dbName.replace(/"/g, '')}"`)
+      console.log(`   Database "${dbName}" created successfully.`)
+      return true
+    } catch (createError: unknown) {
+      const msg = createError instanceof Error ? createError.message : String(createError)
+      console.error(`   Failed to create database "${dbName}": ${msg}`)
+      console.error(``)
+      console.error(`   To create the database manually, connect to PostgreSQL and run:`)
+      console.error(``)
+      console.error(`     CREATE DATABASE "${dbName}";`)
+      console.error(``)
+      console.error(`   Or from the command line (as a superuser or the owner):`)
+      console.error(``)
+      console.error(`     createdb "${dbName}"`)
+      console.error(``)
+      console.error(`   On Windows with the default postgres user:`)
+      console.error(``)
+      console.error(`     psql -U postgres -c "CREATE DATABASE \\"${dbName}\\";"`)
+      return false
+    }
+  } catch {
+    return true
+  } finally {
+    try { await adminClient.end() } catch {}
+  }
+}
+
+function isTurbopackCacheCorruption(output: string): boolean {
+  return TURBOPACK_CORRUPTION_PATTERNS.every((pattern) => output.includes(pattern))
+}
+
+function removeTurbopackDevCache(appDir: string): void {
+  fs.rmSync(path.join(appDir, '.mercato', 'next', 'dev'), { recursive: true, force: true })
+}
+
 async function ensureEnvLoaded() {
   if (envLoaded) return
   envLoaded = true
+  const quietDotenv = process.env.DOTENV_CONFIG_QUIET === '1' || process.env.DOTENV_CONFIG_QUIET === 'true'
 
   // Try to find and load .env from the app directory
   // First, try to find the app directory via resolver
@@ -38,9 +246,16 @@ async function ensureEnvLoaded() {
 
     // Load .env from app directory if it exists
     const envPath = path.join(appDir, '.env')
+    if (!fs.existsSync(envPath) && process.env.NODE_ENV !== 'production') {
+      const examplePath = path.join(appDir, '.env.example')
+      if (fs.existsSync(examplePath)) {
+        fs.copyFileSync(examplePath, envPath)
+        console.log(`📋 Copied .env.example → .env (edit ${envPath} to customize)`)
+      }
+    }
     if (fs.existsSync(envPath)) {
       const dotenv = await import('dotenv')
-      dotenv.config({ path: envPath })
+      dotenv.config({ path: envPath, quiet: quietDotenv })
       return
     }
   } catch {
@@ -62,6 +277,89 @@ function resolveInstalledBinary(baseDirs: string[], relativeBinPath: string): st
   }
   throw new Error(
     `Could not find installed binary "${relativeBinPath}". Checked: ${Array.from(checked).join(', ')}`,
+  )
+}
+
+function buildServerProcessEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const runtimeEnv = { ...environment }
+  runtimeEnv.NODE_ENV = 'production'
+  const normalizedNodeOptions = (runtimeEnv.NODE_OPTIONS ?? '')
+    .replace(/(?:^|\s)--require=newrelic(?=\s|$)/g, ' ')
+    .replace(/(?:^|\s)-r\s+newrelic(?=\s|$)/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (runtimeEnv.NEW_RELIC_LICENSE_KEY?.trim()) {
+    runtimeEnv.NODE_OPTIONS = normalizedNodeOptions.length > 0
+      ? `${normalizedNodeOptions} -r newrelic`
+      : '-r newrelic'
+    return runtimeEnv
+  }
+
+  if (normalizedNodeOptions.length > 0) {
+    runtimeEnv.NODE_OPTIONS = normalizedNodeOptions
+  } else {
+    delete runtimeEnv.NODE_OPTIONS
+  }
+
+  return runtimeEnv
+}
+
+type ManagedProcessExitResult = {
+  label: string
+  code: number | null
+  signal: NodeJS.Signals | null
+}
+
+function waitForManagedProcessExit(proc: ChildProcess, label: string): Promise<ManagedProcessExitResult> {
+  return new Promise((resolve) => {
+    proc.on('exit', (code, signal) => {
+      resolve({ label, code, signal })
+    })
+  })
+}
+
+function isExpectedManagedExitSignal(signal: NodeJS.Signals | null): boolean {
+  return signal === 'SIGINT' || signal === 'SIGTERM'
+}
+
+function formatManagedProcessExitStatus(result: ManagedProcessExitResult): string {
+  if (typeof result.code === 'number') {
+    return `exit code ${result.code}`
+  }
+  if (result.signal) {
+    return `signal ${result.signal}`
+  }
+  return 'an unknown status'
+}
+
+function createManagedProcessExitError(result: ManagedProcessExitResult): Error {
+  return new Error(`[server] ${result.label} exited unexpectedly with ${formatManagedProcessExitStatus(result)}.`)
+}
+
+function ensureNextBuildIdInConfiguredDistDir(appDir: string): void {
+  const configuredDistDir = path.join(appDir, '.mercato', 'next')
+  const configuredBuildIdPath = path.join(configuredDistDir, 'BUILD_ID')
+  const configuredBuildId = resolveNextBuildIdCandidate(configuredDistDir)
+  if (configuredBuildId) {
+    if (!fs.existsSync(configuredBuildIdPath)) {
+      fs.mkdirSync(path.dirname(configuredBuildIdPath), { recursive: true })
+      fs.writeFileSync(configuredBuildIdPath, configuredBuildId, 'utf8')
+      console.warn('[server] Reconstructed BUILD_ID inside .mercato/next from existing build artifacts.')
+    }
+    return
+  }
+
+  const fallbackDistDir = path.join(appDir, '.next')
+  const fallbackBuildId = resolveNextBuildIdCandidate(fallbackDistDir)
+  if (!fallbackBuildId) {
+    return
+  }
+
+  fs.mkdirSync(path.dirname(configuredBuildIdPath), { recursive: true })
+  fs.writeFileSync(configuredBuildIdPath, fallbackBuildId, 'utf8')
+  console.warn(
+    '[server] Recovered BUILD_ID from .next build artifacts into .mercato/next to match the configured distDir.',
   )
 }
 
@@ -131,32 +429,77 @@ async function runModuleCommand(
   moduleName: string,
   commandName: string,
   args: string[] = [],
-  options: { optional?: boolean } = {},
-): Promise<void> {
+  options: { optional?: boolean; silentOptional?: boolean } = {},
+): Promise<boolean> {
   const mod = allModules.find((m) => m.id === moduleName)
   if (!mod) {
     if (options.optional) {
-      console.log(`⏭️  Skipping "${moduleName}:${commandName}" — module not enabled`)
-      return
+      if (!options.silentOptional) {
+        console.log(`⏭️  Skipping "${moduleName}:${commandName}" — module not enabled`)
+      }
+      return false
     }
     throw new Error(`Module not found: "${moduleName}"`)
   }
   if (!mod.cli || mod.cli.length === 0) {
     if (options.optional) {
-      console.log(`⏭️  Skipping "${moduleName}:${commandName}" — module has no CLI commands`)
-      return
+      if (!options.silentOptional) {
+        console.log(`⏭️  Skipping "${moduleName}:${commandName}" — module has no CLI commands`)
+      }
+      return false
     }
     throw new Error(`Module "${moduleName}" has no CLI commands`)
   }
   const cmd = mod.cli.find((c) => c.command === commandName)
   if (!cmd) {
     if (options.optional) {
-      console.log(`⏭️  Skipping "${moduleName}:${commandName}" — command not found`)
-      return
+      if (!options.silentOptional) {
+        console.log(`⏭️  Skipping "${moduleName}:${commandName}" — command not found`)
+      }
+      return false
     }
     throw new Error(`Command "${commandName}" not found in module "${moduleName}"`)
   }
   await cmd.run(args)
+  return true
+}
+
+async function runPostGenerateStructuralCachePurge(quiet: boolean): Promise<void> {
+  try {
+    const [{ bootstrapFromAppRoot }, { createResolver }] = await Promise.all([
+      import('@open-mercato/shared/lib/bootstrap/dynamicLoader'),
+      import('./lib/resolver'),
+    ])
+    const resolver = createResolver()
+    const appDir = resolver.getAppDir()
+    const data = await bootstrapFromAppRoot(appDir)
+    registerCliModules(data.modules)
+    const configsModule = data.modules.find((mod) => mod.id === 'configs')
+    const hasCacheCommand = configsModule?.cli?.some((command) => command.command === 'cache') ?? false
+
+    if (!hasCacheCommand) {
+      if (!quiet) {
+        console.log('[generate] Skipping structural cache purge: "configs cache" is not available in this app.')
+      }
+      return
+    }
+
+    if (!quiet) {
+      console.log('[generate] Purging structural cache for all tenants...')
+    }
+    await runModuleCommand(data.modules, 'configs', 'cache', ['structural', '--all-tenants', '--quiet'], {
+      optional: true,
+      silentOptional: quiet,
+    })
+    if (!quiet) {
+      console.log('[generate] Structural cache purge completed.')
+    }
+  } catch (error) {
+    if (!quiet) {
+      const message = formatCliFailureMessage('configs', 'cache', error)
+      console.log(`[generate] Skipping structural cache purge: ${message}`)
+    }
+  }
 }
 
 // Build all CLI modules (registered + built-in)
@@ -198,7 +541,7 @@ export async function run(argv = process.argv) {
       } else if (process.env.OM_INIT_REINSTALL) {
         delete process.env.OM_INIT_REINSTALL
       }
-      const skipExamples = initArgs.includes('--no-examples') || initArgs.includes('--no-exampls')
+      const skipExamples = initArgs.includes('--no-examples')
       const stressTestEnabled =
         initArgs.includes('--stresstest') || initArgs.includes('--stress-test')
       const stressTestLite =
@@ -257,6 +600,8 @@ export async function run(argv = process.argv) {
           console.error('DATABASE_URL is not set. Aborting reinstall.')
           return 1
         }
+        const dbExists = await ensureDatabaseExists(dbUrl)
+        if (!dbExists) return 1
         const client = new Client({ connectionString: dbUrl, ssl: getSslConfig() })
         try {
           await client.connect()
@@ -293,14 +638,33 @@ export async function run(argv = process.argv) {
         } finally {
           try { await client.end() } catch {}
         }
-        // Also flush Redis
-        try {
+        // Also flush Redis when configured. Skip silently if no URL is set —
+        // a stray ioredis client with auto-reconnect would otherwise spam
+        // ETIMEDOUT errors for the rest of the process lifetime.
+        const redisUrl = getRedisUrl()
+        if (redisUrl) {
           const Redis = (await import('ioredis')).default
-          const redis = new Redis(getRedisUrl())
-          await redis.flushall()
-          await redis.quit()
-          console.log('   Redis flushed.')
-        } catch {}
+          const redis = new Redis(redisUrl, {
+            lazyConnect: true,
+            connectTimeout: 3000,
+            maxRetriesPerRequest: 1,
+            retryStrategy: () => null,
+            enableOfflineQueue: false,
+          })
+          redis.on('error', () => {})
+          try {
+            await redis.connect()
+            await redis.flushall()
+            console.log('   Redis flushed.')
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err)
+            console.log(`   Redis flush skipped (${message}).`)
+          } finally {
+            try { redis.disconnect() } catch {}
+          }
+        } else {
+          console.log('   Redis flush skipped (REDIS_URL not configured).')
+        }
         console.log('✅ Database cleared. Proceeding with fresh initialization...\n')
       }
 
@@ -313,6 +677,8 @@ export async function run(argv = process.argv) {
         }
 
         const { Client } = await import('pg')
+        const dbExists = await ensureDatabaseExists(dbUrl)
+        if (!dbExists) return 1
         const client = new Client({ connectionString: dbUrl, ssl: getSslConfig() })
         try {
           await client.connect()
@@ -347,10 +713,11 @@ export async function run(argv = process.argv) {
       // Step 1: Run generators directly (no process spawn)
       console.log('🔧 Preparing modules (registry, entities, DI)...')
       const { createResolver } = await import('./lib/resolver')
-      const { generateEntityIds, generateModuleRegistry, generateModuleRegistryCli, generateModuleEntities, generateModuleDi, generateModulePackageSources, generateOpenApi } = await import('./lib/generators')
+      const { generateEntityIds, generateModuleRegistry, generateModuleRegistryApp, generateModuleRegistryCli, generateModuleEntities, generateModuleDi, generateModulePackageSources, generateOpenApi } = await import('./lib/generators')
       const resolver = createResolver()
       await generateEntityIds({ resolver, quiet: true })
       await generateModuleRegistry({ resolver, quiet: true })
+      await generateModuleRegistryApp({ resolver, quiet: true })
       await generateModuleRegistryCli({ resolver, quiet: true })
       await generateModuleEntities({ resolver, quiet: true })
       await generateModuleDi({ resolver, quiet: true })
@@ -453,8 +820,11 @@ export async function run(argv = process.argv) {
       console.log('✅ RBAC setup complete:', { tenantId, organizationId: orgId }, '\n')
 
       console.log('🎛️  Seeding feature toggle defaults...')
-      await runModuleCommand(allModules, 'feature_toggles', 'seed-defaults', [])
-      console.log('🎛️  ✅ Feature toggle defaults seeded\n')
+      if (await runModuleCommand(allModules, 'feature_toggles', 'seed-defaults', [], { optional: true })) {
+        console.log('🎛️  ✅ Feature toggle defaults seeded\n')
+      } else {
+        console.log('')
+      }
 
       if (tenantId) {
         console.log('👥 Seeding tenant-scoped roles...')
@@ -483,6 +853,7 @@ export async function run(argv = process.argv) {
 
         // Seed module defaults (structural data: dictionaries, tax rates, units, etc.)
         console.log('📚 Seeding module defaults...')
+        const { createRequestContainer } = await import('@open-mercato/shared/lib/di/container')
         const seedContainer = await createRequestContainer()
         const seedEm = seedContainer.resolve('em') as any
         const seedCtx = { em: seedEm, tenantId, organizationId: orgId, container: seedContainer }
@@ -520,22 +891,31 @@ export async function run(argv = process.argv) {
           )
           const stressArgs = ['--tenant', tenantId, '--org', orgId, '--count', String(stressTestCount)]
           if (stressTestLite) stressArgs.push('--lite')
-          await runModuleCommand(allModules, 'customers', 'seed-stresstest', stressArgs, { optional: true })
-          console.log(`✅ Stress test customers seeded (requested ${stressTestCount})\n`)
+          if (await runModuleCommand(allModules, 'customers', 'seed-stresstest', stressArgs, { optional: true })) {
+            console.log(`✅ Stress test customers seeded (requested ${stressTestCount})\n`)
+          } else {
+            console.log('')
+          }
         }
 
         console.log('🧩 Enabling default dashboard widgets...')
-        await runModuleCommand(allModules, 'dashboards', 'seed-defaults', ['--tenant', tenantId], { optional: true })
-        console.log('✅ Dashboard widgets enabled\n')
+        if (await runModuleCommand(allModules, 'dashboards', 'seed-defaults', ['--tenant', tenantId], { optional: true })) {
+          console.log('✅ Dashboard widgets enabled\n')
+        } else {
+          console.log('')
+        }
 
         console.log('📊 Enabling analytics widgets for admin and employee roles...')
-        await runModuleCommand(allModules, 'dashboards', 'enable-analytics-widgets', [
+        if (await runModuleCommand(allModules, 'dashboards', 'enable-analytics-widgets', [
           '--tenant',
           tenantId,
           '--roles',
           'admin,employee',
-        ])
-        console.log('✅ Analytics widgets enabled for roles\n')
+        ], { optional: true })) {
+          console.log('✅ Analytics widgets enabled for roles\n')
+        } else {
+          console.log('')
+        }
 
       } else {
         console.log('⚠️  Could not get organization ID or tenant ID, skipping seeding steps\n')
@@ -545,13 +925,19 @@ export async function run(argv = process.argv) {
       const vectorArgs = tenantId
         ? ['--tenant', tenantId, ...(orgId ? ['--org', orgId] : [])]
         : ['--purgeFirst=false']
-      await runModuleCommand(allModules, 'search', 'reindex', vectorArgs, { optional: true })
-      console.log('✅ Search indexes built\n')
+      if (await runModuleCommand(allModules, 'search', 'reindex', vectorArgs, { optional: true })) {
+        console.log('✅ Search indexes built\n')
+      } else {
+        console.log('')
+      }
 
       console.log('🔍 Rebuilding query indexes...')
       const queryIndexArgs = ['--force', ...(tenantId ? ['--tenant', tenantId] : [])]
-      await runModuleCommand(allModules, 'query_index', 'reindex', queryIndexArgs, { optional: true })
-      console.log('✅ Query indexes rebuilt\n')
+      if (await runModuleCommand(allModules, 'query_index', 'reindex', queryIndexArgs, { optional: true })) {
+        console.log('✅ Query indexes rebuilt\n')
+      } else {
+        console.log('')
+      }
 
       const adminPasswordOverride = derivedSecrets.adminPassword
       const employeePasswordOverride = derivedSecrets.employeePassword
@@ -588,11 +974,7 @@ export async function run(argv = process.argv) {
 
       return 0
     } catch (error: unknown) {
-      if (error instanceof Error) {
-        console.error('❌ Initialization failed:', error.message)
-      } else {
-        console.error('❌ Initialization failed:', error)
-      }
+      console.error('❌ Initialization failed:', formatInitFailureMessage(error))
       return 1
     }
   }
@@ -695,14 +1077,74 @@ export async function run(argv = process.argv) {
       return 1
     }
     const { runUmesInspect } = await import('./lib/umes/inspect')
-    await runUmesInspect(moduleArg)
-    return 0
+    return runWithCapturedExitCode(() => runUmesInspect(moduleArg))
   }
 
   if (first === 'umes:check') {
     const { runUmesCheck } = await import('./lib/umes/check')
-    await runUmesCheck()
-    return 0
+    return runWithCapturedExitCode(() => runUmesCheck())
+  }
+
+  if (first === 'seed:defaults') {
+    await ensureEnvLoaded()
+    const moduleFilter = parts.includes('--module') ? parts[parts.indexOf('--module') + 1] : null
+
+    try {
+      const [{ bootstrapFromAppRoot }, { createResolver }] = await Promise.all([
+        import('@open-mercato/shared/lib/bootstrap/dynamicLoader'),
+        import('./lib/resolver'),
+      ])
+      const resolver = createResolver()
+      const data = await bootstrapFromAppRoot(resolver.getAppDir())
+      registerCliModules(data.modules)
+      const allModules = data.modules
+
+      const modulesToSeed = moduleFilter
+        ? allModules.filter((mod) => mod.id === moduleFilter)
+        : allModules
+
+      if (moduleFilter && modulesToSeed.length === 0) {
+        console.error(`❌ Module "${moduleFilter}" not found.`)
+        return 1
+      }
+
+      const { createRequestContainer } = await import('@open-mercato/shared/lib/di/container')
+      const seedContainer = await createRequestContainer()
+      const seedEm = seedContainer.resolve('em') as any
+
+      const { Organization } = await import('@open-mercato/core/modules/directory/data/entities')
+      const orgs = await seedEm.find(Organization, { deletedAt: null }, { populate: ['tenant'] as const })
+
+      if (orgs.length === 0) {
+        console.error('❌ No organizations found. Run yarn initialize first.')
+        return 1
+      }
+
+      console.log(`📚 Running seed:defaults for ${orgs.length} org(s)...\n`)
+      for (const org of orgs) {
+        const tenantId = String(org.tenant.id)
+        const organizationId = String(org.id)
+        const seedCtx = { em: seedEm, tenantId, organizationId, container: seedContainer }
+
+        console.log(`  🏢 org=${organizationId} tenant=${tenantId}`)
+        for (const mod of modulesToSeed) {
+          if (mod.setup?.seedDefaults) {
+            console.log(`    📦 ${mod.id}...`)
+            await mod.setup.seedDefaults(seedCtx)
+          }
+        }
+
+        const { ensureCustomRoleAcls } = await import('@open-mercato/core/modules/auth/lib/setup-app')
+        await ensureCustomRoleAcls(seedEm, tenantId, allModules)
+      }
+
+      console.log('\n✅ seed:defaults complete.')
+      return 0
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`❌ seed:defaults failed: ${message}`)
+      return 1
+    }
   }
 
   let modName = first
@@ -786,11 +1228,13 @@ export async function run(argv = process.argv) {
   
   // Load optional app-level CLI commands lazily without static import resolution
   let appCli: any[] = []
-  try {
-    const dynImport: any = (Function('return import') as any)()
-    const app = await dynImport.then((f: any) => f('@/cli')).catch(() => null)
-    if (app && Array.isArray(app?.default)) appCli = app.default
-  } catch {}
+  if (!BUILTIN_CLI_MODULE_IDS.has(modName)) {
+    try {
+      const dynImport: any = (Function('return import') as any)()
+      const app = await dynImport.then((f: any) => f('@/cli')).catch(() => null)
+      if (app && Array.isArray(app?.default)) appCli = app.default
+    } catch { /* @/cli may not exist in standalone apps — safe to ignore */ }
+  }
   const all = modules.slice()
   
   // Built-in CLI module: queue
@@ -804,19 +1248,7 @@ export async function run(argv = process.argv) {
           const queueName = isAllQueues ? null : args[0]
 
           // Collect all discovered workers from modules
-          type WorkerEntry = {
-            id: string
-            queue: string
-            concurrency: number
-            handler: (job: unknown, ctx: unknown) => Promise<void> | void
-          }
-          const allWorkers: WorkerEntry[] = []
-          for (const mod of getCliModules()) {
-            const modWorkers = (mod as { workers?: WorkerEntry[] }).workers
-            if (modWorkers) {
-              allWorkers.push(...modWorkers)
-            }
-          }
+          const allWorkers = getRegisteredCliWorkers()
           const discoveredQueues = [...new Set(allWorkers.map((w) => w.queue))]
 
           if (!queueName && !isAllQueues) {
@@ -835,10 +1267,12 @@ export async function run(argv = process.argv) {
           if (isAllQueues) {
             // Run workers for all discovered queues
             if (discoveredQueues.length === 0) {
-              console.error('[worker] No queues discovered from modules')
+              console.error('[worker] No queues discovered from CLI modules.')
+              console.error('[worker] Run `yarn generate` and verify `.mercato/generated/modules.cli.generated.ts` contains worker entries.')
               return
             }
 
+            const { createRequestContainer } = await import('@open-mercato/shared/lib/di/container')
             const container = await createRequestContainer()
             console.log(`[worker] Starting workers for all queues: ${discoveredQueues.join(', ')}`)
 
@@ -849,9 +1283,10 @@ export async function run(argv = process.argv) {
 
               console.log(`[worker] Starting "${queue}" with ${queueWorkers.length} handler(s), concurrency: ${concurrency}`)
 
+              const queueRedisUrl = getRedisUrl('QUEUE')
               await runWorker({
                 queueName: queue,
-                connection: { url: getRedisUrl('QUEUE') },
+                connection: queueRedisUrl ? { url: queueRedisUrl } : undefined,
                 concurrency,
                 background: true,
                 handler: async (job, ctx) => {
@@ -874,14 +1309,16 @@ export async function run(argv = process.argv) {
 
             if (queueWorkers.length > 0) {
               // Use discovered workers
+              const { createRequestContainer } = await import('@open-mercato/shared/lib/di/container')
               const container = await createRequestContainer()
               const concurrency = concurrencyOverride ?? Math.max(...queueWorkers.map((w) => w.concurrency), 1)
 
               console.log(`[worker] Found ${queueWorkers.length} worker(s) for queue "${queueName}"`)
 
+              const queueRedisUrl = getRedisUrl('QUEUE')
               await runWorker({
                 queueName: queueName!,
-                connection: { url: getRedisUrl('QUEUE') },
+                connection: queueRedisUrl ? { url: queueRedisUrl } : undefined,
                 concurrency,
                 handler: async (job, ctx) => {
                   for (const worker of queueWorkers) {
@@ -912,7 +1349,7 @@ export async function run(argv = process.argv) {
 
           const queue = strategyEnv === 'async'
             ? createQueue(queueName, 'async', {
-                connection: { url: getRedisUrl('QUEUE') },
+                connection: { url: getRedisUrlOrThrow('QUEUE') },
               })
             : createQueue(queueName, 'local')
 
@@ -935,7 +1372,7 @@ export async function run(argv = process.argv) {
 
           const queue = strategyEnv === 'async'
             ? createQueue(queueName, 'async', {
-                connection: { url: getRedisUrl('QUEUE') },
+                connection: { url: getRedisUrlOrThrow('QUEUE') },
               })
             : createQueue(queueName, 'local')
 
@@ -989,6 +1426,30 @@ export async function run(argv = process.argv) {
     ],
   } as any)
   
+  const runGeneratorSuite = async (quiet: boolean) => {
+    const { createResolver } = await import('./lib/resolver')
+    const {
+      generateEntityIds,
+      generateModuleRegistry,
+      generateModuleRegistryApp,
+      generateModuleRegistryCli,
+      generateModuleEntities,
+      generateModuleDi,
+      generateModulePackageSources,
+      generateOpenApi,
+    } = await import('./lib/generators')
+    const resolver = createResolver()
+
+    await generateEntityIds({ resolver, quiet })
+    await generateModuleRegistry({ resolver, quiet })
+    await generateModuleRegistryApp({ resolver, quiet })
+    await generateModuleRegistryCli({ resolver, quiet })
+    await generateModuleEntities({ resolver, quiet })
+    await generateModuleDi({ resolver, quiet })
+    await generateModulePackageSources({ resolver, quiet })
+    await generateOpenApi({ resolver, quiet })
+  }
+
   // Built-in CLI module: generate
   all.push({
     id: 'generate',
@@ -996,20 +1457,87 @@ export async function run(argv = process.argv) {
       {
         command: 'all',
         run: async (args: string[]) => {
-          const { createResolver } = await import('./lib/resolver')
-          const { generateEntityIds, generateModuleRegistry, generateModuleRegistryCli, generateModuleEntities, generateModuleDi, generateModulePackageSources, generateOpenApi } = await import('./lib/generators')
-          const resolver = createResolver()
           const quiet = args.includes('--quiet') || args.includes('-q')
 
           console.log('Running all generators...')
-          await generateEntityIds({ resolver, quiet })
-          await generateModuleRegistry({ resolver, quiet })
-          await generateModuleRegistryCli({ resolver, quiet })
-          await generateModuleEntities({ resolver, quiet })
-          await generateModuleDi({ resolver, quiet })
-          await generateModulePackageSources({ resolver, quiet })
-          await generateOpenApi({ resolver, quiet })
+          await runGeneratorSuite(quiet)
+          await runPostGenerateStructuralCachePurge(quiet)
           console.log('All generators completed.')
+        },
+      },
+      {
+        command: 'watch',
+        run: async (args: string[]) => {
+          const { createResolver } = await import('./lib/resolver')
+          const { calculateStructureChecksum } = await import('./lib/utils')
+          const quiet = args.includes('--quiet') || args.includes('-q')
+          const skipInitial = args.includes('--skip-initial')
+          const intervalArg = args.find((arg) => arg.startsWith('--interval='))
+          const parsedInterval = intervalArg ? Number.parseInt(intervalArg.split('=')[1] ?? '', 10) : NaN
+          const intervalMs = Number.isFinite(parsedInterval) && parsedInterval >= 250 ? parsedInterval : 1000
+          let previousChecksum = ''
+          let running = false
+          let pending = false
+
+          const getTrackedPaths = () => {
+            const resolver = createResolver()
+            const tracked = new Set<string>([
+              path.join(resolver.getAppDir(), 'src', 'modules.ts'),
+              path.join(resolver.getAppDir(), 'src', 'modules'),
+            ])
+            for (const entry of resolver.loadEnabledModules()) {
+              const roots = resolver.getModulePaths(entry)
+              tracked.add(roots.appBase)
+              tracked.add(roots.pkgBase)
+            }
+            return Array.from(tracked)
+          }
+
+          const runWatchGeneration = async (reason: string) => {
+            if (running) {
+              pending = true
+              return
+            }
+            running = true
+            try {
+              if (!quiet) {
+                console.log(`[generate:watch] Regenerating (${reason})...`)
+              }
+              await runGeneratorSuite(true)
+              await runPostGenerateStructuralCachePurge(true)
+              if (!quiet) {
+                console.log('[generate:watch] Generators completed.')
+              }
+            } catch (error) {
+              console.error('[generate:watch] Generation failed:', error instanceof Error ? error.message : error)
+            } finally {
+              running = false
+              if (pending) {
+                pending = false
+                await runWatchGeneration('queued change')
+              }
+            }
+          }
+
+          if (!skipInitial) {
+            await runWatchGeneration('initial')
+          }
+          previousChecksum = calculateStructureChecksum(getTrackedPaths())
+          if (!quiet) {
+            if (skipInitial) {
+              console.log('[generate:watch] Skipping initial regeneration and watching the current generated state.')
+            }
+            console.log(`[generate:watch] Watching structural module files every ${intervalMs}ms`)
+          }
+
+          // eslint-disable-next-line no-constant-condition
+          while (true) {
+            await new Promise((resolve) => setTimeout(resolve, intervalMs))
+            const nextChecksum = calculateStructureChecksum(getTrackedPaths())
+            if (nextChecksum === previousChecksum) continue
+            previousChecksum = nextChecksum
+            await runWatchGeneration('structure change')
+          }
         },
       },
       {
@@ -1025,9 +1553,11 @@ export async function run(argv = process.argv) {
         command: 'registry',
         run: async (args: string[]) => {
           const { createResolver } = await import('./lib/resolver')
-          const { generateModulePackageSources, generateModuleRegistry } = await import('./lib/generators')
+          const { generateModulePackageSources, generateModuleRegistry, generateModuleRegistryApp, generateModuleRegistryCli } = await import('./lib/generators')
           const resolver = createResolver()
           await generateModuleRegistry({ resolver, quiet: args.includes('--quiet') })
+          await generateModuleRegistryApp({ resolver, quiet: args.includes('--quiet') })
+          await generateModuleRegistryCli({ resolver, quiet: args.includes('--quiet') })
           await generateModulePackageSources({ resolver, quiet: args.includes('--quiet') })
         },
       },
@@ -1104,13 +1634,36 @@ export async function run(argv = process.argv) {
           const autoSpawnWorkers = process.env.AUTO_SPAWN_WORKERS !== 'false'
           const autoSpawnScheduler = process.env.AUTO_SPAWN_SCHEDULER !== 'false'
           const queueStrategy = process.env.QUEUE_STRATEGY || 'local'
+          const runtimeEnv = buildServerProcessEnvironment(process.env)
+          let didRetryCorruptedTurbopackCache = false
 
           function cleanup() {
             console.log('[server] Shutting down...')
             for (const proc of processes) {
-              if (!proc.killed) {
+              if (!proc.killed && proc.exitCode === null && proc.signalCode === null) {
                 proc.kill('SIGTERM')
               }
+            }
+          }
+
+          async function cleanupAndWait() {
+            cleanup()
+            // Wait for all child processes to fully exit so they can release lock files
+            await Promise.all(
+              processes.map(
+                (proc) =>
+                  new Promise<void>((resolve) => {
+                    if (proc.exitCode !== null) return resolve()
+                    proc.on('exit', () => resolve())
+                  })
+              )
+            )
+            // Safety net: remove Next.js dev lock file in case the child didn't clean up
+            const lockFile = path.join(appDir, '.mercato', 'next', 'dev', 'lock')
+            try {
+              fs.unlinkSync(lockFile)
+            } catch {
+              // Lock file may already be removed by Next.js — ignore
             }
           }
 
@@ -1127,46 +1680,87 @@ export async function run(argv = process.argv) {
           const nextBin = resolveInstalledBinary(nodeModulesBases, 'next/dist/bin/next')
           const mercatoBin = resolveInstalledBinary(nodeModulesBases, '@open-mercato/cli/bin/mercato')
 
-          // Start Next.js dev
-          const nextProcess = spawn('node', [nextBin, 'dev', '--turbopack'], {
-            stdio: 'inherit',
-            env: process.env,
-            cwd: appDir,
-          })
-          processes.push(nextProcess)
+          const startNextDev = (): Promise<ManagedProcessExitResult> =>
+            new Promise((resolve) => {
+              const nextProcess = spawn('node', [nextBin, 'dev', '--turbopack'], {
+                stdio: ['inherit', 'pipe', 'pipe'],
+                env: runtimeEnv,
+                cwd: appDir,
+              })
+              processes.push(nextProcess)
+
+              let combinedOutput = ''
+              const appendOutput = (chunk: string) => {
+                combinedOutput += chunk
+                if (combinedOutput.length > 32_768) {
+                  combinedOutput = combinedOutput.slice(-32_768)
+                }
+              }
+
+              nextProcess.stdout?.on('data', (chunk: Buffer | string) => {
+                const text = typeof chunk === 'string' ? chunk : chunk.toString()
+                process.stdout.write(text)
+                appendOutput(text)
+              })
+              nextProcess.stderr?.on('data', (chunk: Buffer | string) => {
+                const text = typeof chunk === 'string' ? chunk : chunk.toString()
+                process.stderr.write(text)
+                appendOutput(text)
+              })
+
+              nextProcess.on('exit', async (code, signal) => {
+                if (!didRetryCorruptedTurbopackCache && isTurbopackCacheCorruption(combinedOutput)) {
+                  didRetryCorruptedTurbopackCache = true
+                  console.log('[server] Detected corrupted Turbopack dev cache. Clearing .mercato/next/dev and restarting Next.js once...')
+                  removeTurbopackDevCache(appDir)
+                  return resolve(await startNextDev())
+                }
+                resolve({
+                  label: 'Next.js dev server',
+                  code,
+                  signal,
+                })
+              })
+            })
+
+          const nextExitPromise = startNextDev()
+          const managedExitPromises: Promise<ManagedProcessExitResult>[] = [nextExitPromise]
 
           // Start workers if enabled
           if (autoSpawnWorkers) {
-            console.log('[server] Starting workers for all queues...')
-            const workerProcess = spawn('node', [mercatoBin, 'queue', 'worker', '--all'], {
-              stdio: 'inherit',
-              env: process.env,
-              cwd: appDir,
-            })
-            processes.push(workerProcess)
+            const discoveredWorkerQueues = [...new Set(getRegisteredCliWorkers().map((worker) => worker.queue))]
+            if (discoveredWorkerQueues.length === 0) {
+              console.error('[server] AUTO_SPAWN_WORKERS is enabled, but no queues were discovered from CLI modules. Run `yarn generate` and verify `.mercato/generated/modules.cli.generated.ts` contains worker entries. Continuing without auto-spawned workers.')
+            } else {
+              console.log('[server] Starting workers for all queues...')
+              const workerProcess = spawn('node', [mercatoBin, 'queue', 'worker', '--all'], {
+                stdio: 'inherit',
+                env: runtimeEnv,
+                cwd: appDir,
+              })
+              processes.push(workerProcess)
+              managedExitPromises.push(waitForManagedProcessExit(workerProcess, 'Queue worker'))
+            }
           }
 
           if (autoSpawnScheduler && queueStrategy === 'local') {
             console.log('[server] Starting scheduler polling engine...')
             const schedulerProcess = spawn('node', [mercatoBin, 'scheduler', 'start'], {
               stdio: 'inherit',
-              env: process.env,
+              env: runtimeEnv,
               cwd: appDir,
             })
             processes.push(schedulerProcess)
+            managedExitPromises.push(waitForManagedProcessExit(schedulerProcess, 'Scheduler polling engine'))
           }
 
-          // Wait for any process to exit
-          await Promise.race(
-            processes.map(
-              (proc) =>
-                new Promise<void>((resolve) => {
-                  proc.on('exit', () => resolve())
-                })
-            )
-          )
+          const firstExit = await Promise.race(managedExitPromises)
 
-          cleanup()
+          await cleanupAndWait()
+
+          if (!isExpectedManagedExitSignal(firstExit.signal)) {
+            throw createManagedProcessExitError(firstExit)
+          }
         },
       },
       {
@@ -1182,6 +1776,10 @@ export async function run(argv = process.argv) {
           const autoSpawnWorkers = process.env.AUTO_SPAWN_WORKERS !== 'false'
           const autoSpawnScheduler = process.env.AUTO_SPAWN_SCHEDULER !== 'false'
           const queueStrategy = process.env.QUEUE_STRATEGY || 'local'
+          const runtimeEnv = buildServerProcessEnvironment(process.env)
+          const serverStartLock = acquireServerStartLock(appDir, {
+            port: runtimeEnv.PORT ?? process.env.PORT ?? null,
+          })
 
           function cleanup() {
             console.log('[server] Shutting down...')
@@ -1192,6 +1790,19 @@ export async function run(argv = process.argv) {
             }
           }
 
+          async function cleanupAndWait() {
+            cleanup()
+            await Promise.all(
+              processes.map(
+                (proc) =>
+                  new Promise<void>((resolve) => {
+                    if (proc.exitCode !== null) return resolve()
+                    proc.on('exit', () => resolve())
+                  })
+              )
+            )
+          }
+
           process.on('SIGTERM', cleanup)
           process.on('SIGINT', cleanup)
 
@@ -1199,47 +1810,57 @@ export async function run(argv = process.argv) {
 
           const nextBin = resolveInstalledBinary(nodeModulesBases, 'next/dist/bin/next')
           const mercatoBin = resolveInstalledBinary(nodeModulesBases, '@open-mercato/cli/bin/mercato')
+          ensureNextBuildIdInConfiguredDistDir(appDir)
 
-          // Start Next.js production server
-          const nextProcess = spawn('node', [nextBin, 'start'], {
-            stdio: 'inherit',
-            env: process.env,
-            cwd: appDir,
-          })
-          processes.push(nextProcess)
-
-          // Start workers if enabled
-          if (autoSpawnWorkers) {
-            console.log('[server] Starting workers for all queues...')
-            const workerProcess = spawn('node', [mercatoBin, 'queue', 'worker', '--all'], {
+          try {
+            // Start Next.js production server
+            const nextProcess = spawn('node', [nextBin, 'start'], {
               stdio: 'inherit',
-              env: process.env,
+              env: runtimeEnv,
               cwd: appDir,
             })
-            processes.push(workerProcess)
-          }
+            processes.push(nextProcess)
 
-          if (autoSpawnScheduler && queueStrategy === 'local') {
-            console.log('[server] Starting scheduler polling engine...')
-            const schedulerProcess = spawn('node', [mercatoBin, 'scheduler', 'start'], {
-              stdio: 'inherit',
-              env: process.env,
-              cwd: appDir,
-            })
-            processes.push(schedulerProcess)
-          }
-
-          // Wait for any process to exit
-          await Promise.race(
-            processes.map(
-              (proc) =>
-                new Promise<void>((resolve) => {
-                  proc.on('exit', () => resolve())
+            // Start workers if enabled
+            if (autoSpawnWorkers) {
+              const discoveredWorkerQueues = [...new Set(getRegisteredCliWorkers().map((worker) => worker.queue))]
+              if (discoveredWorkerQueues.length === 0) {
+                console.error('[server] AUTO_SPAWN_WORKERS is enabled, but no queues were discovered from CLI modules. Run `yarn generate` and verify `.mercato/generated/modules.cli.generated.ts` contains worker entries. Continuing without auto-spawned workers.')
+              } else {
+                console.log('[server] Starting workers for all queues...')
+                const workerProcess = spawn('node', [mercatoBin, 'queue', 'worker', '--all'], {
+                  stdio: 'inherit',
+                  env: runtimeEnv,
+                  cwd: appDir,
                 })
-            )
-          )
+                processes.push(workerProcess)
+              }
+            }
 
-          cleanup()
+            if (autoSpawnScheduler && queueStrategy === 'local') {
+              console.log('[server] Starting scheduler polling engine...')
+              const schedulerProcess = spawn('node', [mercatoBin, 'scheduler', 'start'], {
+                stdio: 'inherit',
+                env: runtimeEnv,
+                cwd: appDir,
+              })
+              processes.push(schedulerProcess)
+            }
+
+            // Wait for any process to exit
+            await Promise.race(
+              processes.map(
+                (proc) =>
+                  new Promise<void>((resolve) => {
+                    proc.on('exit', () => resolve())
+                  })
+              )
+            )
+
+            await cleanupAndWait()
+          } finally {
+            serverStartLock.release()
+          }
         },
       },
     ],
@@ -1337,7 +1958,7 @@ export async function run(argv = process.argv) {
     console.log(`⏱️ Done in ${ms}ms`)
     return 0
   } catch (e: any) {
-    console.error(`💥 Failed: ${e?.message || e}`)
+    console.error(`💥 Failed: ${formatCliFailureMessage(modName, cmdName, e)}`)
     return 1
   }
 }

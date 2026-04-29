@@ -1,13 +1,6 @@
-import {
-  Entity,
-  Index,
-  ManyToOne,
-  OptionalProps,
-  PrimaryKey,
-  Property,
-  Unique,
-  JsonType,
-} from '@mikro-orm/core'
+import { OptionalProps } from '@mikro-orm/core'
+import { Entity, Index, ManyToOne, PrimaryKey, Property, Unique } from '@mikro-orm/decorators/legacy'
+import type { JsonValue } from '@open-mercato/shared/lib/json'
 
 
 export type FeatureToggleType = 'boolean' | 'string' | 'number' | 'json'
@@ -35,7 +28,7 @@ export class FeatureToggle {
   category?: string | null
 
   @Property({ name: 'default_value', type: 'jsonb' })
-  defaultValue!: JsonType
+  defaultValue!: JsonValue
 
   @Property({ name: 'type', type: 'text' })
   type!: FeatureToggleType
@@ -78,5 +71,5 @@ export class FeatureToggleOverride {
   updatedAt: Date = new Date()
 
   @Property({ name: 'value', type: 'jsonb' })
-  value!: JsonType
+  value!: JsonValue
 }

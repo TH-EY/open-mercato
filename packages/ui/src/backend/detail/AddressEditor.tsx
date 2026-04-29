@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import Link from 'next/link'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { Plus, Settings } from 'lucide-react'
 import { Button } from '../../primitives/button'
 import { Input } from '@open-mercato/ui/primitives/input'
@@ -15,6 +16,7 @@ import {
   DialogTrigger,
 } from '@open-mercato/ui/primitives/dialog'
 import { buildCountryOptions } from '@open-mercato/shared/lib/location/countries'
+import { buildHrefWithReturnTo } from '@open-mercato/shared/lib/navigation/returnTo'
 import { cn } from '@open-mercato/shared/lib/utils'
 import type { AddressFormatStrategy } from './addressFormat'
 
@@ -87,6 +89,8 @@ export function AddressEditor<C = unknown>({
   addressTypesAdapter,
   addressTypesContext,
 }: AddressEditorProps<C>) {
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const label = React.useCallback(
     (suffix: string, fallback?: string, params?: Record<string, string | number>) =>
       t(`${labelPrefix}.${suffix}`, fallback, params),
@@ -176,6 +180,15 @@ export function AddressEditor<C = unknown>({
     if (!code.length) return null
     return countryOptions.find((option) => option.code === code) ?? null
   }, [countryOptions, current.country])
+  const returnTo = React.useMemo(() => {
+    const query = searchParams?.toString() ?? ''
+    if (!pathname) return null
+    return query.length ? `${pathname}?${query}` : pathname
+  }, [pathname, searchParams])
+  const manageAddressTypesHref = React.useMemo(
+    () => buildHrefWithReturnTo(addressTypesAdapter?.manageHref ?? '/backend/config/dictionaries', returnTo),
+    [addressTypesAdapter?.manageHref, returnTo],
+  )
 
   const handleTypeSubmit = React.useCallback(
     async (event: React.FormEvent<HTMLFormElement>) => {
@@ -203,8 +216,8 @@ export function AddressEditor<C = unknown>({
 
   const inputClass = (field: AddressEditorField) =>
     [
-      'w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring',
-      errors[field] ? 'border-red-500 focus:ring-red-500' : 'border-input bg-background',
+      'w-full rounded-md border px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+      errors[field] ? 'border-red-500 aria-invalid:ring-destructive' : 'border-input bg-background',
     ].join(' ')
 
   return (
@@ -286,7 +299,7 @@ export function AddressEditor<C = unknown>({
             title={label('types.manage', 'Manage address types')}
           >
             <Link
-              href={addressTypesAdapter?.manageHref ?? '/backend/config/dictionaries'}
+              href={manageAddressTypesHref}
               aria-label={label('types.manage', 'Manage address types')}
             >
               <Settings className="h-4 w-4" />
@@ -355,14 +368,6 @@ export function AddressEditor<C = unknown>({
       {format !== 'street_first' ? (
         <div className="grid gap-2 sm:grid-cols-[1.5fr,0.7fr,0.7fr]">
           <Input
-            className={inputClass('addressLine1')}
-            placeholder={label('fields.street', 'Street')}
-            value={current.addressLine1}
-            onChange={(evt) => update('addressLine1', evt.target.value)}
-            disabled={disabled}
-            aria-invalid={errors.addressLine1 ? 'true' : undefined}
-          />
-          <Input
             className={inputClass('buildingNumber')}
             placeholder={label('fields.buildingNumber', 'Building number')}
             value={current.buildingNumber}
@@ -425,7 +430,7 @@ export function AddressEditor<C = unknown>({
                 value={countryQuery}
                 onChange={(evt) => setCountryQuery(evt.target.value)}
               />
-              <div className="max-h-64 overflow-auto rounded-md border border-border/60">
+              <div className="max-h-64 overflow-auto rounded-md border border-border/70">
                 <ul className="divide-y divide-border/50">
                   {filteredCountryOptions.map((option) => (
                     <li key={option.code}>
