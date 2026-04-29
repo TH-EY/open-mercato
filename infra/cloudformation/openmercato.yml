@@ -865,6 +865,36 @@ Resources:
         HostedZoneId: !Ref ExistingLoadBalancerCanonicalHostedZoneId
         EvaluateTargetHealth: true
 
+  PreviewCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: '*.openmercato.they.dev'
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: '*.openmercato.they.dev'
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: Name
+          Value: openmercato-preview-wildcard
+
+  PreviewListenerCertificate:
+    Type: AWS::ElasticLoadBalancingV2::ListenerCertificate
+    Properties:
+      ListenerArn: !Ref ExistingLoadBalancerHttpsListenerArn
+      Certificates:
+        - CertificateArn: !Ref PreviewCertificate
+
+  PreviewWildcardDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: '*.openmercato.they.dev'
+      Type: A
+      AliasTarget:
+        DNSName: !Ref ExistingLoadBalancerDnsName
+        HostedZoneId: !Ref ExistingLoadBalancerCanonicalHostedZoneId
+        EvaluateTargetHealth: false
+
   # ---------------------------------------------------------------------------
   # Load Balancer Integration
   # ---------------------------------------------------------------------------
@@ -1578,3 +1608,12 @@ Outputs:
 
   DatabaseEndpoint:
     Value: !GetAtt DbInstance.Endpoint.Address
+
+  PreviewWildcardDomain:
+    Value: '*.openmercato.they.dev'
+
+  PreviewCertificateArn:
+    Value: !Ref PreviewCertificate
+
+  LoadBalancerSyncFunctionArn:
+    Value: !GetAtt TheyLoadBalancerSyncFunction.Arn

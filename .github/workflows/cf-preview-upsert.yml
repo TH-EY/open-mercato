@@ -1,0 +1,205 @@
+name: Upsert CloudFormation preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: contrib/* branch to deploy against the CloudFormation/ECS production data plane
+        required: true
+        type: string
+      allow_prod_migrations:
+        description: Allow yarn mercato init/migrate against the shared production database
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: cf-preview-${{ github.event.inputs.branch }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-24.04-arm
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+      issues: write
+    env:
+      AWS_REGION: eu-west-2
+    steps:
+      - name: Resolve branch
+        id: branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="${{ github.event.inputs.branch }}"
+          if [[ "$BRANCH" == refs/heads/* ]]; then
+            BRANCH="${BRANCH#refs/heads/}"
+          fi
+          if [[ "$BRANCH" != contrib/* ]]; then
+            echo "Only contrib/* branches are supported" >&2
+            exit 1
+          fi
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout preview branch source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.branch.outputs.branch }}
+          fetch-depth: 0
+          path: preview-src
+
+      - name: Checkout develop deployment tooling
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          path: tooling
+
+      - name: Check migration gate
+        id: migration-gate
+        shell: bash
+        env:
+          ALLOW_PROD_MIGRATIONS: ${{ github.event.inputs.allow_prod_migrations }}
+        run: |
+          set -euo pipefail
+          cd preview-src
+          git fetch origin upstream-baseline:refs/remotes/origin/upstream-baseline --prune
+          CHANGED_MIGRATIONS="$(git diff --name-only origin/upstream-baseline...HEAD | grep -E '(^|/)migrations/|Migration[0-9].*\.ts$' || true)"
+          if [[ -n "$CHANGED_MIGRATIONS" && "$ALLOW_PROD_MIGRATIONS" != "true" ]]; then
+            {
+              echo "This preview changes migration files but allow_prod_migrations=false."
+              echo "Re-run this workflow manually with allow_prod_migrations=true only after approving production DB migrations."
+              echo
+              echo "$CHANGED_MIGRATIONS"
+            } >&2
+            exit 1
+          fi
+          if [[ "$ALLOW_PROD_MIGRATIONS" == "true" ]]; then
+            echo "skip_init_or_migrate=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip_init_or_migrate=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image metadata
+        id: image
+        shell: bash
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY_NAME }}
+        run: |
+          set -euo pipefail
+          PREVIEW_SHA="$(git -C preview-src rev-parse HEAD)"
+          IMAGE_TAG="cf-preview-${PREVIEW_SHA}"
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          echo "sha=${PREVIEW_SHA}" >> "$GITHUB_OUTPUT"
+          echo "tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: preview-src
+          file: preview-src/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.image.outputs.uri }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Upsert CloudFormation preview
+        id: preview
+        shell: bash
+        env:
+          APP_IMAGE: ${{ steps.image.outputs.uri }}
+          JWT_SECRET_ARN: ${{ vars.JWT_SECRET_ARN != '' && vars.JWT_SECRET_ARN || secrets.JWT_SECRET_ARN }}
+          ENCRYPTION_KEY_ARN: ${{ vars.ENCRYPTION_KEY_ARN != '' && vars.ENCRYPTION_KEY_ARN || secrets.ENCRYPTION_KEY_ARN }}
+          ALLOW_PROD_MIGRATIONS: ${{ github.event.inputs.allow_prod_migrations }}
+        run: |
+          set -euo pipefail
+          OUTPUT="$(bash ./tooling/infra/cloudformation/preview-upsert.sh '${{ steps.branch.outputs.branch }}')"
+          echo "$OUTPUT"
+          while IFS='=' read -r key value; do
+            [[ -z "$key" ]] && continue
+            echo "$key=$value" >> "$GITHUB_OUTPUT"
+          done < <(printf '%s\n' "$OUTPUT" | grep '^preview_')
+
+      - name: Run auth + dashboard smoke test
+        env:
+          BASE_URL: ${{ steps.preview.outputs.preview_url }}
+          SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+          SMOKE_TEST_TENANT_ID: ${{ vars.SMOKE_TEST_TENANT_ID != '' && vars.SMOKE_TEST_TENANT_ID || secrets.SMOKE_TEST_TENANT_ID }}
+        run: node ./tooling/scripts/smoke-auth-dashboard.mjs
+
+      - name: Comment preview URL on same-repo PRs
+        uses: actions/github-script@v7
+        env:
+          BRANCH_NAME: ${{ steps.branch.outputs.branch }}
+          PREVIEW_URL: ${{ steps.preview.outputs.preview_url }}
+          PREVIEW_HOSTNAME: ${{ steps.preview.outputs.preview_hostname }}
+        with:
+          script: |
+            const branch = process.env.BRANCH_NAME;
+            const previewUrl = process.env.PREVIEW_URL;
+            const previewHostname = process.env.PREVIEW_HOSTNAME;
+            const { owner, repo } = context.repo;
+            const { data: prs } = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: 'open',
+              head: `${owner}:${branch}`,
+            });
+            if (!prs.length) {
+              core.info(`No open same-repo PR found for ${branch}`);
+              return;
+            }
+            const marker = `<!-- om-cf-preview branch=${branch} host=${previewHostname} -->`;
+            const body = [
+              marker,
+              `CloudFormation/ECS preview is ready: ${previewUrl}`,
+              '',
+              `- Branch: ${branch}`,
+              `- Host: ${previewHostname}`,
+              `- Stack: ${{ steps.preview.outputs.preview_stack }}`,
+              `- Image: ${{ steps.image.outputs.uri }}`,
+              '',
+              'Warning: this preview uses the production Open Mercato data plane.',
+            ].join('\n');
+            for (const pr of prs) {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner,
+                repo,
+                issue_number: pr.number,
+                per_page: 100,
+              });
+              const existing = comments.find((comment) => comment.user?.type === 'Bot' && comment.body?.includes(marker));
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body });
+              }
+            }
+
+      - name: Workflow summary
+        run: |
+          echo "Preview URL: ${{ steps.preview.outputs.preview_url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Branch: ${{ steps.branch.outputs.branch }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Host: ${{ steps.preview.outputs.preview_hostname }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Stack: ${{ steps.preview.outputs.preview_stack }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image: ${{ steps.image.outputs.uri }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Skip init/migrate: ${{ steps.preview.outputs.preview_skip_init_or_migrate }}" >> "$GITHUB_STEP_SUMMARY"

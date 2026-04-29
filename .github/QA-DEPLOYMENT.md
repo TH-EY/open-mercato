@@ -4,12 +4,13 @@ This guide explains the current QA and preview options for this fork.
 
 ## Overview
 
-There are now two different deployment paths:
+There are now three different deployment paths:
 
 1. Per-branch contrib previews on `preview-<slug>.om.they.dev`
-2. Legacy shared QA slots (`qa1` / `qa2`)
+2. Trusted CloudFormation/ECS previews on `preview-<slug>.openmercato.they.dev`
+3. Legacy shared QA slots (`qa1` / `qa2`)
 
-Use per-branch previews for upstream-candidate work. Use shared slots only for older fork workflows that still depend on the preview Docker image flow.
+Use isolated `*.om.they.dev` per-branch previews for ordinary upstream-candidate work. Use CloudFormation/ECS previews only when you intentionally need to test against the live `openmercato.they.dev` tenant data. Use shared slots only for older fork workflows that still depend on the preview Docker image flow.
 
 ## Per-branch contrib previews
 
@@ -58,6 +59,32 @@ The exact URL is written to the workflow summary. If there is an open same-repo 
 - branch previews are isolated from `om.they.dev`
 - branch previews are isolated from `openmercato.they.dev`
 - branch previews use the same compose topology as the upstream baseline, not the CloudFormation/ECS stack
+
+## Trusted CloudFormation/ECS previews
+
+Manual CloudFormation/ECS previews are available for trusted `contrib/*` branches:
+
+```text
+.github/workflows/cf-preview-upsert.yml
+```
+
+Preview URL format:
+
+```text
+https://preview-<slug>.openmercato.they.dev
+```
+
+These previews build the requested branch but deploy it through fork-owned tooling from `develop`. They reuse the production RDS, Redis, Meilisearch, EFS storage, tenant accounts, and secrets from `openmercato.they.dev`.
+
+Use this only when production-data testing is the point of the check. If migration files changed, the upsert workflow fails unless it is manually rerun with `allow_prod_migrations=true`.
+
+Cleanup workflow:
+
+```text
+.github/workflows/cf-preview-destroy.yml
+```
+
+Full runbook: `infra/OPEN_MERCATO_AWS_ENVIRONMENTS.md`.
 
 ## Stable upstream baseline
 

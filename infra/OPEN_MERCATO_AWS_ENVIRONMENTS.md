@@ -32,6 +32,7 @@ The `openmercato` stack owns or wires the app runtime around these resources:
 - EFS application storage mounted at `/app/apps/mercato/storage`.
 - Secrets Manager values for `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `TENANT_DATA_ENCRYPTION_KEY`, and `MEILISEARCH_API_KEY`.
 - Shared `they-lb` HTTPS listener and Route53 alias for `openmercato.they.dev`.
+- Wildcard preview DNS/certificate for `*.openmercato.they.dev` after the updated `openmercato` stack is deployed.
 - Target group `openmercato-they-tg` for the web service.
 
 Open Mercato does not own the shared ALB itself. The stack owns the host-header listener rule and a Lambda/EventBridge target sync that registers ECS task IPs in the shared target group.
@@ -282,20 +283,153 @@ The destroy script:
 3. Deletes the matching ALB listener rule.
 4. Deregisters the EC2 target and deletes the preview target group.
 
+
+## CloudFormation/ECS previews: `preview-<slug>.openmercato.they.dev`
+
+| Item | Value |
+|------|-------|
+| Supported branches | `contrib/*` only |
+| URL pattern | `https://preview-<slug>.openmercato.they.dev` |
+| Runtime | One CloudFormation stack per preview branch on the production ECS cluster |
+| Stack name | `openmercato-preview-<slug>` |
+| ECS services | `openmercato-preview-<slug>-web`, `openmercato-preview-<slug>-worker` |
+| Image source | ECR `062648047691.dkr.ecr.eu-west-2.amazonaws.com/openmercato-app:cf-preview-<sha>` |
+| Upsert workflow | `.github/workflows/cf-preview-upsert.yml` |
+| Destroy workflow | `.github/workflows/cf-preview-destroy.yml` |
+| Template | `infra/cloudformation/preview.yml` |
+| Upsert script | `infra/cloudformation/preview-upsert.sh` |
+| Destroy script | `infra/cloudformation/preview-destroy.sh` |
+| Active preview limit | 8 |
+
+These previews are for trusted operator testing against the same tenant accounts and data as `openmercato.they.dev`. They do not isolate the data plane. The preview stack reuses production RDS, Redis, Meilisearch, EFS storage, Secrets Manager secrets, ECS roles, the ECS cluster, public subnets, app security group, and the shared `they-lb` HTTPS listener.
+
+Warning: this model can mutate production tenant data and trigger shared side effects. Use it only for trusted branches/operators and tests where production data mutation is acceptable. Prefer the isolated `preview-<slug>.om.they.dev` Docker previews for ordinary upstream-candidate validation.
+
+### One-time ingress prerequisite
+
+The production `openmercato` stack template now includes:
+
+- ACM certificate for `*.openmercato.they.dev`;
+- listener certificate attachment to the shared HTTPS listener `arn:aws:elasticloadbalancing:eu-west-2:062648047691:listener/app/they-lb/fe10e6ccedf3d536/15478d3e1d97aedc`;
+- Route53 wildcard alias `*.openmercato.they.dev` -> `they-lb`;
+- output `LoadBalancerSyncFunctionArn` for preview stacks.
+
+Those resources become available after deploying `.github/workflows/deploy-aws.yml` on `develop`. The GitHub OIDC role has an inline policy `openmercato-cf-preview-deploy` for the extra preview stack, ACM, Route53, EventBridge, Lambda permission, log group, target group, and ECS service actions.
+
+### Upserting a CloudFormation preview
+
+Run manually from `develop`; do not put fork-only workflow files into `contrib/*` branches:
+
+```bash
+gh workflow run cf-preview-upsert.yml \
+  --repo TH-EY/open-mercato \
+  --ref develop \
+  -f branch=contrib/my-feature
+```
+
+The workflow:
+
+1. Checks out the requested `contrib/*` branch into `preview-src` for the Docker build.
+2. Checks out `develop` into `tooling` for the fork-only CloudFormation scripts and smoke test.
+3. Diffs the branch against `origin/upstream-baseline`. If migration files changed, the workflow fails unless `allow_prod_migrations=true` is explicitly passed.
+4. Builds an ARM64 image from the branch and pushes `openmercato-app:cf-preview-<branch-sha>`.
+5. Runs `tooling/infra/cloudformation/preview-upsert.sh <branch>`.
+6. Waits for the preview web and worker ECS services to stabilize.
+7. Runs `tooling/scripts/smoke-auth-dashboard.mjs` against the preview URL.
+8. Comments the preview URL on same-repo open PRs for that branch.
+
+Only approve migration-enabled runs after deciding that the branch may run `yarn mercato init` / migrations against production data:
+
+```bash
+gh workflow run cf-preview-upsert.yml \
+  --repo TH-EY/open-mercato \
+  --ref develop \
+  -f branch=contrib/my-feature \
+  -f allow_prod_migrations=true
+```
+
+Without `allow_prod_migrations=true`, the preview web container is started with `OM_SKIP_INIT_OR_MIGRATE=true`. The CloudFormation command wrapper enforces the skip even when the tested branch does not contain fork-only entrypoint changes.
+
+### Preview stack internals
+
+`infra/cloudformation/preview-common.sh` derives identifiers from the branch name:
+
+- strip `refs/heads/` if present;
+- strip the leading `contrib/`;
+- lowercase and replace non-alphanumeric characters with `-`;
+- append a 6-character SHA1 suffix of the full branch name;
+- hostname: `preview-<slug>.openmercato.they.dev`;
+- stack: `openmercato-preview-<slug>`;
+- target group: `omcf-<12-char-sha1-of-slug>`;
+- listener rule priority: first free priority in `6000-6999`, reusing the existing priority when updating the same host.
+
+The preview template creates:
+
+- web and worker CloudWatch log groups under `/ecs/openmercato/previews/<slug>/`;
+- an IP target group in shared LB VPC `vpc-20252849` with `/login` health check;
+- one host-header listener rule on `they-lb`;
+- one web Fargate service with `AUTO_SPAWN_SCHEDULER=false`;
+- one worker Fargate service;
+- an EventBridge ECS task-state rule plus Lambda permission so `openmercato-they-lb-sync` can keep ALB target IPs in sync.
+
+There is intentionally no scheduler service in the preview stack.
+
+### Destroying a CloudFormation preview
+
+Branch delete triggers `.github/workflows/cf-preview-destroy.yml` for `contrib/*`. Manual cleanup:
+
+```bash
+gh workflow run cf-preview-destroy.yml \
+  --repo TH-EY/open-mercato \
+  --ref develop \
+  -f branch=contrib/my-feature
+```
+
+The destroy script computes the same slug and deletes stack `openmercato-preview-<slug>`. Stack deletion removes the preview services, task definitions, log groups, target group, host-header listener rule, and task-state sync rule. It does not delete shared production data.
+
+### CloudFormation preview checks
+
+```bash
+BRANCH=contrib/my-feature
+SLUG="$(bash -c 'source infra/cloudformation/preview-common.sh; branch_to_preview_slug "$1"' _ "$BRANCH")"
+
+aws cloudformation describe-stacks \
+  --region eu-west-2 \
+  --stack-name openmercato-preview-<slug> \
+  --query 'Stacks[0].{status:StackStatus,updated:LastUpdatedTime}' \
+  --output table
+
+aws ecs describe-services \
+  --region eu-west-2 \
+  --cluster openmercato-cluster \
+  --services openmercato-preview-<slug>-web openmercato-preview-<slug>-worker \
+  --query 'services[].{service:serviceName,desired:desiredCount,running:runningCount,pending:pendingCount,rollout:deployments[0].rolloutState,taskDefinition:deployments[0].taskDefinition}' \
+  --output table
+
+aws elbv2 describe-target-health \
+  --region eu-west-2 \
+  --target-group-arn <preview-target-group-arn> \
+  --query 'TargetHealthDescriptions[].{target:Target.Id,port:Target.Port,health:TargetHealth.State,reason:TargetHealth.Reason}' \
+  --output table
+
+curl -I https://preview-<slug>.openmercato.they.dev/
+curl -I https://preview-<slug>.openmercato.they.dev/login
+```
+
 ## Branch rules
 
 | Work type | Branch source | Branch name | Deploy target |
 |-----------|---------------|-------------|---------------|
 | Fork production deploy | `origin/develop` | `develop`, `fork/*`, `sync/*` | `openmercato.they.dev` |
 | Upstream mirror | `upstream/develop` | `upstream-baseline` | `om.they.dev` |
-| Upstream candidate | `origin/upstream-baseline` | `contrib/*` | `preview-<slug>.om.they.dev` |
+| Upstream candidate | `origin/upstream-baseline` | `contrib/*` | `preview-<slug>.om.they.dev`; trusted manual CF preview: `preview-<slug>.openmercato.they.dev` |
 
 Rules that matter operationally:
 
 - Never start upstream-candidate work from `develop`.
 - Never merge `develop` into `contrib/*`.
 - Never point `om.they.dev` at `develop` or direct upstream.
-- Never put fork-only CloudFormation/ECS paths into `contrib/*`.
+- Never put fork-only CloudFormation/ECS paths into `contrib/*`. Run CF preview workflows from `develop` with a `branch=contrib/...` input instead.
 - If a change must land on `openmercato.they.dev` before upstream accepts it, cherry-pick it into a separate `sync/<topic>-to-develop` branch.
 
 ## Troubleshooting map
@@ -370,18 +504,26 @@ cd /opt/openmercato-previews/<slug>
 docker compose --project-name preview-<slug> --env-file .env -f docker-compose.fullapp.yml ps
 ```
 
-## Planned CloudFormation/ECS previews: `preview-<slug>.openmercato.they.dev`
 
-This is not implemented yet.
+### `preview-<slug>.openmercato.they.dev` fails
 
-Planned model:
+Check the workflow and stack first:
 
-- supported source: trusted branches/PRs, initially `contrib/*` plus manual dispatch;
-- URL pattern: `https://preview-<slug>.openmercato.they.dev`;
-- runtime: separate CloudFormation/ECS preview service per branch;
-- data model: live writable production RDS, Redis, Meilisearch, EFS, tenant accounts, and secrets;
-- no scheduler service in preview;
-- migration policy: manual gate before allowing a preview branch to run DB migrations on production data;
-- active preview limit: 8.
+```bash
+gh run list --repo TH-EY/open-mercato --workflow cf-preview-upsert.yml --limit 5
+gh run view <run-id> --repo TH-EY/open-mercato --json status,conclusion,url,jobs
 
-Warning: this planned model can mutate production tenant data and trigger shared side effects. Use it only for trusted branches/operators and for tests where production data mutation is acceptable.
+aws cloudformation describe-stack-events \
+  --region eu-west-2 \
+  --stack-name openmercato-preview-<slug> \
+  --query 'StackEvents[0:20].{time:Timestamp,status:ResourceStatus,resource:LogicalResourceId,reason:ResourceStatusReason}' \
+  --output table
+```
+
+Common causes:
+
+- wildcard `*.openmercato.they.dev` certificate/DNS not deployed yet through the production `openmercato` stack;
+- changed migration files without `allow_prod_migrations=true`;
+- `github-openmercato-deploy` missing the inline `openmercato-cf-preview-deploy` policy;
+- no free ALB listener priority in `6000-6999`;
+- preview target group exists but task IP sync failed; check Lambda `openmercato-they-lb-sync` logs.

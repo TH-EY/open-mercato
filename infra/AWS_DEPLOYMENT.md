@@ -57,6 +57,25 @@ Useful operators:
 
 ---
 
+## CloudFormation/ECS previews
+
+Trusted `contrib/*` branches can also be tested as ECS/Fargate preview stacks at
+`https://preview-<slug>.openmercato.they.dev`. These previews reuse the live
+production data plane from `openmercato.they.dev`; they are not isolated test
+databases.
+
+Operators:
+
+- `.github/workflows/cf-preview-upsert.yml`
+- `.github/workflows/cf-preview-destroy.yml`
+- `infra/cloudformation/preview.yml`
+- `infra/cloudformation/preview-upsert.sh`
+- `infra/cloudformation/preview-destroy.sh`
+
+Runbook and warnings: [`infra/OPEN_MERCATO_AWS_ENVIRONMENTS.md`](./OPEN_MERCATO_AWS_ENVIRONMENTS.md).
+
+---
+
 ## AWS Account Details
 
 | Setting | Value |

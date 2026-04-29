@@ -1,0 +1,467 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Open Mercato CloudFormation/ECS branch preview using production data plane
+
+Parameters:
+  PreviewSlug:
+    Type: String
+    AllowedPattern: '^[a-z0-9][a-z0-9-]{2,49}$'
+    Description: Stable preview slug derived from branch name.
+
+  PreviewHostName:
+    Type: String
+    Description: Full preview hostname, e.g. preview-sync-excel-abc123.openmercato.they.dev.
+
+  PreviewUrl:
+    Type: String
+    Description: Full preview URL.
+
+  AppImage:
+    Type: String
+    Description: Full ECR image URI to run in the preview services.
+
+  ClusterName:
+    Type: String
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet::Id
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet::Id
+
+  AppSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
+  ExistingLoadBalancerVpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-20252849
+
+  ExistingLoadBalancerHttpsListenerArn:
+    Type: String
+    Default: arn:aws:elasticloadbalancing:eu-west-2:062648047691:listener/app/they-lb/fe10e6ccedf3d536/15478d3e1d97aedc
+
+  ExistingLoadBalancerRulePriority:
+    Type: Number
+    Description: Free listener rule priority for this preview host.
+
+  TargetGroupName:
+    Type: String
+    Description: ALB target group name, max 32 chars.
+    MaxLength: 32
+
+  LoadBalancerSyncFunctionArn:
+    Type: String
+    Description: Existing openmercato-they-lb-sync Lambda ARN from the production stack.
+
+  EcsExecutionRoleArn:
+    Type: String
+
+  EcsTaskRoleArn:
+    Type: String
+
+  AppStorageEfsId:
+    Type: String
+
+  AppStorageEfsAccessPointId:
+    Type: String
+
+  DatabaseUrlSecretArn:
+    Type: String
+
+  RedisUrlSecretArn:
+    Type: String
+
+  JwtSecretArn:
+    Type: String
+
+  EncryptionKeyArn:
+    Type: String
+
+  MeilisearchApiKeySecretArn:
+    Type: String
+
+  WebCpu:
+    Type: Number
+    Default: 512
+
+  WebMemory:
+    Type: Number
+    Default: 2048
+
+  WorkerCpu:
+    Type: Number
+    Default: 256
+
+  WorkerMemory:
+    Type: Number
+    Default: 512
+
+  WebDbPoolMin:
+    Type: Number
+    Default: 0
+
+  WebDbPoolMax:
+    Type: Number
+    Default: 4
+
+  WorkerDbPoolMin:
+    Type: Number
+    Default: 0
+
+  WorkerDbPoolMax:
+    Type: Number
+    Default: 2
+
+  DataSyncQueueConcurrency:
+    Type: Number
+    Default: 2
+
+  SkipInitOrMigrate:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Keep true for normal previews. Set false only after migration gate approval.
+
+Resources:
+  WebLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/openmercato/previews/${PreviewSlug}/web
+      RetentionInDays: 14
+
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/openmercato/previews/${PreviewSlug}/worker
+      RetentionInDays: 14
+
+  WebTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Ref TargetGroupName
+      Protocol: HTTP
+      Port: 3000
+      TargetType: ip
+      VpcId: !Ref ExistingLoadBalancerVpcId
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: traffic-port
+      HealthCheckPath: /login
+      HealthCheckIntervalSeconds: 15
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Matcher:
+        HttpCode: 200-399
+      Tags:
+        - Key: Name
+          Value: !Sub openmercato-preview-${PreviewSlug}
+        - Key: openmercato:preview-slug
+          Value: !Ref PreviewSlug
+
+  HostRule:
+    Type: Custom::TheyLoadBalancerHostRule
+    Properties:
+      ServiceToken: !Ref LoadBalancerSyncFunctionArn
+      Action: EnsureListenerRule
+      ListenerArn: !Ref ExistingLoadBalancerHttpsListenerArn
+      Priority: !Ref ExistingLoadBalancerRulePriority
+      Host: !Ref PreviewHostName
+      TargetGroupArn: !Ref WebTargetGroup
+
+  WebTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub openmercato-preview-${PreviewSlug}-web
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref WebCpu
+      Memory: !Ref WebMemory
+      ExecutionRoleArn: !Ref EcsExecutionRoleArn
+      TaskRoleArn: !Ref EcsTaskRoleArn
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      Volumes:
+        - Name: app-storage
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref AppStorageEfsId
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref AppStorageEfsAccessPointId
+              IAM: ENABLED
+      ContainerDefinitions:
+        - Name: app
+          Image: !Ref AppImage
+          Essential: true
+          Command:
+            - /bin/sh
+            - -c
+            - |
+              sudo chown -R omuser:omuser /app/apps/mercato/storage
+              if [ "${OM_SKIP_INIT_OR_MIGRATE:-false}" = "true" ]; then
+                echo "Skipping init/migrate because OM_SKIP_INIT_OR_MIGRATE=true"
+                exec yarn start
+              fi
+              exec /app/docker/scripts/railway-entrypoint.sh
+          PortMappings:
+            - ContainerPort: 3000
+          MountPoints:
+            - SourceVolume: app-storage
+              ContainerPath: /app/apps/mercato/storage
+          Environment:
+            - Name: NODE_ENV
+              Value: production
+            - Name: PORT
+              Value: '3000'
+            - Name: NODE_OPTIONS
+              Value: !Sub '--max-old-space-size=${WebMemory}'
+            - Name: CACHE_STRATEGY
+              Value: redis
+            - Name: QUEUE_STRATEGY
+              Value: async
+            - Name: DB_SSL
+              Value: 'true'
+            - Name: DB_SSL_REJECT_UNAUTHORIZED
+              Value: 'false'
+            - Name: DB_POOL_MIN
+              Value: !Ref WebDbPoolMin
+            - Name: DB_POOL_MAX
+              Value: !Ref WebDbPoolMax
+            - Name: DB_POOL_IDLE_TIMEOUT
+              Value: '30000'
+            - Name: DB_POOL_ACQUIRE_TIMEOUT
+              Value: '30000'
+            - Name: MEILISEARCH_HOST
+              Value: http://meilisearch.openmercato.internal:7700
+            - Name: APP_URL
+              Value: !Ref PreviewUrl
+            - Name: SELF_SERVICE_ONBOARDING_ENABLED
+              Value: 'true'
+            - Name: TENANT_DATA_ENCRYPTION
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SSO
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SECURITY
+              Value: 'true'
+            - Name: AUTO_SPAWN_WORKERS
+              Value: 'false'
+            - Name: AUTO_SPAWN_SCHEDULER
+              Value: 'false'
+            - Name: OM_SKIP_INIT_OR_MIGRATE
+              Value: !Ref SkipInitOrMigrate
+          Secrets:
+            - Name: DATABASE_URL
+              ValueFrom: !Ref DatabaseUrlSecretArn
+            - Name: REDIS_URL
+              ValueFrom: !Ref RedisUrlSecretArn
+            - Name: QUEUE_REDIS_URL
+              ValueFrom: !Ref RedisUrlSecretArn
+            - Name: CACHE_REDIS_URL
+              ValueFrom: !Ref RedisUrlSecretArn
+            - Name: JWT_SECRET
+              ValueFrom: !Ref JwtSecretArn
+            - Name: TENANT_DATA_ENCRYPTION_KEY
+              ValueFrom: !Ref EncryptionKeyArn
+            - Name: MEILISEARCH_API_KEY
+              ValueFrom: !Ref MeilisearchApiKeySecretArn
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref WebLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: web
+
+  WebService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - HostRule
+    Properties:
+      ServiceName: !Sub openmercato-preview-${PreviewSlug}-web
+      Cluster: !Ref ClusterName
+      TaskDefinition: !Ref WebTaskDefinition
+      AvailabilityZoneRebalancing: DISABLED
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          SecurityGroups:
+            - !Ref AppSecurityGroupId
+          AssignPublicIp: ENABLED
+      LoadBalancers:
+        - TargetGroupArn: !Ref WebTargetGroup
+          ContainerName: app
+          ContainerPort: 3000
+      HealthCheckGracePeriodSeconds: 120
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+      EnableExecuteCommand: true
+
+  TargetSyncBootstrap:
+    Type: Custom::TheyLoadBalancerTargetSync
+    DependsOn:
+      - WebService
+    Properties:
+      ServiceToken: !Ref LoadBalancerSyncFunctionArn
+      Cluster: !Ref ClusterName
+      ServiceName: !GetAtt WebService.Name
+      TargetGroupArn: !Ref WebTargetGroup
+      Port: 3000
+      TaskDefinition: !Ref WebTaskDefinition
+
+  TaskStateSyncRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub openmercato-preview-${PreviewSlug}-task-sync
+      EventPattern:
+        source:
+          - aws.ecs
+        detail-type:
+          - ECS Task State Change
+        detail:
+          clusterArn:
+            - !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${ClusterName}
+          group:
+            - !Sub service:${WebService.Name}
+          lastStatus:
+            - RUNNING
+            - STOPPED
+      Targets:
+        - Arn: !Ref LoadBalancerSyncFunctionArn
+          Id: !Sub openmercato-preview-${PreviewSlug}-task-sync
+          Input: !Sub
+            - '{"cluster":"${ClusterName}","service":"${ServiceName}","targetGroupArn":"${TargetGroupArn}","port":3000}'
+            - ServiceName: !GetAtt WebService.Name
+              TargetGroupArn: !Ref WebTargetGroup
+
+  TaskStateSyncPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LoadBalancerSyncFunctionArn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt TaskStateSyncRule.Arn
+
+  WorkerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub openmercato-preview-${PreviewSlug}-worker
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref WorkerCpu
+      Memory: !Ref WorkerMemory
+      ExecutionRoleArn: !Ref EcsExecutionRoleArn
+      TaskRoleArn: !Ref EcsTaskRoleArn
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: worker
+          Image: !Ref AppImage
+          Essential: true
+          Command:
+            - sh
+            - -c
+            - yarn mercato queue worker --all
+          Environment:
+            - Name: NODE_ENV
+              Value: production
+            - Name: PORT
+              Value: '3000'
+            - Name: NODE_OPTIONS
+              Value: !Sub '--max-old-space-size=${WorkerMemory}'
+            - Name: CACHE_STRATEGY
+              Value: redis
+            - Name: QUEUE_STRATEGY
+              Value: async
+            - Name: DB_SSL
+              Value: 'true'
+            - Name: DB_SSL_REJECT_UNAUTHORIZED
+              Value: 'false'
+            - Name: DB_POOL_MIN
+              Value: !Ref WorkerDbPoolMin
+            - Name: DB_POOL_MAX
+              Value: !Ref WorkerDbPoolMax
+            - Name: DB_POOL_IDLE_TIMEOUT
+              Value: '30000'
+            - Name: DB_POOL_ACQUIRE_TIMEOUT
+              Value: '30000'
+            - Name: DATA_SYNC_QUEUE_CONCURRENCY
+              Value: !Ref DataSyncQueueConcurrency
+            - Name: MEILISEARCH_HOST
+              Value: http://meilisearch.openmercato.internal:7700
+            - Name: OM_ENABLE_ENTERPRISE_MODULES
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SSO
+              Value: 'true'
+            - Name: OM_ENABLE_ENTERPRISE_MODULES_SECURITY
+              Value: 'true'
+          Secrets:
+            - Name: DATABASE_URL
+              ValueFrom: !Ref DatabaseUrlSecretArn
+            - Name: REDIS_URL
+              ValueFrom: !Ref RedisUrlSecretArn
+            - Name: QUEUE_REDIS_URL
+              ValueFrom: !Ref RedisUrlSecretArn
+            - Name: CACHE_REDIS_URL
+              ValueFrom: !Ref RedisUrlSecretArn
+            - Name: JWT_SECRET
+              ValueFrom: !Ref JwtSecretArn
+            - Name: TENANT_DATA_ENCRYPTION_KEY
+              ValueFrom: !Ref EncryptionKeyArn
+            - Name: MEILISEARCH_API_KEY
+              ValueFrom: !Ref MeilisearchApiKeySecretArn
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref WorkerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: worker
+
+  WorkerService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub openmercato-preview-${PreviewSlug}-worker
+      Cluster: !Ref ClusterName
+      TaskDefinition: !Ref WorkerTaskDefinition
+      AvailabilityZoneRebalancing: DISABLED
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          SecurityGroups:
+            - !Ref AppSecurityGroupId
+          AssignPublicIp: ENABLED
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+
+Outputs:
+  PreviewUrl:
+    Value: !Ref PreviewUrl
+
+  PreviewHostName:
+    Value: !Ref PreviewHostName
+
+  PreviewSlug:
+    Value: !Ref PreviewSlug
+
+  WebServiceName:
+    Value: !GetAtt WebService.Name
+
+  WorkerServiceName:
+    Value: !GetAtt WorkerService.Name
+
+  TargetGroupArn:
+    Value: !Ref WebTargetGroup

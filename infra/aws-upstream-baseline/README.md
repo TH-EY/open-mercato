@@ -2,7 +2,7 @@
 
 This runbook manages the upstream-parity AWS path that intentionally stays outside the CloudFormation/ECS stack used by `openmercato.they.dev`.
 
-For the full developer/operator map of production, baseline, existing `*.om.they.dev` previews, and planned CloudFormation/ECS previews, see [`../OPEN_MERCATO_AWS_ENVIRONMENTS.md`](../OPEN_MERCATO_AWS_ENVIRONMENTS.md).
+For the full developer/operator map of production, baseline, existing `*.om.they.dev` previews, and CloudFormation/ECS previews under `*.openmercato.they.dev`, see [`../OPEN_MERCATO_AWS_ENVIRONMENTS.md`](../OPEN_MERCATO_AWS_ENVIRONMENTS.md).
 
 ## Purpose
 
@@ -24,6 +24,10 @@ The goal is to validate Open Mercato work against an environment that stays as c
 - `https://preview-<slug>.om.they.dev`
   - source: `TH-EY/open-mercato:contrib/<topic>`
   - runtime: isolated Docker Compose preview stack on the same host
+- `https://preview-<slug>.openmercato.they.dev`
+  - source: `TH-EY/open-mercato:contrib/<topic>`
+  - runtime: CloudFormation/ECS preview stack sharing production data from `openmercato.they.dev`
+  - runbook: `../OPEN_MERCATO_AWS_ENVIRONMENTS.md`
 
 ## Current baseline architecture
 

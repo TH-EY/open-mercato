@@ -34,6 +34,11 @@ Never mix `contrib/*` and `fork/*` logic in the same commit.
   - source: `TH-EY/open-mercato:contrib/<topic>`
   - deploy: preview automation from `.github/workflows/contrib-preview-upsert.yml`
   - runtime: isolated Docker Compose stack on the Dokploy host, with its own DB / Redis / Meilisearch / storage
+- `https://preview-<slug>.openmercato.they.dev`
+  - source: `TH-EY/open-mercato:contrib/<topic>`
+  - deploy: manual `.github/workflows/cf-preview-upsert.yml` from `develop`
+  - runtime: CloudFormation/ECS preview stack using the live production data plane from `openmercato.they.dev`
+  - use only for trusted operator tests that may read/write production tenant data
 
 Important GitHub Actions note:
 
