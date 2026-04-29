@@ -9,6 +9,11 @@ on:
         type: choice
         options:
           - production
+      app_image_uri:
+        description: "Existing ECR image URI to deploy; leave empty to build and push a new image"
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   group: deploy-${{ github.event.inputs.environment }}
@@ -49,6 +54,7 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Set up Docker Buildx
+        if: inputs.app_image_uri == ''
         uses: docker/setup-buildx-action@v3
 
       - name: Compute image metadata
@@ -56,13 +62,45 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY_NAME }}
+          INPUT_APP_IMAGE_URI: ${{ inputs.app_image_uri }}
         run: |
-          IMAGE_TAG="${GITHUB_SHA}"
-          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          if [ -n "${INPUT_APP_IMAGE_URI}" ]; then
+            IMAGE_TAG="${INPUT_APP_IMAGE_URI##*:}"
+            IMAGE_URI="${INPUT_APP_IMAGE_URI}"
+          else
+            IMAGE_TAG="${GITHUB_SHA}"
+            IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          fi
           echo "tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
+      - name: Verify existing ECR image
+        if: inputs.app_image_uri != ''
+        env:
+          APP_IMAGE_URI: ${{ steps.image.outputs.uri }}
+        run: |
+          IMAGE_PATH="${APP_IMAGE_URI#*/}"
+          if [[ "${IMAGE_PATH}" == *"@sha256:"* ]]; then
+            REPOSITORY_NAME="${IMAGE_PATH%@sha256:*}"
+            IMAGE_DIGEST="sha256:${IMAGE_PATH##*@sha256:}"
+            aws ecr describe-images \
+              --repository-name "${REPOSITORY_NAME}" \
+              --image-ids imageDigest="${IMAGE_DIGEST}" \
+              --region "${AWS_REGION}" >/dev/null
+          elif [[ "${IMAGE_PATH}" == *":"* ]]; then
+            REPOSITORY_NAME="${IMAGE_PATH%:*}"
+            IMAGE_TAG="${IMAGE_PATH##*:}"
+            aws ecr describe-images \
+              --repository-name "${REPOSITORY_NAME}" \
+              --image-ids imageTag="${IMAGE_TAG}" \
+              --region "${AWS_REGION}" >/dev/null
+          else
+            echo "ERROR: app_image_uri must include an ECR tag or digest: ${APP_IMAGE_URI}" >&2
+            exit 1
+          fi
+
       - name: Build and push Docker image
+        if: inputs.app_image_uri == ''
         uses: docker/build-push-action@v6
         with:
           context: .

@@ -300,6 +300,10 @@ bash infra/cloudformation/deploy.sh deploy
 
 Trigger: manual `workflow_dispatch` on `/Users/patrykmadaj/Sites/open-mercato/.github/workflows/deploy-aws.yml`.
 
+Inputs:
+- `environment` - target environment; currently `production`
+- `app_image_uri` - optional existing ECR image URI. Leave empty for a normal build+push deploy. Set it to a previously pushed image URI to skip the Docker build and only redeploy CloudFormation/ECS.
+
 Required GitHub secrets/variables:
 - `AWS_DEPLOY_ROLE_ARN` - IAM role ARN for OIDC-based auth
 - `ECR_REPOSITORY_NAME` = `openmercato-app`
@@ -315,10 +319,11 @@ Optional GitHub variables:
 - `CFN_S3_PREFIX` - CloudFormation artifact prefix override
 
 The workflow now:
-1. builds and pushes an ARM64 image to ECR,
-2. deploys the `openmercato` CloudFormation stack with `APP_IMAGE=<new-image>`,
-3. waits for ECS web + worker services to become stable,
-4. runs an auth/dashboard smoke test against the stack `ApplicationUrl` output.
+1. builds and pushes an ARM64 image to ECR, unless `app_image_uri` points at an existing ECR image,
+2. verifies an existing image when `app_image_uri` is provided,
+3. deploys the `openmercato` CloudFormation stack with `APP_IMAGE=<image>`,
+4. waits for ECS web + worker services to become stable,
+5. runs an auth/dashboard smoke test against the stack `ApplicationUrl` output.
 
 ---
 
