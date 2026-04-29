@@ -314,7 +314,7 @@ The production `openmercato` stack template now includes:
 - Route53 wildcard alias `*.openmercato.they.dev` -> `they-lb`;
 - output `LoadBalancerSyncFunctionArn` for preview stacks.
 
-Those resources become available after deploying `.github/workflows/deploy-aws.yml` on `develop`. The GitHub OIDC role has an inline policy `openmercato-cf-preview-deploy` for the extra preview stack, ACM, Route53, EventBridge, Lambda permission, log group, target group, and ECS service actions.
+Those resources are deployed in the current `openmercato` stack. The GitHub OIDC role has inline policies `openmercato-cf-preview-deploy` and `openmercato-cloudformation-read-resources` for the extra preview stack, ACM, Route53, EventBridge, Lambda permission, log group, target group, ECS service, and CloudFormation resource-read actions. Its ECR policy also includes `ecr:DescribeRepositories`, which CloudFormation needs when resolving the `EcrRepositoryUrl` output.
 
 ### Upserting a CloudFormation preview
 
