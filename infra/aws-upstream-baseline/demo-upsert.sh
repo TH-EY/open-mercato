@@ -132,8 +132,8 @@ if [[ ! -d "$workdir/.git" ]]; then
 else
   git -C "$workdir" remote set-url origin "$repo_url"
   timeout 300 git -C "$workdir" fetch origin "$branch" --prune
-  git -C "$workdir" checkout -B "$branch" "origin/$branch"
-  git -C "$workdir" reset --hard "origin/$branch"
+  git -C "$workdir" checkout -B "$branch" FETCH_HEAD
+  git -C "$workdir" reset --hard FETCH_HEAD
   git -C "$workdir" clean -fdx
 fi
 
