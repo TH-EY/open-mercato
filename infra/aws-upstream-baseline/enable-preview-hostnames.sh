@@ -31,10 +31,15 @@ python3 - <<'PY' "${VALIDATION_JSON}" "${HOSTED_ZONE_ID}" > /tmp/om-preview-cert
 import json, sys
 items = json.loads(sys.argv[1])
 changes = []
+seen = set()
 for item in items:
     rr = item.get('ResourceRecord')
     if not rr:
         continue
+    key = (rr['Name'], rr['Type'], rr['Value'])
+    if key in seen:
+        continue
+    seen.add(key)
     changes.append({
         'Action': 'UPSERT',
         'ResourceRecordSet': {
