@@ -185,7 +185,7 @@ resource "aws_secretsmanager_secret" "database_url" {
 
 resource "aws_secretsmanager_secret_version" "database_url" {
   secret_id     = aws_secretsmanager_secret.database_url.id
-  secret_string = "postgres://openmercato:${random_password.db_password.result}@${aws_db_instance.crm.address}:${aws_db_instance.crm.port}/openmercato?sslmode=require"
+  secret_string = "postgres://openmercato:${random_password.db_password.result}@${aws_db_instance.crm.address}:${aws_db_instance.crm.port}/openmercato?uselibpqcompat=true&sslmode=require"
 }
 
 resource "aws_ecr_repository" "app" {

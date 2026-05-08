@@ -128,10 +128,45 @@ COMMAND_ID="$(aws ssm send-command \
 rm -f "${REMOTE_SCRIPT}"
 
 echo "SSM command: ${COMMAND_ID}"
-aws ssm wait command-executed --region "${AWS_REGION}" --command-id "${COMMAND_ID}" --instance-id "${INSTANCE_ID}"
-aws ssm get-command-invocation \
-  --region "${AWS_REGION}" \
-  --command-id "${COMMAND_ID}" \
-  --instance-id "${INSTANCE_ID}" \
-  --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
-  --output json
+
+DEADLINE_SECONDS="${SSM_WAIT_DEADLINE_SECONDS:-1200}"
+POLL_INTERVAL_SECONDS="${SSM_WAIT_POLL_INTERVAL_SECONDS:-15}"
+deadline=$((SECONDS + DEADLINE_SECONDS))
+status="Pending"
+invocation_json=""
+
+while ((SECONDS < deadline)); do
+  if invocation_json="$(aws ssm get-command-invocation \
+    --region "${AWS_REGION}" \
+    --command-id "${COMMAND_ID}" \
+    --instance-id "${INSTANCE_ID}" \
+    --query '{Status:Status,ResponseCode:ResponseCode,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+    --output json 2>/tmp/openmercato-crm-ssm-get-command.err)"; then
+    status="$(jq -r '.Status' <<<"${invocation_json}")"
+  else
+    status="Pending"
+  fi
+
+  case "${status}" in
+  Success | Cancelled | TimedOut | Failed | Cancelling)
+    break
+    ;;
+  esac
+
+  sleep "${POLL_INTERVAL_SECONDS}"
+done
+
+if [[ -z "${invocation_json}" ]]; then
+  echo "Timed out waiting for SSM command ${COMMAND_ID}; no invocation details were available." >&2
+  if [[ -s /tmp/openmercato-crm-ssm-get-command.err ]]; then
+    cat /tmp/openmercato-crm-ssm-get-command.err >&2
+  fi
+  exit 1
+fi
+
+echo "${invocation_json}"
+
+if [[ "${status}" != "Success" ]]; then
+  echo "SSM command ${COMMAND_ID} finished with status ${status}." >&2
+  exit 1
+fi
