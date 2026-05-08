@@ -1,0 +1,90 @@
+name: Deploy crm.they.dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to deploy
+        required: true
+        type: string
+        default: fork/crm-they-dev
+
+concurrency:
+  group: crm-they-dev-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-2
+  NAME_PREFIX: openmercato-crm-they-dev
+
+jobs:
+  build-and-deploy:
+    name: Build and deploy CRM
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout requested branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve ECR repository
+        id: ecr
+        run: |
+          REPOSITORY_URL="$(aws ecr describe-repositories \
+            --region "${AWS_REGION}" \
+            --repository-names "${NAME_PREFIX}-app" \
+            --query 'repositories[0].repositoryUri' \
+            --output text)"
+          echo "repository_url=${REPOSITORY_URL}" >> "$GITHUB_OUTPUT"
+          echo "image_uri=${REPOSITORY_URL}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.image_uri }}
+            ${{ steps.ecr.outputs.repository_url }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy over SSM
+        env:
+          APP_IMAGE: ${{ steps.ecr.outputs.image_uri }}
+          BRANCH: ${{ github.event.inputs.branch }}
+        run: bash scripts/crm/deploy-crm-they-dev.sh
+
+      - name: Smoke /login
+        run: |
+          for attempt in $(seq 1 40); do
+            status="$(curl -sk -o /tmp/crm-login.html -w '%{http_code}' https://crm.they.dev/login || true)"
+            if [ "$status" -ge 200 ] && [ "$status" -lt 400 ]; then
+              echo "crm.they.dev/login returned $status"
+              exit 0
+            fi
+            echo "Attempt $attempt: got $status; waiting..."
+            sleep 15
+          done
+          cat /tmp/crm-login.html || true
+          exit 1

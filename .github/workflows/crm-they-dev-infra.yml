@@ -1,0 +1,69 @@
+name: CRM they.dev Terraform
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Terraform action
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+        default: plan
+
+concurrency:
+  group: crm-they-dev-terraform
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-2
+  TF_IN_AUTOMATION: true
+  TF_WORKING_DIR: infra/terraform/environments/crm-they-dev
+
+jobs:
+  terraform:
+    name: Terraform ${{ github.event.inputs.action }}
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Verify branch
+        if: github.ref_name != 'fork/crm-they-dev'
+        run: |
+          echo "CRM infrastructure must run from fork/crm-they-dev. Current branch: ${{ github.ref_name }}" >&2
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.11.5
+
+      - name: Tofu init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: tofu init -input=false
+
+      - name: Tofu validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: tofu validate
+
+      - name: Tofu plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: tofu plan -input=false -out=tfplan
+
+      - name: Tofu apply
+        if: github.event.inputs.action == 'apply'
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: tofu apply -input=false -auto-approve tfplan

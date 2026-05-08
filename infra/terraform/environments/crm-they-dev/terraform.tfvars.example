@@ -1,0 +1,8 @@
+# crm.they.dev is intentionally pinned to AWS London.
+aws_region = "eu-west-2"
+
+# Defaults point at the existing they.dev shared ingress resources.
+# Override only if the shared they-lb resources change.
+# instance_type = "t3a.medium"
+# listener_rule_priority = 1002
+# admin_email = "crm-admin@they.dev"

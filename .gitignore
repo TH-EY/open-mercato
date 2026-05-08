@@ -129,3 +129,11 @@ docker/opencode/opencode.jsonc
 .agents/
 
 apps/mercato/data/
+
+# Local agent / Terraform runtime state
+.serena/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log

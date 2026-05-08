@@ -1,0 +1,142 @@
+services:
+  app:
+    image: ${APP_IMAGE}
+    container_name: openmercato-crm-app
+    restart: unless-stopped
+    user: "0"
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        INIT_COMMAND='yarn mercato init' sh /app/docker/scripts/init-or-migrate.sh
+        yarn start
+    working_dir: /app/apps/mercato
+    ports:
+      - "${APP_PORT:-3001}:${CONTAINER_PORT:-3000}"
+    volumes:
+      - crm_init_marker:/tmp/init-marker
+      - crm_attachments_storage:/app/apps/mercato/storage
+    environment:
+      NODE_ENV: production
+      DEPLOY_ENV: crm-they-dev
+      PORT: ${CONTAINER_PORT:-3000}
+      APP_URL: ${APP_URL:-https://crm.they.dev}
+      DATABASE_URL: ${DATABASE_URL}
+      DB_SSL: "true"
+      DB_SSL_REJECT_UNAUTHORIZED: "false"
+      DB_POOL_MIN: ${WEB_DB_POOL_MIN:-0}
+      DB_POOL_MAX: ${WEB_DB_POOL_MAX:-4}
+      DB_POOL_IDLE_TIMEOUT: ${DB_POOL_IDLE_TIMEOUT:-30000}
+      DB_POOL_ACQUIRE_TIMEOUT: ${DB_POOL_ACQUIRE_TIMEOUT:-30000}
+      CACHE_STRATEGY: redis
+      CACHE_REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://redis:6379
+      QUEUE_STRATEGY: async
+      QUEUE_REDIS_URL: redis://redis:6379
+      MEILISEARCH_HOST: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILISEARCH_MASTER_KEY}
+      TENANT_DATA_ENCRYPTION: "true"
+      TENANT_DATA_ENCRYPTION_KEY: ${TENANT_DATA_ENCRYPTION_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      SELF_SERVICE_ONBOARDING_ENABLED: "false"
+      DEMO_MODE: "false"
+      AUTO_SPAWN_WORKERS: "false"
+      AUTO_SPAWN_SCHEDULER: "false"
+      DATA_SYNC_QUEUE_CONCURRENCY: ${DATA_SYNC_QUEUE_CONCURRENCY:-1}
+      QUERY_INDEX_COVERAGE_WARMUP_ON_LOGIN: "false"
+      OM_INIT_SUPERADMIN_EMAIL: ${OM_INIT_SUPERADMIN_EMAIL}
+      OM_INIT_SUPERADMIN_PASSWORD: ${OM_INIT_SUPERADMIN_PASSWORD}
+      ADMIN_EMAIL: ${OM_INIT_SUPERADMIN_EMAIL}
+      NEXT_PUBLIC_UPGRADE_ACTIONS_ENABLED: "false"
+      UPGRADE_ACTIONS_ENABLED: "false"
+    depends_on:
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    networks:
+      - crm_network
+
+  worker:
+    image: ${APP_IMAGE}
+    container_name: openmercato-crm-worker
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - yarn mercato queue worker --all
+    working_dir: /app/apps/mercato
+    environment:
+      NODE_ENV: production
+      DEPLOY_ENV: crm-they-dev
+      APP_URL: ${APP_URL:-https://crm.they.dev}
+      DATABASE_URL: ${DATABASE_URL}
+      DB_SSL: "true"
+      DB_SSL_REJECT_UNAUTHORIZED: "false"
+      DB_POOL_MIN: ${WORKER_DB_POOL_MIN:-0}
+      DB_POOL_MAX: ${WORKER_DB_POOL_MAX:-2}
+      DB_POOL_IDLE_TIMEOUT: ${DB_POOL_IDLE_TIMEOUT:-30000}
+      DB_POOL_ACQUIRE_TIMEOUT: ${DB_POOL_ACQUIRE_TIMEOUT:-30000}
+      CACHE_STRATEGY: redis
+      CACHE_REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://redis:6379
+      QUEUE_STRATEGY: async
+      QUEUE_REDIS_URL: redis://redis:6379
+      MEILISEARCH_HOST: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILISEARCH_MASTER_KEY}
+      TENANT_DATA_ENCRYPTION: "true"
+      TENANT_DATA_ENCRYPTION_KEY: ${TENANT_DATA_ENCRYPTION_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      SELF_SERVICE_ONBOARDING_ENABLED: "false"
+      DEMO_MODE: "false"
+      DATA_SYNC_QUEUE_CONCURRENCY: ${DATA_SYNC_QUEUE_CONCURRENCY:-1}
+      QUERY_INDEX_COVERAGE_WARMUP_ON_LOGIN: "false"
+    depends_on:
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    networks:
+      - crm_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: openmercato-crm-redis
+    restart: unless-stopped
+    volumes:
+      - crm_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crm_network
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    container_name: openmercato-crm-meilisearch
+    restart: unless-stopped
+    environment:
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: ${MEILISEARCH_MASTER_KEY}
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - crm_meilisearch_data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crm_network
+
+volumes:
+  crm_init_marker:
+  crm_attachments_storage:
+  crm_redis_data:
+  crm_meilisearch_data:
+
+networks:
+  crm_network:
+    driver: bridge

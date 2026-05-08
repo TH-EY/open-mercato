@@ -2,6 +2,16 @@
 
 Leverage the module system and follow strict naming and coding conventions to keep the system consistent and safe to extend.
 
+
+## THEY Fork Infrastructure Context
+
+- For THEY-owned Open Mercato environments, distinguish the infrastructure tracks explicitly.
+- `om.they.dev` is the upstream-parity Terraform + Dokploy track and should be treated as closer to upstream runtime expectations than the CloudFormation experiment.
+- The CloudFormation/ECS path is a separate migration experiment for a possible future upstream contribution; do not assume it is the default source of truth for new THEY company environments.
+- `crm.they.dev` is a single-company THEY environment in AWS London (`eu-west-2`). Its source of truth is a fork branch based on upstream `develop` (or later upstream `main` when intentionally chosen), plus minimal THEY Terraform/runtime cost reductions and the CSV import contribution until it lands upstream.
+- `crm.they.dev` must stay single-instance/single-company by default: no preview fan-out, no multi-tenant capacity planning, no extra managed services unless a measured need appears.
+- For `crm.they.dev`, keep CSV import code present by merging/cherry-picking `origin/contrib/sync-excel` until the upstream PR is merged; after merge, prefer the upstream implementation.
+
 ## Before Writing Code
 
 1. Check the Task Router below — a single task may match multiple rows; read **all** relevant guides.
