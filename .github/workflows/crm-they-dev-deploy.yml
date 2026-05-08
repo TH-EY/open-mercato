@@ -70,7 +70,6 @@ jobs:
             ${{ steps.ecr.outputs.image_uri }}
             ${{ steps.ecr.outputs.repository_url }}:latest
           cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Deploy over SSM
         env:
