@@ -54,6 +54,12 @@ services:
         condition: service_healthy
       meilisearch:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${CONTAINER_PORT:-3000}/login >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
     networks:
       - crm_network
 
@@ -92,6 +98,8 @@ services:
       DATA_SYNC_QUEUE_CONCURRENCY: ${DATA_SYNC_QUEUE_CONCURRENCY:-1}
       QUERY_INDEX_COVERAGE_WARMUP_ON_LOGIN: "false"
     depends_on:
+      app:
+        condition: service_healthy
       redis:
         condition: service_healthy
       meilisearch:
