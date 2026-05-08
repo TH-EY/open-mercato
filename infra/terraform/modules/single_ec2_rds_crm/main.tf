@@ -1,3 +1,8 @@
+
+data "aws_iam_role" "github_deploy" {
+  name = var.github_deploy_role_name
+}
+
 data "aws_ami" "ubuntu_amd64" {
   most_recent = true
   owners      = ["099720109477"]
@@ -389,4 +394,62 @@ resource "aws_ssm_parameter" "admin_email" {
   name  = "/${var.name_prefix}/runtime/admin-email"
   type  = "String"
   value = var.admin_email
+}
+
+resource "aws_iam_role_policy" "github_deploy" {
+  name = "${var.name_prefix}-github-deploy"
+  role = data.aws_iam_role.github_deploy.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage",
+          "ecr:CompleteLayerUpload",
+          "ecr:DescribeImages",
+          "ecr:DescribeRepositories",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:InitiateLayerUpload",
+          "ecr:PutImage",
+          "ecr:UploadLayerPart"
+        ]
+        Resource = aws_ecr_repository.app.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeInstances"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:SendCommand"
+        ]
+        Resource = [
+          aws_instance.app.arn,
+          "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:GetCommandInvocation",
+          "ssm:ListCommandInvocations"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
 }

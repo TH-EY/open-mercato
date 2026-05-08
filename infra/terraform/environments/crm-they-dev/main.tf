@@ -37,4 +37,5 @@ module "crm" {
   deploy_branch             = var.deploy_branch
   admin_email               = var.admin_email
   allowed_admin_cidr_blocks = var.allowed_admin_cidr_blocks
+  github_deploy_role_name   = var.github_deploy_role_name
 }

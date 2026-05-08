@@ -145,3 +145,9 @@ variable "allowed_admin_cidr_blocks" {
   description = "Optional CIDR blocks allowed to access SSH for emergency admin. SSM is preferred."
   default     = []
 }
+
+variable "github_deploy_role_name" {
+  type        = string
+  description = "Existing GitHub Actions deployment role that may deploy crm.they.dev."
+  default     = "github-openmercato-deploy"
+}
