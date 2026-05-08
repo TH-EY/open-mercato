@@ -1,6 +1,9 @@
 name: Deploy crm.they.dev
 
 on:
+  push:
+    branches:
+      - fork/crm-they-dev
   workflow_dispatch:
     inputs:
       branch:
@@ -30,7 +33,7 @@ jobs:
       - name: Checkout requested branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.branch }}
+          ref: ${{ github.event.inputs.branch || github.ref_name }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -72,7 +75,7 @@ jobs:
       - name: Deploy over SSM
         env:
           APP_IMAGE: ${{ steps.ecr.outputs.image_uri }}
-          BRANCH: ${{ github.event.inputs.branch }}
+          BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
         run: bash scripts/crm/deploy-crm-they-dev.sh
 
       - name: Smoke /login
