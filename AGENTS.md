@@ -27,6 +27,7 @@ IMPORTANT: Before any research or coding, match the task to the root `AGENTS.md`
 |------|-------|
 | **Module Development** | |
 | Creating a new module, scaffolding module files, auto-discovery paths | `packages/core/AGENTS.md` |
+| Working on official modules via the `external/official-modules` submodule, activating them (`yarn official-modules`, `official-modules.json`), committing to the submodule's git | this file → `external/official-modules/` (git submodule) |
 | Building CRUD API routes, adding OpenAPI specs, using `makeCrudRoute`, query engine integration | `packages/core/AGENTS.md` → API Routes |
 | Adding `setup.ts` for tenant init, declaring role features, syncing new ACL grants to roles, seeding defaults/examples | `packages/core/AGENTS.md` → Module Setup |
 | Declaring typed events with `createModuleEvents`, emitting CRUD/lifecycle events, adding event subscribers | `packages/core/AGENTS.md` → Events |
@@ -37,6 +38,7 @@ IMPORTANT: Before any research or coding, match the task to the root `AGENTS.md`
 | Injecting menu items into main/settings/profile sidebars or topbar/profile dropdown (`useInjectedMenuItems`, `mergeMenuItems`) | `packages/ui/AGENTS.md` |
 | Adding API route interceptors (`api/interceptors.ts`, before/after hooks, body/query rewrite contracts) | `packages/core/AGENTS.md` → API Interceptors |
 | Adding DataTable extension widgets (columns/row actions/bulk actions/filters) | `packages/core/AGENTS.md` → Widget Injection + `packages/ui/AGENTS.md` → DataTable Guidelines |
+| Adding bulk operations, DataTable bulk actions, selected-row mutations, or future long-running operations with progress | `packages/core/src/modules/progress/AGENTS.md` + `packages/ui/AGENTS.md` → DataTable Guidelines + `packages/queue/AGENTS.md` |
 | Adding CrudForm field injection widgets (`crud-form:<entityId>:fields`) | `packages/core/AGENTS.md` → Widget Injection + `packages/ui/AGENTS.md` → CrudForm Guidelines |
 | Replacing or wrapping UI components via `widgets/components.ts` (`replace`/`wrapper`/`props`) | `packages/core/AGENTS.md` → Component Replacement + `packages/ui/AGENTS.md` |
 | Adding custom fields/entities, using DSL helpers (`defineLink`, `cf.*`), declaring `ce.ts` | `packages/core/AGENTS.md` → Custom Fields |
@@ -53,9 +55,10 @@ IMPORTANT: Before any research or coding, match the task to the root `AGENTS.md`
 | Registering typed AI tools via `defineAiTool` in `ai-tools.ts`, building tool packs (`search`, `attachments`, `meta`, domain packs) | `.ai/skills/create-ai-agent/SKILL.md` + `packages/ai-assistant/AGENTS.md` + `apps/docs/docs/framework/ai-assistant/agents.mdx` |
 | Gating AI-mutation writes behind the approval flow (`prepareMutation`, `ai_pending_actions`, approval cards, cleanup worker) | `.ai/skills/create-ai-agent/SKILL.md` + `packages/ai-assistant/AGENTS.md` + `apps/docs/docs/framework/ai-assistant/mutation-approvals.mdx` |
 | Overriding AI agent prompts, mutation policies, or model per tenant via the settings UI | `packages/ai-assistant/AGENTS.md` + `apps/docs/docs/framework/ai-assistant/settings.mdx` |
+| Wiring agentic-loop controls on an AI agent (`loop.stopWhen` / `loop.prepareStep` / `loop.budget`), per-tenant loop kill switch + budgets, `executionEngine: 'tool-loop-agent'`, and the `<AiChat>` LoopTrace debug panel | `.ai/specs/2026-04-28-ai-agents-agentic-loop-controls.md` + `packages/ai-assistant/AGENTS.md` → Loop controls and execution engines + `apps/docs/docs/framework/ai-assistant/agents.mdx` → Agentic loop controls + `apps/docs/docs/framework/ai-assistant/settings.mdx` → Loop policy overrides + `.ai/skills/create-ai-agent/SKILL.md` §4.4 |
 | Replacing or disabling another module's AI agent / AI tool (per-module, modules.ts, or programmatic) | `apps/docs/docs/framework/ai-assistant/overrides.mdx` + `packages/ai-assistant/AGENTS.md` → How to Override + `.ai/specs/2026-04-30-ai-overrides-and-module-disable.md` |
-| Replacing/disabling any module contract at the app level (unified `entry.overrides` umbrella — AI today; other domains rolling out) | `.ai/specs/2026-05-04-modules-ts-unified-overrides.md` + `packages/shared/src/modules/overrides.ts` |
-| Configuring AI providers (Anthropic / OpenAI / Google) and per-module model overrides (`<MODULE>_AI_MODEL`) | `packages/ai-assistant/AGENTS.md` → Model Resolution + `apps/docs/docs/framework/ai-assistant/overview.mdx` |
+| Replacing/disabling any module contract at the app level (unified `entry.overrides` umbrella — phases 1-18 wired) | `.ai/specs/2026-05-04-modules-ts-unified-overrides.md` + `packages/shared/src/modules/overrides.ts` + `packages/shared/AGENTS.md` → Module-Level Overrides + `apps/docs/docs/framework/modules/overrides.mdx` |
+| Configuring AI providers (Anthropic / OpenAI / Google) and per-module model overrides (`OM_AI_<MODULE>_MODEL`) | `packages/ai-assistant/AGENTS.md` → Model Resolution + `apps/docs/docs/framework/ai-assistant/overview.mdx` |
 | Sending file/image/PDF attachments through `<AiChat>` and the chat dispatcher API (`attachmentIds`, base64 inline encoding, the 4 MB ceiling) | `apps/docs/docs/framework/ai-assistant/attachments.mdx` + `packages/ai-assistant/src/modules/ai_assistant/lib/attachment-parts.ts` + `packages/ui/src/ai/upload-adapter.ts` |
 | **Specific Modules** | |
 | Managing people/companies/deals/activities, **copying CRUD patterns for new modules** | `packages/core/src/modules/customers/AGENTS.md` |
@@ -80,6 +83,7 @@ IMPORTANT: Before any research or coding, match the task to the root `AGENTS.md`
 | Event bus architecture, ephemeral vs persistent subscriptions, queue integration for events, event workers | `packages/events/AGENTS.md` |
 | Adding cache to a module, tag-based invalidation, tenant-scoped caching, choosing strategy (memory/SQLite/Redis) | `packages/cache/AGENTS.md` |
 | Adding background workers, configuring concurrency (I/O vs CPU-bound), idempotent job processing, queue strategies | `packages/queue/AGENTS.md` |
+| Tracking operation progress in the top bar, creating `ProgressJob`s, or emitting client-local progress events | `packages/core/src/modules/progress/AGENTS.md` + `packages/events/AGENTS.md` → DOM Event Bridge |
 | Adding onboarding wizard steps, tenant setup hooks (`onTenantCreated`/`seedDefaults`), welcome/invitation emails | `packages/onboarding/AGENTS.md` |
 | Adding static content pages (privacy policies, terms, legal pages) | `packages/content/AGENTS.md` |
 | Testing standalone apps with Verdaccio, publishing packages, canary releases, template scaffolding | `packages/create-app/AGENTS.md` |
@@ -188,7 +192,19 @@ All packages use the `@open-mercato/<package>` naming convention:
 - Put shared utilities and types in `packages/shared/src/lib/` or `packages/shared/src/modules/`
 - Put UI components in `packages/ui/src/`
 - Put user/app-specific modules in `apps/mercato/src/modules/<module>/`
-- MUST NOT add code directly in `apps/mercato/src/` — it's a boilerplate for user apps
+- MUST NOT add code directly in `apps/mercato/src/` — it's a boilerplate for user apps. Narrow exception: committed, typed *generated registries* (files matching `*.generated.ts`) consumed by `modules.ts` or other root entry points may live in `apps/mercato/src/` when they must survive `yarn clean-generated` and travel with the repo — see [Generated Files: versioned vs ephemeral](#generated-files-versioned-vs-ephemeral).
+
+### `external/official-modules/` (git submodule)
+
+`external/official-modules/` is a **git submodule** pointing at `open-mercato/official-modules` (a public repo). When present it is real working code — treat it as first-class for search, grep, refactoring, and cross-module reasoning, not as vendored/build output.
+
+- It is **optional and not committed** — `.gitmodules` and the `external/official-modules` checkout are not part of the open-mercato repo. They're created locally by `yarn official-modules add …` (which runs `git submodule add`). A fresh clone has no submodule; `yarn install` and CI are unchanged.
+- **Activation is driven by `official-modules.json`** (committed; `activated` is the team default, `available` is auto-filled once the submodule is present) and `official-modules.local.json` (gitignored personal override). Use `yarn official-modules` to inspect/change activation; the `postinstall` worker (`scripts/official-modules-setup.mjs`) — a no-op until the submodule is registered, then it inits/refreshes it — regenerates `apps/mercato/src/official-modules.generated.ts`, which `apps/mercato/src/modules.ts` spreads into `enabledModules`.
+- **Module-id convention:** package `@open-mercato/<suffix>` ⇒ module id `<suffix>` with dashes converted to underscores (e.g. `@open-mercato/ai-assistant` ⇒ `ai_assistant`).
+- **Edits under `external/official-modules/` commit to the submodule's git, not open-mercato's.** Commit/push from inside `external/official-modules/` on a feature branch; create the changeset there (`yarn changeset`); open the PR against `open-mercato/official-modules`.
+- **Never `git add external/official-modules` (pointer bump) unless explicitly asked** — the pointer may lag intentionally. Always check `git diff --staged` before committing in the host repo. The same applies to `apps/mercato/src/official-modules.generated.ts` / `official-modules.json` `available` churn unless you actually intend to change the activation set.
+- After activating/deactivating official modules: run `yarn mercato configs cache structural --all-tenants` (and `yarn dev:reset` if Turbopack serves a stale chunk).
+- **Cross-cutting changes** (core API + an official module): two coordinated PRs — core in open-mercato first → (prerelease) publish → submodule bumps the peer dep → submodule PR. Explain the merge order to the user. No PR is atomic across the two repos.
 
 ### When You Need an Import
 
@@ -276,14 +292,29 @@ All paths use `src/modules/<module>/` as shorthand. See `packages/core/AGENTS.md
 - API interception: declare interceptors in `api/interceptors.ts`; keep hooks fail-closed and scoped by route + method
 - Interceptors that narrow CRUD list results SHOULD prefer rewriting `query.ids` (comma-separated UUID list) instead of post-filtering response arrays
 - Component replacement: use handle-based IDs (`page:*`, `data-table:*`, `crud-form:*`, `section:*`) for deterministic overrides
-- Generated files: `apps/mercato/.mercato/generated/` — never edit manually
+- Generated files split into two buckets — see [Generated Files: versioned vs ephemeral](#generated-files-versioned-vs-ephemeral):
+  - **Ephemeral** (gitignored, regenerated on every `yarn generate`, wiped by `yarn clean-generated`): `apps/mercato/.mercato/generated/`, `packages/*/generated/`, `src/generated/`. Never edit manually and never depend on them being present in a fresh clone before `yarn generate` runs.
+  - **Versioned** (committed `*.generated.ts` files living next to source — e.g. `apps/mercato/src/official-modules.generated.ts`, `packages/core/src/generated-shims/entities.ids.generated.ts`, `packages/ui/src/backend/fields/registry.generated.ts`): also never edit by hand, but they MUST stay in git because they encode source-of-truth state (module activation, frozen ID maps, registry shape) that must travel with the repo and survive `yarn clean-generated`.
 - Enable modules in your app’s `src/modules.ts` (e.g. `apps/mercato/src/modules.ts`)
 - Run `yarn generate` after adding/modifying module files
 - Agents MUST automatically run `yarn mercato configs cache structural --all-tenants` after enabling/disabling modules in `src/modules.ts`, adding/removing backend or frontend pages, or changing sidebar/navigation injection — stale `nav:*` cache and stale Turbopack module-graph fingerprints can both hide structural changes until they are purged. The structural command purges `nav:*` Redis keys and bumps mtimes on `.mercato/generated/*.generated.{ts,checksum}` so Turbopack re-evaluates the import graph without a dev-server restart. If Turbopack still serves a stale compiled chunk after that, run `yarn dev:reset` to clear `.next/cache/turbopack` and restart `yarn dev`.
 - New integration providers MUST own their env-backed preconfiguration inside the provider package: implement preset reading/application in the provider module, apply it from `setup.ts`, expose a rerunnable provider CLI command when practical, and document the env variables. Do not add provider-specific preconfiguration logic to core modules.
 - AI agents: put definitions in `<module>/ai-agents.ts` and run `yarn generate`. Every agent declares `moduleId`, `label`, `executionMode`, `requiredFeatures`, `allowedTools`, `mutationPolicy`, and `defaultModel` (optional). See `packages/ai-assistant/AGENTS.md` and `/framework/ai-assistant/agents`.
 - AI-driven mutations MUST go through `prepareMutation(...)` + pending-action approval; never write directly inside a mutation tool handler — the runtime fails closed if the approval contract is bypassed.
-- AI provider keys: at least one of `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` must be set. Per-module model overrides use `<MODULE>_AI_MODEL` (uppercased module id).
+- AI provider keys: at least one of `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` must be set. Per-module model overrides use `OM_AI_<MODULE>_MODEL` (uppercased module id).
+
+### Generated Files: versioned vs ephemeral
+
+The codebase has two categories of generated files. Both are auto-written by tooling and MUST NOT be hand-edited, but they live in different places for different reasons.
+
+| Category | Where it lives | Tracked in git? | Survives `yarn clean-generated`? | Use it for |
+|---|---|---|---|---|
+| **Ephemeral** | `apps/mercato/.mercato/generated/`, `packages/*/generated/`, `src/generated/` (all matched by `.gitignore`) | No | No — wiped by `find -name generated -exec rm -rf` in `scripts/clean-generated.sh` | Per-build artifacts that `yarn generate` re-emits deterministically from in-repo source (module registries, indexer barrels, OpenAPI types, etc.). Safe to delete; safe to re-run. |
+| **Versioned** | Next to source as `<name>.generated.ts` / `<name>.generated.tsx` / `<name>-generated.d.ts` — e.g. `apps/mercato/src/official-modules.generated.ts`, `packages/core/src/generated-shims/entities.ids.generated.ts`, `packages/ui/src/backend/fields/registry.generated.ts`, `packages/ui/src/backend/icons/lucideRegistry.generated.tsx`, `packages/ai-assistant/src/modules/ai_assistant/lib/ai-{tools,agents}-generated.d.ts` | Yes | Yes — they are NOT inside any `generated/` folder and NOT inside `.mercato`, so the find-and-delete pattern doesn't match them | Source-of-truth state that must travel with the repo: module-activation config (`official-modules.json` → `official-modules.generated.ts`), frozen entity-id maps that protect against typos at type-check time, and registry shapes that other typed code imports. |
+
+**Why we don't collapse both into one folder:** a `generated/` folder is the existing convention for *throwaway* output of `yarn generate`. The `clean-generated.sh` script enforces that by wiping every `generated/` folder under the repo. Putting source-of-truth state in there would silently destroy it on a clean — and the rest of the team would never know their activation set was lost. The `*.generated.ts`-in-`src` pattern keeps the "do not edit by hand" signal in the filename while opting out of the wipe pattern.
+
+**If you're tempted to move a versioned generated file into a `generated/` folder:** read `.ai/specs/2026-05-19-official-modules-generated-location-decision.md` first — that decision was made deliberately and rebutting it requires updating both `.gitignore` and `scripts/clean-generated.sh` to carve out a new "committed generated" folder, then migrating all four-plus existing files together. Don't do it piecemeal.
 
 ## Backward Compatibility Contract
 

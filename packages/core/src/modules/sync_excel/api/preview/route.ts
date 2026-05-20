@@ -2,17 +2,20 @@ import type { EntityManager } from '@mikro-orm/postgresql'
 import { NextResponse } from 'next/server'
 import { getAuthFromRequest } from '@open-mercato/shared/lib/auth/server'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
+import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { z } from 'zod'
 import { syncExcelPreviewQuerySchema, syncExcelUploadResponseSchema } from '../../data/validators'
 import { SyncExcelUpload } from '../../data/entities'
 import { buildSuggestedMapping } from '../../lib/mapping'
+import { resolveSyncExcelConcreteScope } from '../../lib/scope'
 
 export const metadata = {
   GET: { requireAuth: true, requireFeatures: ['sync_excel.view'] },
 }
 
-const errorSchema = {
-  error: 'string',
-}
+const errorSchema = z.object({
+  error: z.string(),
+})
 
 export const openApi = {
   tags: ['SyncExcel'],
@@ -22,6 +25,8 @@ export const openApi = {
       summary: 'Fetch upload preview',
       responses: [
         { status: 200, description: 'Stored upload preview', schema: syncExcelUploadResponseSchema },
+        { status: 401, description: 'Unauthorized', schema: errorSchema },
+        { status: 422, description: 'Invalid query', schema: errorSchema },
         { status: 404, description: 'Upload preview not found', schema: errorSchema },
       ],
     },
@@ -30,7 +35,7 @@ export const openApi = {
 
 export async function GET(request: Request) {
   const auth = await getAuthFromRequest(request)
-  if (!auth?.tenantId || !auth.orgId) {
+  if (!auth?.tenantId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -45,12 +50,23 @@ export async function GET(request: Request) {
   }
 
   const container = await createRequestContainer()
+  const scopeResult = await resolveSyncExcelConcreteScope({ auth, container, request })
+  if (!scopeResult.ok) {
+    return NextResponse.json({ error: scopeResult.error }, { status: scopeResult.status })
+  }
+  const { scope } = scopeResult
   const em = container.resolve('em') as EntityManager
-  const upload = await em.findOne(SyncExcelUpload, {
-    id: parsedQuery.data.uploadId,
-    organizationId: auth.orgId,
-    tenantId: auth.tenantId,
-  })
+  const upload = await findOneWithDecryption(
+    em,
+    SyncExcelUpload,
+    {
+      id: parsedQuery.data.uploadId,
+      organizationId: scope.organizationId,
+      tenantId: scope.tenantId,
+    },
+    undefined,
+    scope,
+  )
 
   if (!upload) {
     return NextResponse.json({ error: 'Upload preview not found.' }, { status: 404 })

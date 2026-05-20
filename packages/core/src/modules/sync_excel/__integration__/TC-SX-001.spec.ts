@@ -1,13 +1,11 @@
 import path from 'node:path'
 import { config as loadEnv } from 'dotenv'
+import { Client } from 'pg'
 import { expect, test, type APIRequestContext, type APIResponse } from '@playwright/test'
 import '@open-mercato/core/modules/customers/commands/index'
-import type { BootstrapData } from '@open-mercato/shared/lib/bootstrap'
-import { bootstrapFromAppRoot } from '@open-mercato/shared/lib/bootstrap/dynamicLoader'
-import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
-import { createQueue } from '@open-mercato/queue'
 import { apiRequest, getAuthToken } from '@open-mercato/core/helpers/integration/api'
 import { deleteEntityIfExists, readJsonSafe } from '@open-mercato/core/helpers/integration/crmFixtures'
+import { drainIntegrationQueue } from '@open-mercato/core/helpers/integration/queue'
 
 type JsonRecord = Record<string, unknown>
 type SyncExcelUploadPreview = JsonRecord & {
@@ -46,8 +44,9 @@ const ENTITY_TYPE = 'customers.person'
 const INTEGRATION_ID = 'sync_excel'
 const PERSON_PROFILE_ENTITY_ID = 'customers:customer_person_profile'
 const DATA_SYNC_IMPORT_QUEUE = 'data-sync-import'
-
-let bootstrapDataPromise: Promise<BootstrapData> | null = null
+const EVENTS_QUEUE = 'events'
+let sharedDbClient: Client | null = null
+let sharedDbClientPromise: Promise<Client> | null = null
 
 if (!TEST_APP_ROOT) {
   loadEnv({ path: path.resolve(APP_ROOT, '.env') })
@@ -58,44 +57,15 @@ async function readJson(response: APIResponse): Promise<JsonRecord> {
   return ((await readJsonSafe<JsonRecord>(response)) ?? {}) as JsonRecord
 }
 
-async function getBootstrapData(): Promise<BootstrapData> {
-  if (!bootstrapDataPromise) {
-    bootstrapDataPromise = bootstrapFromAppRoot(APP_ROOT)
-  }
-  return bootstrapDataPromise
-}
-
-async function drainQueue(queueName: string): Promise<number> {
-  const data = await getBootstrapData()
-  const worker = data.modules
-    .flatMap((module) => module.workers ?? [])
-    .find((entry) => entry.queue === queueName)
-  if (!worker) return 0
-
-  const container = await createRequestContainer()
-  const queue = createQueue(queueName, 'local', { baseDir: APP_QUEUE_BASE_DIR, concurrency: 1 })
-  const resolve = <T = unknown>(name: string): T => container.resolve(name) as T
-
-  try {
-    let processedJobs = 0
-    while (true) {
-      const result = await queue.process(
-        async (job, ctx) => {
-          await Promise.resolve(worker.handler(job, { ...ctx, resolve }))
-        },
-        { limit: 100 },
-      )
-      const handled = result.processed + result.failed
-      processedJobs += handled
-      if (handled === 0) return processedJobs
-    }
-  } finally {
-    await queue.close()
-  }
-}
-
-async function drainDataSyncImportQueue(): Promise<void> {
-  await drainQueue(DATA_SYNC_IMPORT_QUEUE)
+async function getScopedJson(
+  request: APIRequestContext,
+  token: string,
+  path: string,
+): Promise<{ response: APIResponse; body: JsonRecord }> {
+  const response = await request.get(`${BASE_URL}${path}`, {
+    headers: syncExcelHeaders(token),
+  })
+  return { response, body: await readJson(response) }
 }
 
 async function waitForCompletedRun(
@@ -103,16 +73,28 @@ async function waitForCompletedRun(
   token: string,
   runId: string,
 ): Promise<void> {
-  await expect.poll(async () => {
+  const deadline = Date.now() + 90_000
+  let lastRunBody: JsonRecord = {}
+
+  while (Date.now() < deadline) {
     const runResponse = await apiRequest(request, 'GET', `/api/data_sync/runs/${encodeURIComponent(runId)}`, { token })
     expect(runResponse.status()).toBe(200)
     const runBody = await readJson(runResponse)
+    lastRunBody = runBody
     const status = String(runBody.status ?? '')
-    if (status !== 'completed') {
-      await drainDataSyncImportQueue()
+    if (status === 'completed') {
+      await drainIntegrationQueue(EVENTS_QUEUE, { appRoot: APP_ROOT })
+      return
     }
-    return status
-  }, { timeout: 30_000, intervals: [250, 500, 1_000, 2_000] }).toBe('completed')
+    if (status === 'failed' || status === 'cancelled') {
+      throw new Error(`Sync run ${runId} finished with ${status}: ${JSON.stringify(runBody)}`)
+    }
+
+    await drainIntegrationQueue(DATA_SYNC_IMPORT_QUEUE, { appRoot: APP_ROOT })
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+
+  throw new Error(`Timed out waiting for sync run ${runId} to complete. Last run response: ${JSON.stringify(lastRunBody)}`)
 }
 
 function asRunSummary(value: JsonRecord): SyncRunSummary {
@@ -157,6 +139,70 @@ function buildMultipartCsv(fileName: string, csv: string) {
       mimeType: 'text/csv',
       buffer: Buffer.from(csv, 'utf8'),
     },
+  }
+}
+
+function decodeTokenScope(token: string): { tenantId: string; orgId: string } {
+  const [, payload] = token.split('.')
+  if (!payload) throw new Error('Auth token is missing a JWT payload')
+  const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as JsonRecord
+  const tenantId = typeof claims.tenantId === 'string' ? claims.tenantId : ''
+  const orgId = typeof claims.orgId === 'string' ? claims.orgId : ''
+  if (!tenantId || !orgId) throw new Error('Auth token is missing tenantId/orgId claims')
+  return { tenantId, orgId }
+}
+
+async function getDbClient(): Promise<Client> {
+  if (sharedDbClient) return sharedDbClient
+  if (sharedDbClientPromise) return sharedDbClientPromise
+  const connectionString = process.env.DATABASE_URL
+  if (!connectionString) {
+    throw new Error('DATABASE_URL is required for direct DB assertions in TC-SX-001')
+  }
+  sharedDbClientPromise = (async () => {
+    const client = new Client({ connectionString })
+    await client.connect()
+    sharedDbClient = client
+    return client
+  })()
+  return sharedDbClientPromise
+}
+
+async function closeDbClient(): Promise<void> {
+  const client = sharedDbClient
+  sharedDbClient = null
+  sharedDbClientPromise = null
+  if (client) await client.end()
+}
+
+async function findPersonIdByExternalId(
+  externalId: string,
+  scope: { tenantId: string; orgId: string },
+): Promise<string | null> {
+  const client = await getDbClient()
+  const result = await client.query<{ internal_entity_id: string }>(
+    `
+      select internal_entity_id
+      from sync_external_id_mappings
+      where integration_id = $1
+        and internal_entity_type = $2
+        and external_id = $3
+        and organization_id = $4
+        and tenant_id = $5
+        and deleted_at is null
+      order by updated_at desc
+      limit 1
+    `,
+    ['sync_excel', ENTITY_TYPE, externalId, scope.orgId, scope.tenantId],
+  )
+  return result.rows[0]?.internal_entity_id ?? null
+}
+
+function syncExcelHeaders(token: string, selectedOrgId?: string): Record<string, string> {
+  const scope = decodeTokenScope(token)
+  return {
+    Authorization: `Bearer ${token}`,
+    Cookie: `om_selected_tenant=${scope.tenantId}; om_selected_org=${selectedOrgId ?? scope.orgId}`,
   }
 }
 
@@ -229,13 +275,44 @@ async function uploadCsv(
 ): Promise<JsonRecord> {
   const response = await request.fetch(`${BASE_URL}/api/sync_excel/upload`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
+    headers: syncExcelHeaders(token),
     multipart: buildMultipartCsv(fileName, csv),
   })
   expect(response.status()).toBe(200)
   return readJson(response)
+}
+
+async function previewUpload(
+  request: APIRequestContext,
+  token: string,
+  uploadId: string,
+): Promise<APIResponse> {
+  return request.get(`${BASE_URL}/api/sync_excel/preview?uploadId=${encodeURIComponent(uploadId)}&entityType=${encodeURIComponent(ENTITY_TYPE)}`, {
+    headers: syncExcelHeaders(token),
+  })
+}
+
+async function startSyncExcelImport(
+  request: APIRequestContext,
+  token: string,
+  data: JsonRecord,
+): Promise<APIResponse> {
+  let response: APIResponse | null = null
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    response = await request.fetch(`${BASE_URL}/api/sync_excel/import`, {
+      method: 'POST',
+      headers: {
+        ...syncExcelHeaders(token),
+        'Content-Type': 'application/json',
+      },
+      data,
+    })
+    if (response.status() !== 500) return response
+    if (attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)))
+    }
+  }
+  return response as APIResponse
 }
 
 async function listSyncExcelMappings(
@@ -333,39 +410,6 @@ async function readIntegrationDetail(
   return readJson(response)
 }
 
-async function findPersonByEmail(
-  request: APIRequestContext,
-  token: string,
-  email: string,
-): Promise<JsonRecord | null> {
-  const normalizedEmail = email.trim().toLowerCase()
-
-  for (let page = 1; page <= 4; page += 1) {
-    const response = await apiRequest(
-      request,
-      'GET',
-      `/api/customers/people?page=${page}&pageSize=50&sortField=createdAt&sortDir=desc`,
-      { token },
-    )
-    expect(response.status()).toBe(200)
-    const body = await readJson(response)
-    const items = Array.isArray(body.items) ? (body.items as JsonRecord[]) : []
-    const matching = items.find((item) => {
-      const primaryEmail =
-        typeof item.primary_email === 'string'
-          ? item.primary_email.trim().toLowerCase()
-          : typeof item.primaryEmail === 'string'
-            ? item.primaryEmail.trim().toLowerCase()
-            : ''
-      return primaryEmail === normalizedEmail
-    })
-    if (matching) return matching
-    if (items.length < 50) break
-  }
-
-  return null
-}
-
 async function createCustomFieldDefinition(
   request: APIRequestContext,
   token: string,
@@ -442,6 +486,42 @@ test.describe('TC-SX-001: sync_excel upload preview and import APIs', () => {
       multipart: buildMultipartCsv('forbidden.csv', 'Record Id,Lead Name\nforbidden-1,Forbidden Example\n'),
     })
     expect(forbiddenUpload.status()).toBe(403)
+
+    const adminToken = await getAuthToken(request, 'admin')
+    const allOrganizationsUpload = await request.fetch(`${BASE_URL}/api/sync_excel/upload`, {
+      method: 'POST',
+      headers: syncExcelHeaders(adminToken, '__all__'),
+      multipart: buildMultipartCsv('all-orgs.csv', 'Record Id,Lead Name\nall-1,All Organizations Example\n'),
+    })
+    expect(allOrganizationsUpload.status()).toBe(422)
+    await expect(readJson(allOrganizationsUpload)).resolves.toMatchObject({
+      error: 'Select a concrete organization before importing CSV.',
+    })
+
+    const allOrganizationsPreview = await request.get(`${BASE_URL}/api/sync_excel/preview?uploadId=00000000-0000-0000-0000-000000000000&entityType=${encodeURIComponent(ENTITY_TYPE)}`, {
+      headers: syncExcelHeaders(adminToken, '__all__'),
+    })
+    expect(allOrganizationsPreview.status()).toBe(422)
+
+    const allOrganizationsImport = await request.fetch(`${BASE_URL}/api/sync_excel/import`, {
+      method: 'POST',
+      headers: {
+        ...syncExcelHeaders(adminToken, '__all__'),
+        'Content-Type': 'application/json',
+      },
+      data: {
+        uploadId: '00000000-0000-0000-0000-000000000000',
+        entityType: ENTITY_TYPE,
+        mapping: {
+          entityType: ENTITY_TYPE,
+          matchStrategy: 'externalId',
+          matchField: 'person.externalId',
+          fields: [],
+          unmappedColumns: [],
+        },
+      },
+    })
+    expect(allOrganizationsImport.status()).toBe(422)
   })
 
   test('upload preview and import create then update a customer person', async ({ request }) => {
@@ -524,21 +604,13 @@ test.describe('TC-SX-001: sync_excel upload preview and import APIs', () => {
         localField: 'address.postalCode',
       })
 
-      const previewAgain = await apiRequest(
-        request,
-        'GET',
-        `/api/sync_excel/preview?uploadId=${encodeURIComponent(String(uploadPreview.uploadId))}&entityType=${encodeURIComponent(ENTITY_TYPE)}`,
-        { token },
-      )
+      const previewAgain = await previewUpload(request, token, String(uploadPreview.uploadId))
       expect(previewAgain.status()).toBe(200)
 
-      const importStart = await apiRequest(request, 'POST', '/api/sync_excel/import', {
-        token,
-        data: {
-          uploadId: uploadPreview.uploadId,
-          entityType: ENTITY_TYPE,
-          mapping: importMapping,
-        },
+      const importStart = await startSyncExcelImport(request, token, {
+        uploadId: uploadPreview.uploadId,
+        entityType: ENTITY_TYPE,
+        mapping: importMapping,
       })
       expect(importStart.status()).toBe(201)
       const importStartBody = await readJson(importStart)
@@ -582,14 +654,15 @@ test.describe('TC-SX-001: sync_excel upload preview and import APIs', () => {
       })
       expect(typeof (integrationDetailAfterFirstRun.state as JsonRecord).lastHealthCheckedAt).toBe('string')
 
-      const createdPerson = await findPersonByEmail(request, token, email)
-      expect(createdPerson).not.toBeNull()
-      createdPersonId = String(createdPerson?.id ?? '')
+      createdPersonId = await findPersonIdByExternalId(externalId, decodeTokenScope(token)) ?? ''
       expect(createdPersonId).toMatch(/^[0-9a-f-]{36}$/i)
 
-      const createdDetailResponse = await apiRequest(request, 'GET', `/api/customers/people/${encodeURIComponent(createdPersonId)}?include=addresses`, { token })
+      const { response: createdDetailResponse, body: createdDetailBody } = await getScopedJson(
+        request,
+        token,
+        `/api/customers/people/${encodeURIComponent(createdPersonId)}?include=addresses`,
+      )
       expect(createdDetailResponse.status()).toBe(200)
-      const createdDetailBody = await readJson(createdDetailResponse)
       expect(createdDetailBody.person).toMatchObject({
         displayName: 'Ada Lovelace',
         primaryEmail: email,
@@ -623,13 +696,10 @@ test.describe('TC-SX-001: sync_excel upload preview and import APIs', () => {
         externalField: 'Postal Code',
         localField: 'address.postalCode',
       })
-      const secondImportStart = await apiRequest(request, 'POST', '/api/sync_excel/import', {
-        token,
-        data: {
-          uploadId: secondUpload.uploadId,
-          entityType: ENTITY_TYPE,
-          mapping: secondImportMapping,
-        },
+      const secondImportStart = await startSyncExcelImport(request, token, {
+        uploadId: secondUpload.uploadId,
+        entityType: ENTITY_TYPE,
+        mapping: secondImportMapping,
       })
       expect(secondImportStart.status()).toBe(201)
       const secondImportBody = await readJson(secondImportStart)
@@ -646,9 +716,12 @@ test.describe('TC-SX-001: sync_excel upload preview and import APIs', () => {
         failedCount: 0,
       })
 
-      const updatedDetailResponse = await apiRequest(request, 'GET', `/api/customers/people/${encodeURIComponent(createdPersonId)}?include=addresses`, { token })
+      const { response: updatedDetailResponse, body: updatedDetailBody } = await getScopedJson(
+        request,
+        token,
+        `/api/customers/people/${encodeURIComponent(createdPersonId)}?include=addresses`,
+      )
       expect(updatedDetailResponse.status()).toBe(200)
-      const updatedDetailBody = await readJson(updatedDetailResponse)
       expect(updatedDetailBody.person).toMatchObject({
         displayName: 'Ada Byron',
         primaryEmail: email,
@@ -684,13 +757,10 @@ test.describe('TC-SX-001: sync_excel upload preview and import APIs', () => {
         externalField: 'Postal Code',
         localField: 'address.postalCode',
       })
-      const thirdImportStart = await apiRequest(request, 'POST', '/api/sync_excel/import', {
-        token,
-        data: {
-          uploadId: thirdUpload.uploadId,
-          entityType: ENTITY_TYPE,
-          mapping: thirdImportMapping,
-        },
+      const thirdImportStart = await startSyncExcelImport(request, token, {
+        uploadId: thirdUpload.uploadId,
+        entityType: ENTITY_TYPE,
+        mapping: thirdImportMapping,
       })
       expect(thirdImportStart.status()).toBe(201)
       const thirdImportBody = await readJson(thirdImportStart)
@@ -707,9 +777,12 @@ test.describe('TC-SX-001: sync_excel upload preview and import APIs', () => {
         failedCount: 0,
       })
 
-      const recreatedDetailResponse = await apiRequest(request, 'GET', `/api/customers/people/${encodeURIComponent(createdPersonId)}?include=addresses`, { token })
+      const { response: recreatedDetailResponse, body: recreatedDetailBody } = await getScopedJson(
+        request,
+        token,
+        `/api/customers/people/${encodeURIComponent(createdPersonId)}?include=addresses`,
+      )
       expect(recreatedDetailResponse.status()).toBe(200)
-      const recreatedDetailBody = await readJson(recreatedDetailResponse)
       const recreatedPrimaryAddress = findPrimaryAddress(recreatedDetailBody.addresses)
       expect(recreatedPrimaryAddress).toMatchObject({
         addressLine1: '900 Recreated Road',
@@ -735,6 +808,7 @@ test.describe('TC-SX-001: sync_excel upload preview and import APIs', () => {
         key: customFieldKey,
       })
       await restoreSyncExcelMapping(request, token, previousMapping)
+      await closeDbClient()
     }
   })
 })

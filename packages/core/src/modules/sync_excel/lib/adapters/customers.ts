@@ -1,7 +1,7 @@
 import type { EntityManager } from '@mikro-orm/postgresql'
 import type { CommandBus, CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
-import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { extractPhoneDigits, validatePhoneNumber } from '@open-mercato/shared/lib/phone'
 import type {
   DataMapping,
@@ -15,6 +15,7 @@ import type { ExternalIdMappingService } from '../../../data_sync/lib/id-mapping
 import { SyncMapping } from '../../../data_sync/data/entities'
 import { CustomerAddress, CustomerEntity } from '../../../customers/data/entities'
 import { Attachment } from '../../../attachments/data/entities'
+import { CustomFieldDef } from '../../../entities/data/entities'
 import { SyncExcelUpload } from '../../data/entities'
 import { parseCsvDocument, type CsvPreviewRow } from '../parser'
 import { readSyncExcelUploadBuffer } from '../upload-storage'
@@ -23,7 +24,6 @@ import { E } from '#generated/entities.ids.generated'
 type SyncExcelCursor = {
   uploadId: string
   offset: number
-  inlineCsvBase64?: string | null
 }
 
 type Container = Awaited<ReturnType<typeof createRequestContainer>>
@@ -68,6 +68,17 @@ type PersonRowValues = {
   customFields: Record<string, unknown>
   addressValues: AddressFieldValues
 }
+
+type ImportCustomFieldDefinition = {
+  key: string
+  kind: string
+  entityId: string
+  organizationId?: string | null
+  tenantId?: string | null
+  updatedAt?: Date | string | null
+}
+
+type EmailDedupeIndex = Map<string, string>
 
 type BuiltPersonPayload = {
   values: PersonFieldValues
@@ -215,6 +226,151 @@ function normalizeOptionalNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function normalizeCustomFieldDate(value: string): string | null {
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return null
+  return parsed.toISOString().slice(0, 10)
+}
+
+function normalizeCustomFieldBoolean(value: string): boolean | null {
+  const normalized = value.trim().toLowerCase()
+  if (['true', '1', 'yes', 'y', 't', 'tak'].includes(normalized)) return true
+  if (['false', '0', 'no', 'n', 'f', 'nie'].includes(normalized)) return false
+  return null
+}
+
+function coerceCustomFieldValue(
+  key: string,
+  value: unknown,
+  definitions: Map<string, ImportCustomFieldDefinition>,
+): { ok: true; value: unknown } | { ok: false; error: string } {
+  if (typeof value === 'string' && value.trim().length === 0) {
+    return { ok: true, value: null }
+  }
+
+  const definition = definitions.get(key)
+  if (!definition) {
+    return { ok: true, value: typeof value === 'string' ? value.trim() : value }
+  }
+
+  if (value === null || value === undefined) {
+    return { ok: true, value: null }
+  }
+
+  const text = typeof value === 'string' ? value.trim() : String(value)
+  if (text.length === 0) {
+    return { ok: true, value: null }
+  }
+
+  const kind = definition.kind.toLowerCase()
+  if (kind === 'boolean') {
+    const booleanValue = normalizeCustomFieldBoolean(text)
+    if (booleanValue === null) {
+      return { ok: false, error: `Custom field "${key}" expects a boolean value.` }
+    }
+    return { ok: true, value: booleanValue }
+  }
+
+  if (kind === 'integer') {
+    const numberValue = Number(text)
+    if (!Number.isInteger(numberValue)) {
+      return { ok: false, error: `Custom field "${key}" expects an integer value.` }
+    }
+    return { ok: true, value: numberValue }
+  }
+
+  if (kind === 'float' || kind === 'currency' || kind === 'number') {
+    const numberValue = Number(text)
+    if (!Number.isFinite(numberValue)) {
+      return { ok: false, error: `Custom field "${key}" expects a number value.` }
+    }
+    return { ok: true, value: numberValue }
+  }
+
+  if (kind === 'date' || kind === 'datetime') {
+    const dateValue = normalizeCustomFieldDate(text)
+    if (!dateValue) {
+      return { ok: false, error: `Custom field "${key}" expects a date value.` }
+    }
+    return { ok: true, value: dateValue }
+  }
+
+  return { ok: true, value: text }
+}
+
+function coerceCustomFields(
+  values: Record<string, unknown>,
+  definitions: Map<string, ImportCustomFieldDefinition>,
+): { ok: true; values: Record<string, unknown> } | { ok: false; error: string } {
+  const coerced: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(values)) {
+    const result = coerceCustomFieldValue(key, value, definitions)
+    if (!result.ok) return result
+    coerced[key] = result.value
+  }
+  return { ok: true, values: coerced }
+}
+
+function customFieldDefinitionScopeScore(definition: ImportCustomFieldDefinition): number {
+  return (definition.tenantId ? 2 : 0) + (definition.organizationId ? 1 : 0)
+}
+
+function customFieldDefinitionUpdatedAt(definition: ImportCustomFieldDefinition): number {
+  if (!definition.updatedAt) return 0
+  const value = definition.updatedAt instanceof Date
+    ? definition.updatedAt.getTime()
+    : new Date(definition.updatedAt).getTime()
+  return Number.isFinite(value) ? value : 0
+}
+
+function preferCustomFieldDefinition(
+  current: ImportCustomFieldDefinition | undefined,
+  candidate: ImportCustomFieldDefinition,
+): boolean {
+  if (!current) return true
+  const candidateScore = customFieldDefinitionScopeScore(candidate)
+  const currentScore = customFieldDefinitionScopeScore(current)
+  if (candidateScore !== currentScore) return candidateScore > currentScore
+  return customFieldDefinitionUpdatedAt(candidate) >= customFieldDefinitionUpdatedAt(current)
+}
+
+async function loadImportCustomFieldDefinitions(
+  em: EntityManager,
+  scope: TenantScope,
+): Promise<Map<string, ImportCustomFieldDefinition>> {
+  const definitions = await findWithDecryption(
+    em,
+    CustomFieldDef,
+    {
+      entityId: { $in: [E.customers.customer_entity, E.customers.customer_person_profile] as string[] },
+      deletedAt: null,
+      isActive: true,
+      $and: [
+        { $or: [{ tenantId: scope.tenantId }, { tenantId: null }] },
+        { $or: [{ organizationId: scope.organizationId }, { organizationId: null }] },
+      ],
+    },
+    undefined,
+    scope,
+  )
+
+  const byKey = new Map<string, ImportCustomFieldDefinition>()
+  for (const definition of definitions) {
+    const candidate: ImportCustomFieldDefinition = {
+      key: definition.key,
+      kind: definition.kind,
+      entityId: definition.entityId,
+      organizationId: definition.organizationId ?? null,
+      tenantId: definition.tenantId ?? null,
+      updatedAt: definition.updatedAt ?? null,
+    }
+    if (preferCustomFieldDefinition(byKey.get(candidate.key), candidate)) {
+      byKey.set(candidate.key, candidate)
+    }
+  }
+  return byKey
+}
+
 function buildCommandContext(container: Container, scope: TenantScope): CommandRuntimeContext {
   return {
     container,
@@ -230,11 +386,10 @@ function buildCommandContext(container: Container, scope: TenantScope): CommandR
   }
 }
 
-export function createCursor(uploadId: string, offset: number, inlineCsvBase64?: string | null): string {
+export function createCursor(uploadId: string, offset: number): string {
   return JSON.stringify({
     uploadId,
     offset,
-    ...(inlineCsvBase64 ? { inlineCsvBase64 } : {}),
   })
 }
 
@@ -248,9 +403,6 @@ export function parseCursor(value: string | null | undefined): SyncExcelCursor |
     return {
       uploadId: parsed.uploadId,
       offset: parsed.offset,
-      inlineCsvBase64: typeof parsed.inlineCsvBase64 === 'string' && parsed.inlineCsvBase64.length > 0
-        ? parsed.inlineCsvBase64
-        : null,
     }
   } catch {
     return null
@@ -499,7 +651,8 @@ async function upsertPrimaryAddress(params: {
   if (!hasAddressValues(params.addressValues)) return
   if (!params.addressValues.addressLine1) return
 
-  const [existingPrimaryAddress] = await params.em.find(
+  const [existingPrimaryAddress] = await findWithDecryption(
+    params.em,
     CustomerAddress,
     {
       entity: params.entityId,
@@ -513,6 +666,7 @@ async function upsertPrimaryAddress(params: {
       },
       limit: 1,
     },
+    params.scope,
   )
 
   if (existingPrimaryAddress) {
@@ -553,12 +707,18 @@ async function upsertPrimaryAddress(params: {
 }
 
 async function loadStoredMapping(em: EntityManager, entityType: string, scope: TenantScope): Promise<DataMapping> {
-  const stored = await em.findOne(SyncMapping, {
-    integrationId: 'sync_excel',
-    entityType,
-    organizationId: scope.organizationId,
-    tenantId: scope.tenantId,
-  })
+  const stored = await findOneWithDecryption(
+    em,
+    SyncMapping,
+    {
+      integrationId: 'sync_excel',
+      entityType,
+      organizationId: scope.organizationId,
+      tenantId: scope.tenantId,
+    },
+    undefined,
+    scope,
+  )
 
   if (stored?.mapping && typeof stored.mapping === 'object') {
     return stored.mapping as unknown as DataMapping
@@ -573,20 +733,32 @@ async function loadStoredMapping(em: EntityManager, entityType: string, scope: T
 
 async function resolveUpload(em: EntityManager, runId: string | undefined, cursor: SyncExcelCursor | null, scope: TenantScope): Promise<SyncExcelUpload | null> {
   if (runId) {
-    const uploadByRun = await em.findOne(SyncExcelUpload, {
-      syncRunId: runId,
-      organizationId: scope.organizationId,
-      tenantId: scope.tenantId,
-    })
+    const uploadByRun = await findOneWithDecryption(
+      em,
+      SyncExcelUpload,
+      {
+        syncRunId: runId,
+        organizationId: scope.organizationId,
+        tenantId: scope.tenantId,
+      },
+      undefined,
+      scope,
+    )
     if (uploadByRun) return uploadByRun
   }
 
   if (cursor?.uploadId) {
-    return em.findOne(SyncExcelUpload, {
-      id: cursor.uploadId,
-      organizationId: scope.organizationId,
-      tenantId: scope.tenantId,
-    })
+    return findOneWithDecryption(
+      em,
+      SyncExcelUpload,
+      {
+        id: cursor.uploadId,
+        organizationId: scope.organizationId,
+        tenantId: scope.tenantId,
+      },
+      undefined,
+      scope,
+    )
   }
 
   return null
@@ -594,9 +766,9 @@ async function resolveUpload(em: EntityManager, runId: string | undefined, curso
 
 async function resolveExistingPersonId(params: {
   externalIdMappingService: ExternalIdMappingService
-  em: EntityManager
   externalId: string | null | undefined
   email: string | null | undefined
+  emailDedupeIndex: EmailDedupeIndex
   scope: TenantScope
 }): Promise<string | null> {
   if (params.externalId) {
@@ -610,22 +782,49 @@ async function resolveExistingPersonId(params: {
   }
 
   if (!params.email) return null
+  return params.emailDedupeIndex.get(params.email) ?? null
+}
 
-  const existing = await findOneWithDecryption(
+async function buildEmailDedupeIndex(params: {
+  em: EntityManager
+  rows: CsvPreviewRow[]
+  mapping: DataMapping
+  scope: TenantScope
+}): Promise<EmailDedupeIndex> {
+  const emails = new Set<string>()
+  for (const row of params.rows) {
+    const rowValues = mapRowValues(row, params.mapping.fields)
+    const email = rowValues.values.primaryEmail
+    if (email) emails.add(email)
+  }
+
+  if (emails.size === 0) return new Map()
+
+  const candidates = await findWithDecryption(
     params.em,
     CustomerEntity,
     {
       kind: 'person',
-      primaryEmail: params.email,
       organizationId: params.scope.organizationId,
       tenantId: params.scope.tenantId,
       deletedAt: null,
+      isActive: true,
     },
-    undefined,
+    {
+      orderBy: {
+        createdAt: 'asc',
+      },
+    },
     params.scope,
   )
 
-  return existing?.id ?? null
+  const index: EmailDedupeIndex = new Map()
+  for (const candidate of candidates) {
+    const email = normalizeEmail(candidate.primaryEmail)
+    if (!email || !emails.has(email) || index.has(email)) continue
+    index.set(email, candidate.id)
+  }
+  return index
 }
 
 function isEmptyRow(row: CsvPreviewRow): boolean {
@@ -640,6 +839,8 @@ async function processRow(params: {
   commandBus: CommandBus
   commandContext: CommandRuntimeContext
   externalIdMappingService: ExternalIdMappingService
+  emailDedupeIndex: EmailDedupeIndex
+  customFieldDefinitions: Map<string, ImportCustomFieldDefinition>
   em: EntityManager
 }): Promise<ImportItem> {
   if (isEmptyRow(params.row)) {
@@ -656,11 +857,23 @@ async function processRow(params: {
   const payload = buildPersonPayload(params.row, params.mapping, params.scope)
   const externalId = payload.values.externalId ?? null
   const sourceIdentifier = payload.sourceIdentifier ?? `row:${params.rowNumber}`
+  const customFieldResult = coerceCustomFields(payload.customFields, params.customFieldDefinitions)
+  if (!customFieldResult.ok) {
+    return {
+      externalId: externalId ?? sourceIdentifier,
+      action: 'failed',
+      data: {
+        rowNumber: params.rowNumber,
+        sourceIdentifier,
+        errorMessage: customFieldResult.error,
+      },
+    }
+  }
   const existingId = await resolveExistingPersonId({
     externalIdMappingService: params.externalIdMappingService,
-    em: params.em,
     externalId,
     email: payload.values.primaryEmail,
+    emailDedupeIndex: params.emailDedupeIndex,
     scope: params.scope,
   })
 
@@ -681,7 +894,7 @@ async function processRow(params: {
       const updateInput = {
         id: existingId,
         ...payload.updateInput,
-        ...(Object.keys(payload.customFields).length > 0 ? { customFields: payload.customFields } : {}),
+        ...(Object.keys(customFieldResult.values).length > 0 ? { customFields: customFieldResult.values } : {}),
       }
       await params.commandBus.execute('customers.people.update', {
         input: updateInput,
@@ -706,6 +919,9 @@ async function processRow(params: {
           params.scope,
         )
       }
+      if (payload.values.primaryEmail && !params.emailDedupeIndex.has(payload.values.primaryEmail)) {
+        params.emailDedupeIndex.set(payload.values.primaryEmail, existingId)
+      }
 
       return {
         externalId: externalId ?? sourceIdentifier,
@@ -724,7 +940,7 @@ async function processRow(params: {
     >('customers.people.create', {
       input: {
         ...payload.createInput!,
-        ...(Object.keys(payload.customFields).length > 0 ? { customFields: payload.customFields } : {}),
+        ...(Object.keys(customFieldResult.values).length > 0 ? { customFields: customFieldResult.values } : {}),
       },
       ctx: params.commandContext,
     })
@@ -746,6 +962,9 @@ async function processRow(params: {
         externalId,
         params.scope,
       )
+    }
+    if (payload.values.primaryEmail && !params.emailDedupeIndex.has(payload.values.primaryEmail)) {
+      params.emailDedupeIndex.set(payload.values.primaryEmail, commandResult.result.entityId)
     }
 
     return {
@@ -774,6 +993,8 @@ async function processRow(params: {
 
 export const syncExcelCustomersAdapter: DataSyncAdapter = {
   providerKey: 'excel',
+  runMode: 'provider',
+  operationalTelemetry: true,
   direction: 'import',
   supportedEntities: ['customers.person'],
 
@@ -806,25 +1027,36 @@ export const syncExcelCustomersAdapter: DataSyncAdapter = {
     await em.flush()
 
     try {
-      const attachment = await em.findOne(Attachment, {
-        id: upload.attachmentId,
-        organizationId: input.scope.organizationId,
-        tenantId: input.scope.tenantId,
-      })
+      const attachment = await findOneWithDecryption(
+        em,
+        Attachment,
+        {
+          id: upload.attachmentId,
+          organizationId: input.scope.organizationId,
+          tenantId: input.scope.tenantId,
+        },
+        undefined,
+        input.scope,
+      )
 
       if (!attachment) {
         throw new Error('CSV upload attachment could not be found.')
       }
 
-      const fileBuffer = cursor?.inlineCsvBase64
-        ? Buffer.from(cursor.inlineCsvBase64, 'base64')
-        : await readSyncExcelUploadBuffer(attachment)
+      const fileBuffer = await readSyncExcelUploadBuffer(attachment)
       const document = parseCsvDocument(fileBuffer)
       const startOffset = cursor?.uploadId === upload.id ? cursor.offset : 0
       const commandContext = buildCommandContext(container, input.scope)
+      const customFieldDefinitions = await loadImportCustomFieldDefinitions(em, input.scope)
 
       for (let offset = startOffset, batchIndex = 0; offset < document.rows.length; offset += input.batchSize, batchIndex += 1) {
         const batchRows = document.rows.slice(offset, offset + input.batchSize)
+        const emailDedupeIndex = await buildEmailDedupeIndex({
+          em,
+          rows: batchRows,
+          mapping: input.mapping,
+          scope: input.scope,
+        })
         const items: ImportItem[] = []
 
         for (let index = 0; index < batchRows.length; index += 1) {
@@ -836,6 +1068,8 @@ export const syncExcelCustomersAdapter: DataSyncAdapter = {
             commandBus,
             commandContext,
             externalIdMappingService,
+            emailDedupeIndex,
+            customFieldDefinitions,
             em,
           }))
         }
@@ -843,7 +1077,7 @@ export const syncExcelCustomersAdapter: DataSyncAdapter = {
         const nextOffset = offset + batchRows.length
         yield {
           items,
-          cursor: createCursor(upload.id, nextOffset, cursor?.inlineCsvBase64 ?? fileBuffer.toString('base64')),
+          cursor: createCursor(upload.id, nextOffset),
           hasMore: nextOffset < document.rows.length,
           totalEstimate: document.totalRows,
           processedCount: batchRows.length,

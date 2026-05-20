@@ -3,7 +3,8 @@
 const mockGetAuthFromRequest = jest.fn()
 const mockReadJsonSafe = jest.fn()
 const mockStartDataSyncRun = jest.fn()
-const mockReadSyncExcelUploadBuffer = jest.fn()
+const mockFindOneWithDecryption = jest.fn()
+const mockResolveSyncExcelConcreteScope = jest.fn()
 
 const mockUpload = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -66,8 +67,12 @@ jest.mock('@open-mercato/core/modules/data_sync/lib/start-run', () => ({
   startDataSyncRun: jest.fn((params: unknown) => mockStartDataSyncRun(params)),
 }))
 
-jest.mock('../../../lib/upload-storage', () => ({
-  readSyncExcelUploadBuffer: (...args: unknown[]) => mockReadSyncExcelUploadBuffer(...args),
+jest.mock('@open-mercato/shared/lib/encryption/find', () => ({
+  findOneWithDecryption: (...args: unknown[]) => mockFindOneWithDecryption(...args),
+}))
+
+jest.mock('../../../lib/scope', () => ({
+  resolveSyncExcelConcreteScope: jest.fn((params: unknown) => mockResolveSyncExcelConcreteScope(params)),
 }))
 
 type RouteModule = typeof import('../route')
@@ -104,7 +109,14 @@ describe('sync_excel import route', () => {
         unmappedColumns: ['Unused'],
       },
     })
-    mockEm.findOne.mockImplementation(async (Entity: unknown, criteria: Record<string, unknown>) => {
+    mockResolveSyncExcelConcreteScope.mockResolvedValue({
+      ok: true,
+      scope: {
+        organizationId: '33333333-3333-4333-8333-333333333333',
+        tenantId: '22222222-2222-4222-8222-222222222222',
+      },
+    })
+    mockFindOneWithDecryption.mockImplementation(async (_em: unknown, _entity: unknown, criteria: Record<string, unknown>) => {
       if (criteria?.id === mockUpload.id) return mockUpload
       if (criteria?.id === mockUpload.attachmentId) {
         return {
@@ -119,7 +131,6 @@ describe('sync_excel import route', () => {
       }
       return null
     })
-    mockReadSyncExcelUploadBuffer.mockResolvedValue(Buffer.from('Record Id,First Name\n1,Ada\n'))
     mockStartDataSyncRun.mockResolvedValue({
       run: {
         id: '44444444-4444-4444-8444-444444444444',
@@ -174,18 +185,37 @@ describe('sync_excel import route', () => {
         cursor: expect.stringContaining(`"uploadId":"${mockUpload.id}"`),
       }),
     }))
-    expect(JSON.parse(mockStartDataSyncRun.mock.calls[0][0].input.cursor)).toMatchObject({
+    expect(JSON.parse(mockStartDataSyncRun.mock.calls[0][0].input.cursor)).toEqual({
       uploadId: mockUpload.id,
       offset: 0,
-      inlineCsvBase64: Buffer.from('Record Id,First Name\n1,Ada\n').toString('base64'),
     })
     expect(mockUpload.syncRunId).toBe('44444444-4444-4444-8444-444444444444')
     expect(mockUpload.status).toBe('importing')
     expect(mockEm.flush).toHaveBeenCalled()
   })
 
+  it('returns 422 when All organizations is selected', async () => {
+    mockResolveSyncExcelConcreteScope.mockResolvedValueOnce({
+      ok: false,
+      status: 422,
+      error: 'Select a concrete organization before importing CSV.',
+    })
+
+    const response = await postHandler(new Request('http://localhost/api/sync_excel/import', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie: 'om_selected_org=__all__',
+      },
+      body: JSON.stringify({ ok: true }),
+    }))
+
+    expect(response.status).toBe(422)
+    await expect(response.json()).resolves.toEqual({ error: 'Select a concrete organization before importing CSV.' })
+  })
+
   it('returns 404 when upload is missing', async () => {
-    mockEm.findOne.mockResolvedValueOnce(null)
+    mockFindOneWithDecryption.mockResolvedValueOnce(null)
 
     const response = await postHandler(new Request('http://localhost/api/sync_excel/import', {
       method: 'POST',

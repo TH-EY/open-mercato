@@ -20,12 +20,14 @@ import { escapeLikePattern } from '@open-mercato/shared/lib/db/escapeLikePattern
 import { resolveSearchConfig } from '@open-mercato/shared/lib/search/config'
 import { tokenizeText } from '@open-mercato/shared/lib/search/tokenize'
 import { sql } from 'kysely'
+import { normalizeDisplayNameInput } from '@open-mercato/core/modules/auth/lib/displayName'
 
 const querySchema = z.object({
   id: z.string().uuid().optional(),
   page: z.coerce.number().min(1).default(1),
   pageSize: z.coerce.number().min(1).max(100).default(50),
   search: z.string().optional(),
+  name: z.string().optional(),
   organizationId: z.string().uuid().optional(),
   roleIds: z.array(z.string().uuid()).optional(),
 }).passthrough()
@@ -34,8 +36,14 @@ const rawBodySchema = z.object({}).passthrough()
 
 const passwordSchema = buildPasswordSchema()
 
+const displayNameSchema = z.preprocess(
+  normalizeDisplayNameInput,
+  z.string().trim().min(1).max(120).nullable().optional(),
+)
+
 const userCreateSchema = z.object({
   email: z.string().email(),
+  name: displayNameSchema,
   password: passwordSchema.optional(),
   sendInviteEmail: z.boolean().optional(),
   organizationId: z.string().uuid(),
@@ -48,6 +56,7 @@ const userCreateSchema = z.object({
 const userUpdateSchema = z.object({
   id: z.string().uuid(),
   email: z.string().email().optional(),
+  name: displayNameSchema,
   password: passwordSchema.optional(),
   organizationId: z.string().uuid().optional(),
   roles: z.array(z.string()).optional(),
@@ -56,6 +65,7 @@ const userUpdateSchema = z.object({
 const userListItemSchema = z.object({
   id: z.string().uuid(),
   email: z.string().email(),
+  name: z.string().nullable(),
   organizationId: z.string().uuid().nullable(),
   organizationName: z.string().nullable(),
   tenantId: z.string().uuid().nullable(),
@@ -141,6 +151,7 @@ export async function GET(req: Request) {
     page: url.searchParams.get('page') || undefined,
     pageSize: url.searchParams.get('pageSize') || undefined,
     search: url.searchParams.get('search') || undefined,
+    name: url.searchParams.get('name') || undefined,
     organizationId: url.searchParams.get('organizationId') || undefined,
     roleIds: rawRoleIds.length ? rawRoleIds : undefined,
   })
@@ -157,7 +168,7 @@ export async function GET(req: Request) {
   } catch (err) {
     console.error('users: failed to resolve rbac', err)
   }
-  const { id, page, pageSize, search, organizationId, roleIds } = parsed.data
+  const { id, page, pageSize, search, name, organizationId, roleIds } = parsed.data
   const filters: any[] = [{ deletedAt: null }]
   const actorTenantId = auth.tenantId ? String(auth.tenantId) : null
   if (!isSuperAdmin) {
@@ -167,6 +178,10 @@ export async function GET(req: Request) {
     filters.push({ tenantId: actorTenantId })
   }
   if (organizationId) filters.push({ organizationId })
+  const trimmedName = typeof name === 'string' ? name.trim() : ''
+  if (trimmedName) {
+    filters.push({ name: { $ilike: `%${escapeLikePattern(trimmedName)}%` } })
+  }
   let idFilter: Set<string> | null = id ? new Set([id]) : null
   if (Array.isArray(roleIds) && roleIds.length > 0) {
     const uniqueRoleIds = Array.from(new Set(roleIds))
@@ -345,6 +360,7 @@ export async function GET(req: Request) {
     return {
       id: uid,
       email: String(u.email),
+      name: u.name ? String(u.name) : null,
       organizationId: orgId,
       organizationName: orgId ? orgMap[orgId] ?? orgId : null,
       tenantId: u.tenantId ? String(u.tenantId) : null,
@@ -475,7 +491,7 @@ export const openApi: OpenApiRouteDoc = {
     },
     POST: {
       summary: 'Create user',
-      description: 'Creates a new confirmed user within the specified organization and optional roles.',
+      description: 'Creates a new confirmed user within the specified organization, optional display name, and optional roles.',
       requestBody: {
         contentType: 'application/json',
         schema: userCreateSchema,
@@ -495,7 +511,7 @@ export const openApi: OpenApiRouteDoc = {
     },
     PUT: {
       summary: 'Update user',
-      description: 'Updates profile fields, organization assignment, credentials, or role memberships.',
+      description: 'Updates profile fields including display name, organization assignment, credentials, or role memberships.',
       requestBody: {
         contentType: 'application/json',
         schema: userUpdateSchema,

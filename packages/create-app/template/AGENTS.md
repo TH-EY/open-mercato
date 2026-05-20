@@ -105,6 +105,20 @@ yarn reinstall
 | `OM_DEV_SPLASH_CLAUDE_CODE_PATH` | auto-detect | Optional path override for the Claude Code CLI. |
 | `OM_DEV_SPLASH_CODEX_PATH` | auto-detect | Optional path override for the Codex CLI. |
 | `OM_DEV_AUTO_MIGRATE` | `1` | When set to `1` (default), `yarn dev` runs `yarn db:migrate` once at startup before Next.js boots. Set to `0` to disable. See "Single-shot Database Migrations" below. |
+| `OM_DEV_DATABASE_NAME` | unset | Same as passing `--database-name=<value>` to `yarn dev` / `yarn setup`. CLI flag wins. |
+| `OM_DEV_DATABASE_UPDATE_ENV` | unset | Non-interactive answer for the `.env` update prompt (`true`/`false`). Equivalent to `--update-env` / `--no-update-env`. |
+
+### Persistent Parallel Local Databases
+
+Add `--database-name[=<name>]` to `yarn dev`, `yarn dev:greenfield`, or `yarn setup` to point this app at an isolated PostgreSQL database without manually editing `.env` first. Behavior:
+
+- `yarn dev` (no flag) is unchanged — no prompt, no `.env` mutation.
+- `yarn setup --database-name=client_a` rewrites the `DATABASE_URL` database segment in `./.env` after a confirmation prompt (default yes).
+- `yarn dev --database-name` (bare flag) derives the database name from the current directory.
+- `yarn dev --database-name=review_1720 --no-update-env` injects the rewritten URL into the current child process only and leaves `.env` untouched.
+- Non-interactive runs (`CI=true` or piped stdin) default to updating `.env`; pass `--no-update-env` to opt out.
+
+The override only changes the database segment of `DATABASE_URL`. Credentials, host, port, query strings (`?schema=…`, `?sslmode=…`), and other env variables are preserved verbatim.
 
 ## Infrastructure
 
@@ -132,6 +146,17 @@ This is a Next.js 16 application built on the **Open Mercato** modular ERP frame
 - `src/di.ts` - App-level DI overrides (runs after core/module registrations)
 - `src/bootstrap.ts` - Application initialization (imports generated files, registers i18n)
 - `.mercato/generated/` - Auto-generated files from `yarn generate` (do not edit manually)
+
+### Module Overrides
+
+Use the unified `entry.overrides` field in `src/modules.ts` when this app needs to replace or disable a contract from a package-backed module without forking it. The template ships a non-applied `moduleOverrideExamples` object covering AI, routes, events, workers, widgets, notifications, interceptors, setup, ACL, DI, and encryption. Copy only the specific domains you need into the target module entry's `overrides` field.
+
+Rules:
+
+- `null` disables a matching contract; an object/function definition replaces it.
+- API route keys are `'METHOD /api/path'`; page route keys are `'/backend/path'` or `'/frontend/path'`.
+- `setup` overrides apply to the module entry carrying them, not to a separate setup id map.
+- The standard `src/bootstrap.ts` already calls `applyModuleOverridesFromEnabledModules(enabledModules)` before registries load.
 
 ### Routing Structure
 
@@ -234,7 +259,7 @@ export const aiAgentOverrides: AiAgentOverridesMap = {
 }
 ```
 
-Example `modules.ts` inline override (preferred for app-level decisions that don't deserve a fake module). AI lives at `overrides.ai.*`; other domains (routes, events, workers, widgets, …) reuse the same `entry.overrides` umbrella per the [unified spec](https://github.com/open-mercato/open-mercato/blob/main/.ai/specs/2026-05-04-modules-ts-unified-overrides.md) — AI is Phase 1, other domains roll out as separate PRs:
+Example `modules.ts` inline override (preferred for app-level decisions that do not deserve a fake module). All module contract domains live under the same `entry.overrides` umbrella per the [unified spec](https://github.com/open-mercato/open-mercato/blob/main/.ai/specs/2026-05-04-modules-ts-unified-overrides.md):
 
 ```ts
 // src/modules.ts
@@ -245,6 +270,17 @@ Example `modules.ts` inline override (preferred for app-level decisions that don
     ai: {
       agents: { 'catalog.catalog_assistant': null },
       tools:  { 'inbox_ops_accept_action': null },
+    },
+    routes: {
+      api: {
+        'GET /api/example/override-probe': {
+          handler: async () => Response.json({ ok: true, source: 'override' }),
+          metadata: { requireAuth: false },
+        },
+      },
+      pages: {
+        '/backend/example/reports': null,
+      },
     },
   },
 },
@@ -275,6 +311,108 @@ yarn mercato configs cache structural --all-tenants
 ```
 
 Refer to the `create-ai-agent` skill (`.ai/skills/create-ai-agent/SKILL.md`) and the public docs at `framework/ai-assistant/overrides` for the full contract, MUST rules, and the resolution order.
+
+### Unified module contract overrides
+
+The same `entry.overrides` surface that disables/replaces AI agents also wires routes, subscribers, workers, widgets, notifications, interceptors, enrichers, guards, CLI commands, setup hooks, ACL features, DI bindings, and encryption maps. Use it when you want to replace a contract shipped by an upstream module without forking the source.
+
+```ts
+// src/modules.ts — representative examples across override phases
+{
+  id: 'example',
+  from: '@app',
+  overrides: {
+    routes: {
+      api: {
+        // disable
+        'DELETE /api/example/items': null,
+        // replace
+        'POST /api/example/items': {
+          handler: async (req) => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+          metadata: { requireAuth: true, requireFeatures: ['example.manage'] },
+        },
+      },
+      pages: {
+        '/backend/example/items': null,
+      },
+    },
+    events: {
+      subscribers: {
+        'example.todo.created.notify': null,
+      },
+    },
+    workers: {
+      'example:sync': null,
+    },
+    widgets: {
+      injection: { 'example.toolbar': null },
+      dashboard: { 'example.kpi': null },
+      components: {
+        'page:/backend/example': {
+          target: { componentId: 'page:/backend/example' },
+          priority: 10,
+          propsTransform: (props) => props,
+        },
+      },
+    },
+    notifications: {
+      types: { 'example.notice': null },
+      handlers: { 'example.notice.toast': null },
+    },
+    interceptors: { 'example.items.audit': null },
+    commandInterceptors: { 'example.command.audit': null },
+    enrichers: { 'example.items.enricher': null },
+    guards: { 'example.backend.guard': null },
+    cli: { 'example seed': null },
+    setup: {
+      defaultRoleFeatures: { admin: ['example.view'] },
+      seedExamples: false,
+    },
+    acl: {
+      features: { 'example.manage': null },
+    },
+    di: {
+      exampleService: {
+        register: (container, key) => container.register({ [key]: { mode: 'replacement' } }),
+      },
+    },
+    encryption: {
+      maps: { 'example:item': null },
+    },
+  },
+},
+```
+
+Programmatic equivalent (boot-time, env-driven, or test scaffold):
+
+```ts
+// src/bootstrap.ts (extra)
+import {
+  applyApiRouteOverrides,
+  applyPageRouteOverrides,
+  applyWorkerOverrides,
+} from '@open-mercato/shared/modules/overrides'
+
+applyApiRouteOverrides({
+  'GET /api/example/items': null,
+})
+applyPageRouteOverrides({
+  '/backend/example/items': null,
+})
+applyWorkerOverrides({
+  'example:sync': null,
+})
+```
+
+Key rules:
+
+- Keys are `'METHOD /api/path'`; method is normalized, path leading slash optional, trailing slashes stripped.
+- Page route keys are `'/backend/path'` or `'/frontend/path'`.
+- `null` disables the matching contract; a definition replaces it.
+- Programmatic > `modules.ts` > file-based where supported > base. The dispatcher MUST run before registries first-load — the template's `bootstrap.ts` already does this.
+- Stale override keys log a warning so operators notice renamed or removed upstream contracts.
+
+Full reference: `framework/modules/overrides` and `framework/modules/routes-and-pages`.
 
 ## Disabling the Dashboards Module: Update /backend
 
