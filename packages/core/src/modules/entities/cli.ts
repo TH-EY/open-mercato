@@ -1,4 +1,5 @@
 import { getCliModules, getDefaultEncryptionMaps, type Module, type ModuleCli } from '@open-mercato/shared/modules/registry'
+import type { EntityManager } from '@mikro-orm/postgresql'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import type { CacheStrategy } from '@open-mercato/cache/types'
 import { CustomEntity, CustomFieldDef, EncryptionMap } from './data/entities'
@@ -6,6 +7,10 @@ import {
   installCustomEntitiesFromModules,
   getAggregatedCustomEntityConfigs,
 } from './lib/install-from-ce'
+import {
+  backfillCustomFieldDictionaryEntries,
+  type BackfillDictionaryEntriesResult,
+} from './lib/backfill-dictionary-entries'
 import readline from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
 import { isTenantDataEncryptionEnabled } from '@open-mercato/shared/lib/encryption/toggles'
@@ -38,6 +43,40 @@ function parseArgs(rest: string[]) {
     }
   }
   return args
+}
+
+function formatBackfillValues(values: string[]): string {
+  if (!values.length) return '-'
+  const visible = values.slice(0, 12).join(', ')
+  return values.length > 12 ? `${visible}, ... (+${values.length - 12})` : visible
+}
+
+function printBackfillDictionaryEntriesReport(result: BackfillDictionaryEntriesResult) {
+  const prefix = result.dryRun ? '[dry-run] ' : ''
+  console.log(`\n${prefix}Custom field dictionary entries backfill summary:`)
+  console.log(`  Fields checked:        ${result.fieldsChecked}`)
+  console.log(`  Unique values found:   ${result.uniqueValuesFound}`)
+  console.log(`  Existing entries:      ${result.existingEntries}`)
+  console.log(`  Entries to create:     ${result.entriesToCreate}`)
+  console.log(`  Entries created:       ${result.createdEntries}`)
+  if (result.missingDictionaryFields > 0) {
+    console.log(`  Missing dictionaries:  ${result.missingDictionaryFields}`)
+  }
+
+  if (result.fields.length > 0) {
+    console.log('\n  Per field:')
+    for (const field of result.fields) {
+      const dictionary = field.dictionaryKey ?? field.dictionaryId
+      const status = field.missingDictionary ? 'missing dictionary' : `${field.entriesToCreate} new`
+      console.log(
+        `  - ${field.entityId}.${field.fieldKey} -> ${dictionary}: ${status}; values=${formatBackfillValues(field.values)}`,
+      )
+    }
+  }
+
+  if (result.dryRun && result.entriesToCreate > 0) {
+    console.log('\nDry-run only. Re-run with --apply to create missing dictionary entries.')
+  }
 }
 
 const seedDefs: ModuleCli = {
@@ -248,6 +287,41 @@ const addField: ModuleCli = {
     } finally {
       await rl.close()
     }
+  },
+}
+
+const backfillDictionaryEntries: ModuleCli = {
+  command: 'backfill-dictionary-entries',
+  async run(rest) {
+    const args = parseArgs(rest)
+    const tenantId = (args.tenant as string) || (args.tenantId as string)
+    const organizationId = (args.org as string) || (args.orgId as string) || (args.organizationId as string)
+    const entityId = (args.entity as string) || (args.entityId as string) || undefined
+    const fieldKey = (args.field as string) || (args.fieldKey as string) || undefined
+    const apply = Boolean(args.apply)
+
+    if (!tenantId || !organizationId) {
+      console.error(
+        'Usage: mercato entities backfill-dictionary-entries --tenant <tenantId> --org <organizationId> [--entity <entityId>] [--field <fieldKey>] [--apply]',
+      )
+      return
+    }
+
+    const { resolve } = await createRequestContainer()
+    const em = resolve<EntityManager>('em')
+    const options = {
+      tenantId,
+      organizationId,
+      entityId,
+      fieldKey,
+      apply,
+    }
+
+    const result = apply
+      ? await em.transactional((tem) => backfillCustomFieldDictionaryEntries(tem, options))
+      : await backfillCustomFieldDictionaryEntries(em, options)
+
+    printBackfillDictionaryEntriesReport(result)
   },
 }
 
@@ -986,4 +1060,4 @@ const decryptDatabase: ModuleCli = {
 }
 
 // Keep default export stable (install first for help listing)
-export default [seedDefs, reinstallDefs, addField, seedEncryptionMaps, rotateEncryptionKey, decryptDatabase]
+export default [seedDefs, reinstallDefs, addField, backfillDictionaryEntries, seedEncryptionMaps, rotateEncryptionKey, decryptDatabase]
