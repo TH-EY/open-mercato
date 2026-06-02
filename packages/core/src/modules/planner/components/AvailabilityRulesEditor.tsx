@@ -1706,6 +1706,7 @@ export function AvailabilityRulesEditor({
                                   createOption={createUnavailabilityReasonOption}
                                   labels={unavailableReasonLabels}
                                   selectClassName="w-full"
+                                  sortOptions="none"
                                   manageHref="/backend/config/dictionaries"
                                   disabled={!canManageUnavailability}
                                 />

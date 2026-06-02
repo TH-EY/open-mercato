@@ -203,6 +203,7 @@ function CurrencyInlineEditor({
                 allowInlineCreate={false}
                 manageHref="/backend/config/dictionaries?key=currency"
                 selectClassName="w-full"
+                sortOptions="none"
                 labels={labels}
               />
               <DictionaryValue
@@ -1796,6 +1797,7 @@ function StatusInlineEditor({
                 allowInlineCreate={false}
                 allowAppearance
                 manageHref={manageHref}
+                sortOptions="none"
                 labels={labels}
               />
               {loading ? (

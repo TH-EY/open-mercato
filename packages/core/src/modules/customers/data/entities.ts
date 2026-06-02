@@ -1,5 +1,6 @@
 import { Collection, OptionalProps } from '@mikro-orm/core'
 import { Entity, Index, ManyToOne, OneToMany, OneToOne, PrimaryKey, Property, Unique } from '@mikro-orm/decorators/legacy'
+import type { DictionaryEntrySortMode } from '@open-mercato/core/modules/dictionaries/lib/entrySort'
 
 export type CustomerEntityKind = 'person' | 'company'
 export type CustomerAddressFormat = 'line_first' | 'street_first'
@@ -750,7 +751,7 @@ export class CustomerAddress {
 @Entity({ tableName: 'customer_settings' })
 @Unique({ name: 'customer_settings_scope_unique', properties: ['organizationId', 'tenantId'] })
 export class CustomerSettings {
-  [OptionalProps]?: 'createdAt' | 'updatedAt'
+  [OptionalProps]?: 'createdAt' | 'updatedAt' | 'addressFormat' | 'dictionarySortModes'
 
   @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
   id!: string
@@ -763,6 +764,9 @@ export class CustomerSettings {
 
   @Property({ name: 'address_format', type: 'text', default: 'line_first' })
   addressFormat: CustomerAddressFormat = 'line_first'
+
+  @Property({ name: 'dictionary_sort_modes', type: 'jsonb', nullable: true })
+  dictionarySortModes?: Partial<Record<string, DictionaryEntrySortMode>> | null
 
   @Property({ name: 'created_at', type: Date, onCreate: () => new Date() })
   createdAt: Date = new Date()

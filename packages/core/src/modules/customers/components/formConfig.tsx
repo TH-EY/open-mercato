@@ -237,6 +237,7 @@ export function DictionarySelectField({
       allowAppearance={allowAppearance}
       showManage={showManage}
       showLabelInput={showLabelInput}
+      sortOptions="none"
     />
   )
 }

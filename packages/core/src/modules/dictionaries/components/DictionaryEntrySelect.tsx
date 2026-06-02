@@ -83,6 +83,7 @@ export type DictionaryEntrySelectProps = {
   disabled?: boolean
   showLabelInput?: boolean
   showManage?: boolean
+  sortOptions?: 'label_asc' | 'none'
 }
 
 export function DictionaryEntrySelect({
@@ -99,6 +100,7 @@ export function DictionaryEntrySelect({
   disabled: disabledProp = false,
   showLabelInput = true,
   showManage = true,
+  sortOptions = 'label_asc',
 }: DictionaryEntrySelectProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -115,7 +117,7 @@ export function DictionaryEntrySelect({
     setLoading(true)
     try {
       const items = await fetchOptions()
-      setOptions(items.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })))
+      setOptions(sortOptions === 'none' ? items : items.slice().sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })))
     } catch (err) {
       console.error('DictionaryEntrySelect.fetchOptions failed', err)
       flash(labels.errorLoad, 'error')
@@ -123,7 +125,7 @@ export function DictionaryEntrySelect({
     } finally {
       setLoading(false)
     }
-  }, [fetchOptions, labels.errorLoad])
+  }, [fetchOptions, labels.errorLoad, sortOptions])
 
   React.useEffect(() => {
     loadOptions().catch(() => {})
@@ -171,7 +173,10 @@ export function DictionaryEntrySelect({
           color: payload.color ?? null,
           icon: payload.icon ?? null,
         })
-        return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
+        const nextOptions = Array.from(map.values())
+        return sortOptions === 'none'
+          ? nextOptions
+          : nextOptions.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
       })
       await loadOptions()
       onChange(payload.value)
@@ -197,6 +202,7 @@ export function DictionaryEntrySelect({
     newLabel,
     newValue,
     onChange,
+    sortOptions,
   ])
 
   const handleDialogKeyDown = React.useCallback(
