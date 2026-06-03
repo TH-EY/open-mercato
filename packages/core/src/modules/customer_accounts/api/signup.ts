@@ -139,6 +139,8 @@ export async function POST(req: Request) {
       to: existing.email,
       subject,
       react: CustomerExistingAccountEmail({ loginUrl, copy }),
+      tenantId,
+      organizationId,
     }).catch((error) => {
       console.error('[customer_accounts.signup] existing-account email failed', error)
     })
@@ -192,6 +194,8 @@ export async function POST(req: Request) {
     to: user.email,
     subject,
     react: CustomerSignupVerificationEmail({ verifyUrl, copy }),
+    tenantId,
+    organizationId,
   }).catch((error) => {
     console.error('[customer_accounts.signup] verification email failed', error)
   })
