@@ -52,6 +52,13 @@ export AWS_REGION="$aws_region"
 workdir=/opt/openmercato-crm
 mkdir -p "$workdir"
 
+while true; do
+  echo "[crm-deploy] still running $(date -Is)"
+  sleep 60
+done &
+heartbeat_pid="$!"
+trap 'kill "$heartbeat_pid" >/dev/null 2>&1 || true' EXIT
+
 secret_value() {
   aws secretsmanager get-secret-value --region "$aws_region" --secret-id "$1" --query SecretString --output text
 }
@@ -117,7 +124,10 @@ EOF_REMOTE_BODY
 
 COMMANDS_JSON="$(python3 - <<'PY' "${REMOTE_SCRIPT}"
 import json, sys
-print(json.dumps({'commands': [open(sys.argv[1], encoding='utf-8').read()]}))
+print(json.dumps({
+  'commands': [open(sys.argv[1], encoding='utf-8').read()],
+  'executionTimeout': ['1800'],
+}))
 PY
 )"
 
