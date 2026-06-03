@@ -21,6 +21,11 @@ services:
       DEPLOY_ENV: crm-they-dev
       PORT: ${CONTAINER_PORT:-3000}
       APP_URL: ${APP_URL:-https://crm.they.dev}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER}
+      AWS_SES_REGION: ${AWS_SES_REGION}
+      AWS_REGION: ${AWS_REGION}
+      EMAIL_FROM: ${EMAIL_FROM}
+      NOTIFICATIONS_EMAIL_FROM: ${NOTIFICATIONS_EMAIL_FROM}
       DATABASE_URL: ${DATABASE_URL}
       DB_SSL: "true"
       DB_SSL_REJECT_UNAUTHORIZED: "false"
@@ -76,6 +81,11 @@ services:
       NODE_ENV: production
       DEPLOY_ENV: crm-they-dev
       APP_URL: ${APP_URL:-https://crm.they.dev}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER}
+      AWS_SES_REGION: ${AWS_SES_REGION}
+      AWS_REGION: ${AWS_REGION}
+      EMAIL_FROM: ${EMAIL_FROM}
+      NOTIFICATIONS_EMAIL_FROM: ${NOTIFICATIONS_EMAIL_FROM}
       DATABASE_URL: ${DATABASE_URL}
       DB_SSL: "true"
       DB_SSL_REJECT_UNAUTHORIZED: "false"
