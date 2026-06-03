@@ -2,6 +2,42 @@
 
 `@open-mercato/core` contains all core business modules (auth, catalog, customers, sales, etc.). This guide covers the full extensibility contract and module development patterns.
 
+## Always
+
+- Preserve auto-discovery contracts for module files, API routes, pages, subscribers, workers, widgets, and generated registries.
+- Export `openApi` from every API route file.
+- Use `makeCrudRoute` with `indexer: { entityType }` for CRUD routes that should participate in query indexing.
+- Wire custom write routes through the mutation guard contract.
+- Use declarative feature guards and add new `acl.ts` features to `setup.ts` `defaultRoleFeatures`.
+- Use `findWithDecryption` / `findOneWithDecryption` for encrypted entities.
+- Implement domain writes through commands so audit, undo, cache, events, and indexing stay consistent.
+- Run `yarn generate` after changing module files discovered by the generator.
+
+## Ask First
+
+- Ask before changing any contract surface from `BACKWARD_COMPATIBILITY.md`: auto-discovery, public types, import paths, event IDs, widget spot IDs, API URLs, DB schema, DI names, ACL features, notification IDs, CLI commands, or generated file contracts.
+- Ask before moving versioned generated files or changing where generated registries live.
+- Ask before applying migrations with `yarn db:migrate`; normal PRs should include migration files and snapshots.
+
+## Never
+
+- Never create direct ORM relationships between modules; use foreign key IDs and fetch separately.
+- Never expose cross-tenant data or omit tenant/organization scoping.
+- Never hand-edit generated files.
+- Never import generated app bootstrap files from packages.
+- Never run raw `em.find` / `em.findOne` between scalar mutations and `em.flush()` on the same `EntityManager` without `withAtomicFlush`.
+- Never hand-roll AES/KMS encryption or bypass `TenantDataEncryptionService`.
+- Never compare raw feature arrays with exact string checks when wildcard grants apply.
+
+## Validation Commands
+
+```bash
+yarn db:generate
+yarn generate
+yarn workspace @open-mercato/core build
+yarn workspace @open-mercato/core test
+```
+
 ## Core Modules
 
 | Module | Path | Description |
@@ -570,6 +606,7 @@ const myEnricher: ResponseEnricher = {
   timeout: 2000,                         // ms, default 2000
   fallback: { _mymodule: { count: 0 } },// returned on failure
   critical: false,                       // true = error propagates to client
+  cacheableOnListHit: false,             // see "List cache behavior" below (default false)
   async enrichOne(record, context) {
     // Add fields to a single record
     return { ...record, _mymodule: { count: 42 } }
@@ -593,11 +630,20 @@ const crud = makeCrudRoute({
 })
 ```
 
-### Key Rules
+### List cache behavior (`cacheableOnListHit`)
+
+When the opt-in CRUD list cache (`ENABLE_CRUD_API_CACHE`) is enabled, the factory stores the **enriched** list payload and partitions cache entries by the active-enricher signature (the ACL/tenant-filtered enricher ids for the caller). On a cache hit it must decide whether to re-run enrichers or serve the stored enriched fields directly:
+
+- The cache-hit path **skips re-running enrichers only when every active enricher opted in with `cacheableOnListHit: true`** (record-pure cohort). Otherwise it re-runs all active enrichers on a hit and the cache stores the base (pre-enrichment) payload.
+- Set `cacheableOnListHit: true` **only** when the enricher's output for a record is a pure function of that record's own cached state and is invalidated together with it (e.g. fields derived from the same module's own per-record data). The shipped `example.customer-todo-count` enricher keeps the default `false`: it reads other modules' tables (todos and per-customer priority) the list cache does not invalidate on, so it must re-run on every hit.
+- Leave it `false` (the fail-closed default) for any enricher whose output depends on data the list cache does not invalidate on: cross-module / cross-entity reads (e.g. a product image fetched for a sales line), wall-clock-relative values (e.g. "days in stage"), or aggregates over other tables. These MUST re-run on every request so the response reflects current data.
+
+### Response Enricher Rules
 
 - MUST implement `enrichMany()` for batch endpoints (prevents N+1 queries)
 - MUST namespace enriched fields with `_moduleName` prefix (e.g. `_example.todoCount`)
 - MUST use `features` array for ACL gating — enricher runs only if user has all listed features
+- MUST keep `cacheableOnListHit` at `false` (default) unless the enriched output is record-pure and invalidated with the host record — opting in on a cross-module/time-relative enricher serves stale data from the shared list cache
 - Export fields are stripped: `_meta` and `_`-prefixed fields are removed from CSV/Excel exports
 - Enrichers run after `CrudHooks.afterList`, before HTTP response serialization
 - `critical: true` propagates errors to the HTTP response; `false` (default) uses fallback silently

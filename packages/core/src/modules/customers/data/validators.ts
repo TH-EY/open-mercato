@@ -127,7 +127,10 @@ export const dealCreateSchema = scopedSchema.extend({
   valueCurrency: z.string().min(3).max(3).optional(),
   probability: z.number().min(0).max(100).optional(),
   expectedCloseAt: z.coerce.date().optional(),
-  ownerUserId: uuid().optional(),
+  // Nullable: the bulk owner-update worker passes `null` to clear ownership.
+  // Without `.nullable()`, dealUpdateSchema.parse({ ownerUserId: null }) throws
+  // ZodError "expected string, received null" inside the queue worker (TC-CRM-069).
+  ownerUserId: uuid().optional().nullable(),
   source: z.string().max(150).optional(),
   closureOutcome: z.enum(['won', 'lost']).optional(),
   lossReasonId: uuid().optional(),
@@ -141,6 +144,24 @@ export const dealUpdateSchema = z
     id: uuid(),
   })
   .merge(dealCreateSchema.partial())
+
+// Bulk update schemas — used by `api/deals/bulk-update-{owner,stage}/route.ts`. Kept here
+// so all deal-write contracts live next to `dealCreateSchema` / `dealUpdateSchema`.
+export const dealsBulkUpdateOwnerSchema = z.object({
+  ids: z.array(uuid()).min(1).max(10000),
+  ownerUserId: uuid().nullable(),
+})
+
+export const dealsBulkUpdateStageSchema = z.object({
+  ids: z.array(uuid()).min(1).max(10000),
+  pipelineStageId: uuid(),
+})
+
+export const dealsBulkUpdateResponseSchema = z.object({
+  ok: z.boolean(),
+  progressJobId: uuid().nullable(),
+  message: z.string(),
+})
 
 export const activityCreateSchema = scopedSchema.extend({
   entityId: uuid(),
@@ -253,10 +274,18 @@ const dictionaryKindEnum = z.string().trim().refine(
 
 const dictionaryValueSchema = z.string().trim().min(1).max(150)
 const dictionaryLabelSchema = z.string().trim().max(150)
+// Pipeline-stage rows migrated to semantic tone identifiers in
+// Migration20260519120000_pipeline_stage_color_tones; AddStageDialog now writes those
+// directly. Other dictionary kinds still store hex. Accept either format so round-tripping
+// a migrated pipeline-stage entry through the dictionary edit UI doesn't fail validation.
+const DICTIONARY_COLOR_TONES = ['success', 'warning', 'info', 'error', 'neutral', 'brand', 'pink'] as const
 const dictionaryColorSchema = z
   .string()
   .trim()
-  .regex(/^#([0-9a-fA-F]{6})$/, 'Color must be a valid six-digit hex code like #3366ff')
+  .regex(
+    new RegExp(`^(#[0-9a-fA-F]{6}|${DICTIONARY_COLOR_TONES.join('|')})$`),
+    'Color must be a six-digit hex code (e.g. #3366ff) or a semantic tone identifier',
+  )
 const dictionaryIconSchema = z.string().trim().max(48)
 
 export const customerDictionaryEntryCreateSchema = scopedSchema.extend({
@@ -504,6 +533,10 @@ export const customerDictionarySortModesUpsertSchema = scopedSchema.extend({
   dictionarySortModes: customerDictionarySortModesSchema,
 })
 
+export const customerStuckThresholdUpsertSchema = scopedSchema.extend({
+  stuckThresholdDays: z.number().int().min(1).max(365),
+})
+
 export type PersonCreateInput = z.infer<typeof personCreateSchema>
 export type PersonUpdateInput = z.infer<typeof personUpdateSchema>
 export type CompanyCreateInput = z.infer<typeof companyCreateSchema>
@@ -523,6 +556,7 @@ export type TodoLinkCreateInput = z.infer<typeof todoLinkCreateSchema>
 export type TodoLinkWithTodoCreateInput = z.infer<typeof todoLinkWithTodoCreateSchema>
 export type CustomerSettingsUpsertInput = z.infer<typeof customerSettingsUpsertSchema>
 export type CustomerDictionarySortModesUpsertInput = z.infer<typeof customerDictionarySortModesUpsertSchema>
+export type CustomerStuckThresholdUpsertInput = z.infer<typeof customerStuckThresholdUpsertSchema>
 export type CustomerAddressFormatInput = z.infer<typeof customerAddressFormatSchema>
 export type InteractionCompleteInput = z.infer<typeof interactionCompleteSchema>
 export type InteractionCancelInput = z.infer<typeof interactionCancelSchema>

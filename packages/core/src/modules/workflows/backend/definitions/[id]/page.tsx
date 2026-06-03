@@ -8,8 +8,10 @@ import { CrudForm } from '@open-mercato/ui/backend/CrudForm'
 import { Spinner } from '@open-mercato/ui/primitives/spinner'
 import { Button } from '@open-mercato/ui/primitives/button'
 import { Alert, AlertDescription } from '@open-mercato/ui/primitives/alert'
+import { ErrorMessage, RecordNotFoundState } from '@open-mercato/ui/backend/detail'
 import { apiFetch } from '@open-mercato/ui/backend/utils/api'
 import { readJsonSafe } from '@open-mercato/ui/backend/utils/serverErrors'
+import { formatWorkflowValidationError } from '../../../lib/format-validation-error'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { useConfirmDialog } from '@open-mercato/ui/backend/confirm-dialog'
@@ -48,13 +50,21 @@ export default function EditWorkflowDefinitionPage() {
     queryFn: async () => {
       const response = await apiFetch(`/api/workflows/definitions/${definitionId}`)
       if (!response.ok) {
-        throw new Error(t('workflows.errors.fetchFailed'))
+        const err = new Error(t('workflows.errors.fetchFailed')) as Error & { status?: number }
+        err.status = response.status
+        throw err
       }
       const result = await response.json()
       return result.data
     },
     enabled: !!definitionId,
+    retry: (failureCount, err) => {
+      if ((err as { status?: number }).status === 404) return false
+      return failureCount < 2
+    },
   })
+
+  const isNotFound = (error as { status?: number } | null)?.status === 404
 
   const initialValues = React.useMemo(() => {
     if (definition) {
@@ -94,8 +104,8 @@ export default function EditWorkflowDefinitionPage() {
           body: JSON.stringify(payload),
         })
         if (!response.ok) {
-          const errorBody = await readJsonSafe<{ error?: string }>(response, null)
-          throw new Error(errorBody?.error || t('workflows.errors.updateFailed'))
+          const errorBody = await readJsonSafe<{ error?: string; details?: Array<{ path?: Array<string | number>; message?: string }> }>(response, null)
+          throw new Error(formatWorkflowValidationError(errorBody, t('workflows.errors.updateFailed')))
         }
         return response
       },
@@ -208,12 +218,26 @@ export default function EditWorkflowDefinitionPage() {
     )
   }
 
+  if (isNotFound) {
+    return (
+      <Page>
+        <PageBody>
+          <RecordNotFoundState
+            label={t('workflows.errors.notFound', t('workflows.errors.loadFailed'))}
+            backHref="/backend/definitions"
+            backLabel={t('workflows.backToList')}
+          />
+        </PageBody>
+      </Page>
+    )
+  }
+
   if (error || !definition) {
     return (
       <Page>
         <PageBody>
-          <div className="flex h-[50vh] flex-col items-center justify-center gap-2 text-muted-foreground">
-            <p>{t('workflows.errors.loadFailed')}</p>
+          <ErrorMessage label={t('workflows.errors.loadFailed')} />
+          <div className="mt-4 flex justify-center">
             <Button asChild variant="outline">
               <a href="/backend/definitions">{t('workflows.backToList')}</a>
             </Button>

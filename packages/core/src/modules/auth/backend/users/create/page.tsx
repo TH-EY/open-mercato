@@ -109,7 +109,12 @@ export default function CreateUserPage() {
       setWidgetError(null)
       try {
         const { ok, result } = await apiCall<WidgetCatalogResponse>('/api/dashboards/widgets/catalog')
-        if (!ok) throw new Error('request_failed')
+        if (!ok) {
+          throw new Error(t(
+            'auth.users.widgets.errors.load',
+            'Unable to load dashboard widgets. You can configure them later from the user page.',
+          ))
+        }
         if (!cancelled) {
           const rawItems: unknown[] = Array.isArray(result?.items) ? result?.items ?? [] : []
           const normalized = rawItems
@@ -171,7 +176,7 @@ export default function CreateUserPage() {
     if (!actorResolved) return []
     if (actorIsSuperAdmin) {
       if (!selectedTenantId) return []
-      return fetchRoleOptions(query, { tenantId: selectedTenantId })
+      return fetchRoleOptions(query, { tenantId: selectedTenantId, includeSuperAdmin: true })
     }
     return fetchRoleOptions(query)
   }, [actorIsSuperAdmin, actorResolved, selectedTenantId])

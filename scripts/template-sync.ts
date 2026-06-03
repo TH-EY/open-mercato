@@ -77,6 +77,11 @@ const EXPLICIT_TEMPLATE_FILE_MAPPINGS = [
     rel: 'scripts/dev-orchestration-log-policy.mjs',
   },
   {
+    sourceFile: path.join(ROOT, 'scripts', 'dev-shutdown-utils.mjs'),
+    templateFile: path.join(ROOT, 'packages', 'create-app', 'template', 'scripts', 'dev-shutdown-utils.mjs'),
+    rel: 'scripts/dev-shutdown-utils.mjs',
+  },
+  {
     sourceFile: path.join(ROOT, 'scripts', 'dev-database-url.mjs'),
     templateFile: path.join(ROOT, 'packages', 'create-app', 'template', 'scripts', 'dev-database-url.mjs'),
     rel: 'scripts/dev-database-url.mjs',
@@ -90,6 +95,11 @@ const EXPLICIT_TEMPLATE_FILE_MAPPINGS = [
     sourceFile: path.join(ROOT, 'apps', 'mercato', 'scripts', 'dev-runtime-log-policy.mjs'),
     templateFile: path.join(ROOT, 'packages', 'create-app', 'template', 'scripts', 'dev-runtime-log-policy.mjs'),
     rel: 'scripts/dev-runtime-log-policy.mjs',
+  },
+  {
+    sourceFile: path.join(ROOT, 'docker', 'redis', 'redis.conf'),
+    templateFile: path.join(ROOT, 'packages', 'create-app', 'template', 'docker', 'redis', 'redis.conf'),
+    rel: 'docker/redis/redis.conf',
   },
 ] as const
 const TEMPLATE_ONLY_RELATIVE_FILES = new Set<string>([
@@ -113,9 +123,9 @@ const TEMPLATE_CONTENT_TRANSFORMS: Record<string, (content: string) => string> =
   'app/globals.css': (content) => content.replaceAll('../../../../node_modules/', '../../node_modules/'),
   'scripts/dev-cache-purge.mjs': (content) =>
     content
-      .replace('configured Next.js distDir (`apps/mercato/.mercato/next`) plus the legacy\n// `apps/mercato/.next` location', 'configured Next.js distDir (`.mercato/next`) plus the legacy `.next` location')
-      .replace('// and middleware manifest from scratch on the next launch. See issue #1950.', '// and middleware manifest from scratch on the next launch.')
-      .replace("  Object.freeze(['apps', 'mercato', '.mercato', 'next']),\n  Object.freeze(['apps', 'mercato', '.next']),", "  Object.freeze(['.mercato', 'next']),\n  Object.freeze(['.next']),"),
+      .replaceAll("['apps', 'mercato', '.mercato', 'next'", "['.mercato', 'next'")
+      .replaceAll("['apps', 'mercato', '.next']", "['.next']")
+      .replace('`.mercato/next/dev/cache/turbopack`. See issue\n// #1950.', '`.mercato/next/dev/cache/turbopack`.')
 }
 const MAX_DIFFS_TO_SHOW = 20
 
@@ -146,6 +156,10 @@ type PackageDrift = {
 
 function relFromRoot(absPath: string): string {
   return path.relative(ROOT, absPath).split(path.sep).join('/')
+}
+
+function relFromBase(baseDir: string, absPath: string): string {
+  return path.relative(baseDir, absPath).split(path.sep).join('/')
 }
 
 function collectSourceFiles(): string[] {
@@ -189,10 +203,10 @@ function computeDrift(): Drift[] {
   const sourceFiles = collectSourceFiles()
   const templateFiles = collectTemplateFiles()
   const drifts: Drift[] = []
-  const sourceRelSet = new Set(sourceFiles.map((file) => path.relative(APP_SRC_ROOT, file)))
+  const sourceRelSet = new Set(sourceFiles.map((file) => relFromBase(APP_SRC_ROOT, file)))
 
   for (const sourceFile of sourceFiles) {
-    const rel = path.relative(APP_SRC_ROOT, sourceFile)
+    const rel = relFromBase(APP_SRC_ROOT, sourceFile)
     const templateFile = path.join(TEMPLATE_SRC_ROOT, rel)
     if (!fs.existsSync(templateFile)) {
       drifts.push({
@@ -218,7 +232,7 @@ function computeDrift(): Drift[] {
   }
 
   for (const templateFile of templateFiles) {
-    const rel = path.relative(TEMPLATE_SRC_ROOT, templateFile)
+    const rel = relFromBase(TEMPLATE_SRC_ROOT, templateFile)
     if (TEMPLATE_ONLY_RELATIVE_FILES.has(rel)) continue
     if (sourceRelSet.has(rel)) continue
     drifts.push({
@@ -359,12 +373,12 @@ function printPackageDrift(drifts: PackageDrift[]): void {
 function applyFullSync(): number {
   const sourceFiles = collectSourceFiles()
   const templateFiles = collectTemplateFiles()
-  const sourceRelSet = new Set(sourceFiles.map((file) => path.relative(APP_SRC_ROOT, file)))
+  const sourceRelSet = new Set(sourceFiles.map((file) => relFromBase(APP_SRC_ROOT, file)))
   let updated = 0
 
   // Always rewrite template targets from source of truth.
   for (const sourceFile of sourceFiles) {
-    const rel = path.relative(APP_SRC_ROOT, sourceFile)
+    const rel = relFromBase(APP_SRC_ROOT, sourceFile)
     const templateFile = path.join(TEMPLATE_SRC_ROOT, rel)
     const source = fs.readFileSync(sourceFile)
     const expectedTemplate = getExpectedTemplateContent(rel, source)
@@ -377,7 +391,7 @@ function applyFullSync(): number {
 
   // Remove template files that are not in source (except explicit template-only files).
   for (const templateFile of templateFiles) {
-    const rel = path.relative(TEMPLATE_SRC_ROOT, templateFile)
+    const rel = relFromBase(TEMPLATE_SRC_ROOT, templateFile)
     if (TEMPLATE_ONLY_RELATIVE_FILES.has(rel)) continue
     if (sourceRelSet.has(rel)) continue
     fs.rmSync(templateFile, { force: true })
