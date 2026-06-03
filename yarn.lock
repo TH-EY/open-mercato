@@ -510,21 +510,22 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@aws-sdk/client-ses@npm:^3.946.0":
+"@aws-sdk/client-sesv2@npm:^3.946.0":
   version: 3.1060.0
-  resolution: "@aws-sdk/client-ses@npm:3.1060.0"
+  resolution: "@aws-sdk/client-sesv2@npm:3.1060.0"
   dependencies:
     "@aws-crypto/sha256-browser": "npm:5.2.0"
     "@aws-crypto/sha256-js": "npm:5.2.0"
     "@aws-sdk/core": "npm:^3.974.17"
     "@aws-sdk/credential-provider-node": "npm:^3.972.50"
+    "@aws-sdk/signature-v4-multi-region": "npm:^3.996.31"
     "@aws-sdk/types": "npm:^3.973.10"
     "@smithy/core": "npm:^3.24.6"
     "@smithy/fetch-http-handler": "npm:^5.4.6"
     "@smithy/node-http-handler": "npm:^4.7.6"
     "@smithy/types": "npm:^4.14.3"
     tslib: "npm:^2.6.2"
-  checksum: 10/56a6702c45b70a30dcf4b82f0fa4db9ea4757160a8fa78de951413f25ab42c3134eb6a206c83430b6ce625fabb1d87ac389192eedae61f212b0464fd3d36022c
+  checksum: 10/dbb8865e71936ef932609656aa386b2c124e67b6ae6372cdf2d4c4efea594b19e3e62d79023950625e5e457bed014f2283126d28d285b3dd2c35b0ea37a15063
   languageName: node
   linkType: hard
 
@@ -6944,7 +6945,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@open-mercato/shared@workspace:packages/shared"
   dependencies:
-    "@aws-sdk/client-ses": "npm:^3.946.0"
+    "@aws-sdk/client-sesv2": "npm:^3.946.0"
     "@mikro-orm/core": "npm:^7.1.3"
     "@mikro-orm/decorators": "npm:^7.1.3"
     "@mikro-orm/postgresql": "npm:^7.1.3"
