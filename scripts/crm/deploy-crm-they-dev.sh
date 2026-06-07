@@ -66,8 +66,12 @@ if [[ ! -d "$workdir/.git" ]]; then
 else
   git -C "$workdir" remote set-url origin "$repo_url"
   git -C "$workdir" fetch origin "$branch" --prune
-  git -C "$workdir" checkout -B "$branch" "origin/$branch"
-  git -C "$workdir" reset --hard "origin/$branch"
+  target_ref="origin/$branch"
+  if ! git -C "$workdir" rev-parse --verify --quiet "$target_ref" >/dev/null; then
+    target_ref="FETCH_HEAD"
+  fi
+  git -C "$workdir" checkout -B "$branch" "$target_ref"
+  git -C "$workdir" reset --hard "$target_ref"
   git -C "$workdir" clean -fdx
 fi
 
