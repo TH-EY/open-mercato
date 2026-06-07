@@ -83,6 +83,7 @@ type OrganizationUndoSnapshot = {
   tenantId: string | null
   name: string
   slug?: string | null
+  logoUrl?: string | null
   isActive: boolean
   parentId: string | null
   childParents: ChildParentSnapshot[]
@@ -119,6 +120,7 @@ function serializeOrganization(entity: Organization, custom?: Record<string, unk
     tenantId: resolveTenantIdFromEntity(entity),
     name: entity.name,
     slug: entity.slug ?? null,
+    logoUrl: entity.logoUrl ?? null,
     isActive: !!entity.isActive,
     parentId: entity.parentId ?? null,
     ancestorIds: Array.isArray(entity.ancestorIds) ? [...entity.ancestorIds] : [],
@@ -143,6 +145,7 @@ function captureOrganizationSnapshots(
       tenantId,
       name: entity.name,
       slug: entity.slug ?? null,
+      logoUrl: entity.logoUrl ?? null,
       isActive: !!entity.isActive,
       parentId: entity.parentId ?? null,
       childParents: (childParents ?? []).map((entry) => ({
@@ -302,6 +305,7 @@ const createOrganizationCommand: CommandHandler<Record<string, unknown>, Organiz
             tenant: tenantRef,
             name: parsed.name,
             slug,
+            logoUrl: parsed.logoUrl ?? null,
             isActive: parsed.isActive ?? true,
             parentId,
           },
@@ -497,6 +501,7 @@ const updateOrganizationCommand: CommandHandler<Record<string, unknown>, Organiz
           apply: (entity) => {
             if (parsed.name !== undefined) entity.name = parsed.name
             if (resolvedSlug !== undefined) entity.slug = resolvedSlug
+            if (parsed.logoUrl !== undefined) entity.logoUrl = parsed.logoUrl ?? null
             if (parsed.isActive !== undefined) entity.isActive = parsed.isActive
             entity.parentId = parentId
           },
@@ -563,7 +568,7 @@ const updateOrganizationCommand: CommandHandler<Record<string, unknown>, Organiz
       organizationId: String(result.id),
     })
     const after = serializeOrganization(result, custom)
-    const changes = buildChanges(beforeRecord, after as Record<string, unknown>, ['name', 'slug', 'isActive', 'parentId'])
+    const changes = buildChanges(beforeRecord, after as Record<string, unknown>, ['name', 'slug', 'logoUrl', 'isActive', 'parentId'])
     const customDiff = diffCustomFieldChanges(beforeRecord?.custom, custom)
     for (const [key, diff] of Object.entries(customDiff)) {
       changes[`cf_${key}`] = diff
@@ -600,6 +605,7 @@ const updateOrganizationCommand: CommandHandler<Record<string, unknown>, Organiz
           apply: (entity) => {
             entity.name = before.name
             if (before.slug !== undefined) entity.slug = before.slug
+            if (before.logoUrl !== undefined) entity.logoUrl = before.logoUrl ?? null
             entity.isActive = before.isActive
             entity.parentId = before.parentId
           },
