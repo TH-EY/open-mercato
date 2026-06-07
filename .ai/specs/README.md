@@ -95,6 +95,7 @@ Specs awaiting implementation or partially complete. Focus here for actionable w
 | [Dictionary Entry Sort Mode](2026-06-02-dictionary-entry-sort-mode.md) | 2026-06-02 | Dictionary Entry Sort Mode | Configurable server-side dictionary entry ordering for generic and customer dictionaries |
 | [Harness Validation Gate](2026-05-28-harness-validation-gate.md) | 2026-05-28 | Harness Validation Gate + Module Scaffold Template Fixes | Correct stale API patterns in module-scaffold skill template; add a SKILL-level post-scaffold validation gate (yarn generate → structural cache purge → ACL sync → typecheck → /login check) in `module-scaffold/SKILL.md` §12 (#2209) |
 | [Catalog Services Management](2026-06-16-catalog-services-management.md) | 2026-06-16 | Catalog Services Management | First-class sellable services in Catalog with media, categories, default pricing, structured work requirements, and additive Sales `serviceId` line integration |
+| [Organization Sidebar Logo](2026-06-08-organization-sidebar-logo.md) | 2026-06-08 | Organization Sidebar Logo | Organization-level backend sidebar logo branding with additive `organizations.logo_url`, branding API, Directory settings UI, and admin nav brand payload |
 
 ### Implemented Specifications
 
