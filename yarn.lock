@@ -522,6 +522,25 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@aws-sdk/client-sesv2@npm:^3.946.0":
+  version: 3.1064.0
+  resolution: "@aws-sdk/client-sesv2@npm:3.1064.0"
+  dependencies:
+    "@aws-crypto/sha256-browser": "npm:5.2.0"
+    "@aws-crypto/sha256-js": "npm:5.2.0"
+    "@aws-sdk/core": "npm:^3.974.19"
+    "@aws-sdk/credential-provider-node": "npm:^3.972.53"
+    "@aws-sdk/signature-v4-multi-region": "npm:^3.996.33"
+    "@aws-sdk/types": "npm:^3.973.12"
+    "@smithy/core": "npm:^3.24.6"
+    "@smithy/fetch-http-handler": "npm:^5.4.6"
+    "@smithy/node-http-handler": "npm:^4.7.6"
+    "@smithy/types": "npm:^4.14.3"
+    tslib: "npm:^2.6.2"
+  checksum: 10/e267e8985868771ac1c01ca02db18efa9e61f085a8c4ab72fe67ed52156667625d7335c171aa267cca4c28cec6b1aae2160aeac238333605bda4ee8e39c2ad11
+  languageName: node
+  linkType: hard
+
 "@aws-sdk/core@npm:^3.974.19":
   version: 3.974.19
   resolution: "@aws-sdk/core@npm:3.974.19"
@@ -7451,13 +7470,13 @@ __metadata:
     "@open-mercato/core": "workspace:*"
     "@open-mercato/shared": "workspace:*"
     "@types/jest": "npm:^30.0.0"
-    "@types/react": "npm:^19.2.15"
+    "@types/react": "npm:^19.2.17"
     "@types/react-dom": "npm:^19.2.3"
     esbuild: "npm:^0.28.0"
     glob: "npm:^13.0.6"
     jest: "npm:^30.4.2"
-    react: "npm:19.2.6"
-    react-dom: "npm:19.2.6"
+    react: "npm:19.2.7"
+    react-dom: "npm:19.2.7"
     resend: "npm:^6.12.4"
     ts-jest: "npm:^29.4.11"
   peerDependencies:
@@ -7477,14 +7496,14 @@ __metadata:
     "@open-mercato/shared": "workspace:*"
     "@types/jest": "npm:^30.0.0"
     "@types/nodemailer": "npm:^8.0.0"
-    "@types/react": "npm:^19.2.15"
+    "@types/react": "npm:^19.2.17"
     "@types/react-dom": "npm:^19.2.3"
     esbuild: "npm:^0.28.0"
     glob: "npm:^13.0.6"
     jest: "npm:^30.4.2"
     nodemailer: "npm:^8.0.10"
-    react: "npm:19.2.6"
-    react-dom: "npm:19.2.6"
+    react: "npm:19.2.7"
+    react-dom: "npm:19.2.7"
     ts-jest: "npm:^29.4.11"
   peerDependencies:
     "@mikro-orm/postgresql": ^7.0.14
