@@ -1,0 +1,59 @@
+name: Upsert EPC fork preview
+
+on:
+  push:
+    branches:
+      - 'fork/EPC'
+  workflow_dispatch:
+
+concurrency:
+  group: fork-preview-epc
+  cancel-in-progress: false
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: eu-west-2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upsert preview
+        id: preview
+        shell: bash
+        env:
+          PREVIEW_ADMIN_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          PREVIEW_ADMIN_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+        run: |
+          set -euo pipefail
+          OUTPUT="$(bash ./infra/aws-upstream-baseline/preview-upsert.sh 'fork/EPC')"
+          echo "$OUTPUT"
+          while IFS='=' read -r key value; do
+            [[ -z "$key" ]] && continue
+            echo "$key=$value" >> "$GITHUB_OUTPUT"
+          done < <(printf '%s\n' "$OUTPUT" | grep '^preview_')
+
+      - name: Smoke test preview
+        env:
+          BASE_URL: ${{ steps.preview.outputs.preview_url }}
+          SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+        run: bash ./infra/aws-upstream-baseline/smoke.sh
+
+      - name: Workflow summary
+        run: |
+          echo "Preview URL: ${{ steps.preview.outputs.preview_url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Branch: fork/EPC" >> "$GITHUB_STEP_SUMMARY"
+          echo "Host: ${{ steps.preview.outputs.preview_hostname }}" >> "$GITHUB_STEP_SUMMARY"
+
