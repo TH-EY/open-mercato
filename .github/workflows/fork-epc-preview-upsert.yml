@@ -29,6 +29,73 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Preflight disk cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          source ./infra/aws-upstream-baseline/preview-common.sh
+
+          REMOTE_SCRIPT="$(mktemp)"
+          cat > "${REMOTE_SCRIPT}" <<'SCRIPT'
+          bash <<'BASH'
+          set -euo pipefail
+          echo "Before cleanup:"
+          df -h /
+          docker system df || true
+
+          docker builder prune -af || true
+          docker image prune -f || true
+
+          echo "After cleanup:"
+          df -h /
+          docker system df || true
+          BASH
+          SCRIPT
+
+          COMMANDS_JSON="$(python3 - <<'PY' "${REMOTE_SCRIPT}"
+          import json, sys
+          path = sys.argv[1]
+          print(json.dumps({'commands': [open(path, 'r', encoding='utf-8').read()]}))
+          PY
+          )"
+          COMMAND_ID="$(aws ssm send-command \
+            --region "${AWS_REGION}" \
+            --instance-ids "${PREVIEW_INSTANCE_ID}" \
+            --document-name AWS-RunShellScript \
+            --parameters "${COMMANDS_JSON}" \
+            --query 'Command.CommandId' \
+            --output text)"
+          if ! aws ssm wait command-executed \
+            --region "${AWS_REGION}" \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${PREVIEW_INSTANCE_ID}"; then
+            true
+          fi
+
+          STATUS="$(aws ssm get-command-invocation \
+            --region "${AWS_REGION}" \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${PREVIEW_INSTANCE_ID}" \
+            --query 'Status' \
+            --output text)"
+          aws ssm get-command-invocation \
+            --region "${AWS_REGION}" \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${PREVIEW_INSTANCE_ID}" \
+            --query 'StandardOutputContent' \
+            --output text
+          if [[ "${STATUS}" != "Success" ]]; then
+            aws ssm get-command-invocation \
+              --region "${AWS_REGION}" \
+              --command-id "${COMMAND_ID}" \
+              --instance-id "${PREVIEW_INSTANCE_ID}" \
+              --query 'StandardErrorContent' \
+              --output text >&2
+            exit 1
+          fi
+
+          rm -f "${REMOTE_SCRIPT}"
+
       - name: Upsert preview
         id: preview
         shell: bash
@@ -56,4 +123,3 @@ jobs:
           echo "Preview URL: ${{ steps.preview.outputs.preview_url }}" >> "$GITHUB_STEP_SUMMARY"
           echo "Branch: fork/EPC" >> "$GITHUB_STEP_SUMMARY"
           echo "Host: ${{ steps.preview.outputs.preview_hostname }}" >> "$GITHUB_STEP_SUMMARY"
-
