@@ -95,10 +95,16 @@ docker compose --project-name "$preview_project" --env-file .env -f docker-compo
 if ! docker image inspect opencode-mvp:latest >/dev/null 2>&1; then
   docker build -t opencode-mvp:latest docker/opencode
 fi
-DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain timeout 45m docker build --progress=plain \
+build_log="/tmp/openmercato-preview-${preview_env}-build.log"
+rm -f "$build_log"
+if ! DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain timeout 45m docker build --progress=plain \
   --build-arg CONTAINER_PORT="${CONTAINER_PORT:-3000}" \
   -t "open-mercato/app:$preview_env" \
-  .
+  . >"$build_log" 2>&1; then
+  tail -n 240 "$build_log" || true
+  exit 1
+fi
+tail -n 80 "$build_log" || true
 COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --no-build
 EOF
 } > "${REMOTE_SCRIPT}"
