@@ -95,7 +95,7 @@ docker compose --project-name "$preview_project" --env-file .env -f docker-compo
 if ! docker image inspect opencode-mvp:latest >/dev/null 2>&1; then
   docker build -t opencode-mvp:latest docker/opencode
 fi
-COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 BUILDKIT_PROGRESS=plain docker build \
+DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain timeout 45m docker build --progress=plain \
   --build-arg CONTAINER_PORT="${CONTAINER_PORT:-3000}" \
   -t "open-mercato/app:$preview_env" \
   .
