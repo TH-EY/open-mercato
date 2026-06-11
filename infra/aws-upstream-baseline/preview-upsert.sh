@@ -91,7 +91,9 @@ Path(target).write_text('\n'.join(f'{key}={values[key]}' for key in keys if key 
 PY
 
 cd "$workdir"
-docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml down --remove-orphans --volumes >/dev/null 2>&1 || true
+if [[ "$branch" != "fork/EPC" ]]; then
+  docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml down --remove-orphans --volumes >/dev/null 2>&1 || true
+fi
 if ! docker image inspect opencode-mvp:latest >/dev/null 2>&1; then
   docker build -t opencode-mvp:latest docker/opencode
 fi
@@ -105,6 +107,11 @@ if ! DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain timeout 45m docker build --progre
   exit 1
 fi
 tail -n 80 "$build_log" || true
+if [[ "$branch" == "fork/EPC" ]]; then
+  # Keep EPC online while the slow image build runs. The data reset still happens
+  # before the new stack starts, but the cancellation window is short.
+  docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml down --remove-orphans --volumes >/dev/null 2>&1 || true
+fi
 COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --no-build
 EOF
 } > "${REMOTE_SCRIPT}"
