@@ -92,7 +92,7 @@ PY
 
 cd "$workdir"
 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml down --remove-orphans --volumes >/dev/null 2>&1 || true
-COMPOSE_BAKE=false BUILDKIT_PROGRESS=plain docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --build
+COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 BUILDKIT_PROGRESS=plain docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --build
 EOF
 } > "${REMOTE_SCRIPT}"
 
