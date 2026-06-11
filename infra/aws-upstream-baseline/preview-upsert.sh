@@ -92,7 +92,11 @@ PY
 
 cd "$workdir"
 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml down --remove-orphans --volumes >/dev/null 2>&1 || true
-COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 BUILDKIT_PROGRESS=plain docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --build
+if ! docker image inspect opencode-mvp:latest >/dev/null 2>&1; then
+  docker build -t opencode-mvp:latest docker/opencode
+fi
+COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 BUILDKIT_PROGRESS=plain docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml build app
+COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --no-build
 EOF
 } > "${REMOTE_SCRIPT}"
 
