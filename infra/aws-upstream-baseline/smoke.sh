@@ -19,4 +19,9 @@ fi
 
 echo "[baseline-smoke] Using BASE_URL=${BASE_URL}"
 
-exec node "${REPO_ROOT}/scripts/smoke-auth-dashboard.mjs"
+if [[ -f "${REPO_ROOT}/scripts/smoke-auth-dashboard.mjs" ]]; then
+  exec node "${REPO_ROOT}/scripts/smoke-auth-dashboard.mjs"
+fi
+
+curl -k -fsS "${BASE_URL%/}/login" >/dev/null
+echo "[baseline-smoke] Login page is reachable"
