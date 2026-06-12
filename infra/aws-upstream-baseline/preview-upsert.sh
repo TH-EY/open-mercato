@@ -157,7 +157,15 @@ tail -n 80 "$build_log" || true
 if [[ "$branch" == "fork/EPC" ]]; then
   echo "EPC preview keeps Docker volumes intact; preserving demo database state."
 fi
-COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --no-build --remove-orphans
+existing_epc_postgres=""
+if [[ "$branch" == "fork/EPC" ]]; then
+  existing_epc_postgres="$(COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml ps -q postgres 2>/dev/null || true)"
+fi
+if [[ "$branch" == "fork/EPC" && -n "$existing_epc_postgres" ]]; then
+  COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --no-deps --no-build --force-recreate app
+else
+  COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --no-build --remove-orphans
+fi
 EOF
 } > "${REMOTE_SCRIPT}"
 
