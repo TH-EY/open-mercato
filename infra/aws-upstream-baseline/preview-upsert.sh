@@ -127,6 +127,7 @@ if [[ "$branch" == "fork/EPC" ]]; then
   echo "EPC pre-build app image cleanup; preserving database and named volumes:"
   COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml stop app >/dev/null 2>&1 || true
   COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml rm -f app >/dev/null 2>&1 || true
+  docker rm -f "${preview_project}-app-1" >/dev/null 2>&1 || true
   docker image rm -f "open-mercato/app:$preview_env" >/dev/null 2>&1 || true
   timeout 8m docker system prune -af || echo "docker system prune skipped, failed, or timed out"
   echo "EPC pre-build cleanup before build:"
@@ -162,6 +163,11 @@ if [[ "$branch" == "fork/EPC" ]]; then
   existing_epc_postgres="$(COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml ps -q postgres 2>/dev/null || true)"
 fi
 if [[ "$branch" == "fork/EPC" && -n "$existing_epc_postgres" ]]; then
+  if [[ -n "${POSTGRES_PASSWORD:-}" ]]; then
+    docker exec -i "$existing_epc_postgres" psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -v postgres_password="$POSTGRES_PASSWORD" <<'SQL'
+alter user postgres with password :'postgres_password';
+SQL
+  fi
   COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --no-deps --no-build --force-recreate app
 else
   COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --no-build --remove-orphans
