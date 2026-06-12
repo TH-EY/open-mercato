@@ -136,7 +136,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
   const loadAttachmentCounts = React.useCallback(async (items: TaskRow[]) => {
     const entries = await Promise.all(items.map(async (task) => {
       const payload = await apiCall<{ items?: unknown[] }>(
-        `/api/attachments?entityId=${encodeURIComponent(E.projects.project_task)}&recordId=${encodeURIComponent(task.id)}`,
+        `/api/attachments?entityId=${encodeURIComponent(E.projects.project_task)}&recordId=${encodeURIComponent(task.id)}&_ts=${Date.now()}`,
         { cache: 'no-store' },
       ).then((call) => call.result).catch(() => null)
       return [task.id, Array.isArray(payload?.items) ? payload.items.length : 0] as const
@@ -153,6 +153,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
         projectId,
         sortField: 'position',
         sortDir: 'asc',
+        _ts: String(Date.now()),
       })
       const payload = await readApiResultOrThrow<TasksResponse>(`/api/projects/tasks?${params.toString()}`, { cache: 'no-store' })
       const nextTasks = (Array.isArray(payload.items) ? payload.items : [])
