@@ -17,6 +17,11 @@ if [[ "${BRANCH}" != contrib/* && "${BRANCH}" != "fork/EPC" ]]; then
   echo "Preview cleanup is only supported for contrib/* branches and fork/EPC" >&2
   exit 1
 fi
+if [[ "${BRANCH}" == "fork/EPC" && "${EPC_ALLOW_DESTRUCTIVE_DESTROY:-}" != "1" ]]; then
+  echo "Refusing to destroy fork/EPC preview because it contains persistent demo data." >&2
+  echo "Set EPC_ALLOW_DESTRUCTIVE_DESTROY=1 only for an intentional destructive reset." >&2
+  exit 1
+fi
 
 PREVIEW_SLUG="$(branch_to_preview_slug "${BRANCH}")"
 PREVIEW_HOSTNAME="$(preview_hostname_for_slug "${PREVIEW_SLUG}")"

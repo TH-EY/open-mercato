@@ -55,7 +55,11 @@ else
   git -C "$workdir" fetch origin "$branch" --prune
   git -C "$workdir" checkout -B "$branch" "origin/$branch"
   git -C "$workdir" reset --hard "origin/$branch"
-  git -C "$workdir" clean -fdx
+  if [[ "$branch" == "fork/EPC" ]]; then
+    git -C "$workdir" clean -fdx -e .env
+  else
+    git -C "$workdir" clean -fdx
+  fi
 fi
 
 python3 - <<'PY' "$baseline_env_file" "$workdir/.env" "$preview_env" "$preview_port" "$preview_hostname" "$preview_admin_email" "$preview_admin_password"
@@ -63,11 +67,19 @@ import secrets, sys
 from pathlib import Path
 baseline, target, preview_env, preview_port, preview_host, preview_admin_email, preview_admin_password = sys.argv[1:8]
 values = {}
+existing = {}
 for line in Path(baseline).read_text().splitlines():
     if not line or line.startswith('#') or '=' not in line:
         continue
     key, value = line.split('=', 1)
     values[key] = value
+target_path = Path(target)
+if preview_env == 'epc' and target_path.exists():
+    for line in target_path.read_text().splitlines():
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        existing[key] = value
 values.update({
     'APP_NAME': f'preview-{preview_env}',
     'DEPLOY_ENV': preview_env,
@@ -79,6 +91,15 @@ values.update({
     'TENANT_DATA_ENCRYPTION_KEY': secrets.token_urlsafe(48),
     'MEILISEARCH_MASTER_KEY': secrets.token_urlsafe(32),
 })
+for key in [
+    'POSTGRES_PASSWORD',
+    'JWT_SECRET',
+    'AUTH_SECRET',
+    'TENANT_DATA_ENCRYPTION_KEY',
+    'MEILISEARCH_MASTER_KEY',
+]:
+    if existing.get(key):
+        values[key] = existing[key]
 if preview_host == 'preview-epc.om.they.dev':
     values.update({
         'SYSTEM_EMAIL_PROVIDER': 'ses',
@@ -98,7 +119,7 @@ keys = [
     'OM_INIT_SUPERADMIN_PASSWORD','OPENAI_API_KEY','SYSTEM_EMAIL_PROVIDER','AWS_SES_REGION',
     'AWS_SES_CONFIGURATION_SET','RESEND_API_KEY','EMAIL_FROM','NOTIFICATIONS_EMAIL_FROM'
 ]
-Path(target).write_text('\n'.join(f'{key}={values[key]}' for key in keys if key in values) + '\n')
+target_path.write_text('\n'.join(f'{key}={values[key]}' for key in keys if key in values) + '\n')
 PY
 
 cd "$workdir"
@@ -129,11 +150,9 @@ if ! DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain timeout 45m docker build --progre
 fi
 tail -n 80 "$build_log" || true
 if [[ "$branch" == "fork/EPC" ]]; then
-  # Keep EPC online while the slow image build runs. The data reset still happens
-  # before the new stack starts, but the cancellation window is short.
-  docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml down --remove-orphans --volumes >/dev/null 2>&1 || true
+  echo "EPC preview keeps Docker volumes intact; preserving demo database state."
 fi
-COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --no-build
+COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --no-build --remove-orphans
 EOF
 } > "${REMOTE_SCRIPT}"
 
