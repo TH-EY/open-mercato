@@ -124,6 +124,11 @@ PY
 
 cd "$workdir"
 if [[ "$branch" == "fork/EPC" ]]; then
+  echo "EPC pre-build app image cleanup; preserving database and named volumes:"
+  COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml stop app >/dev/null 2>&1 || true
+  COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml rm -f app >/dev/null 2>&1 || true
+  docker image rm -f "open-mercato/app:$preview_env" >/dev/null 2>&1 || true
+  timeout 8m docker system prune -af || echo "docker system prune skipped, failed, or timed out"
   echo "EPC pre-build cleanup before build:"
   df -h /
   timeout 30s docker system df || echo "docker system df skipped, failed, or timed out"
