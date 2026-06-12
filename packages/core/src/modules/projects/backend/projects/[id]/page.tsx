@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from 'react'
-import { useParams } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { Page, PageBody } from '@open-mercato/ui/backend/Page'
 import { Button } from '@open-mercato/ui/primitives/button'
 import { readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
@@ -11,6 +11,7 @@ import { LoadingMessage, ErrorMessage } from '@open-mercato/ui/backend/detail'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { ProjectForm, useProjectReferenceOptions, type ProjectFormValues } from '../../../components/ProjectForm'
 import { ProjectBoard } from '../../../components/ProjectBoard'
+import { resolveProjectPathnameId, resolveRouteId } from '../../../lib/route-id'
 
 type ProjectDetail = ProjectFormValues & {
   id: string
@@ -21,6 +22,12 @@ type ProjectDetail = ProjectFormValues & {
 
 type ProjectsResponse = {
   items?: Record<string, unknown>[]
+}
+
+type ProjectDetailPageProps = {
+  params?: {
+    id?: string | string[]
+  }
 }
 
 function normalizeProject(item: Record<string, unknown>): ProjectDetail | null {
@@ -38,10 +45,10 @@ function normalizeProject(item: Record<string, unknown>): ProjectDetail | null {
   }
 }
 
-export default function ProjectDetailPage() {
+export default function ProjectDetailPage({ params }: ProjectDetailPageProps) {
   const t = useT()
-  const params = useParams<{ id: string }>()
-  const projectId = params.id
+  const pathname = usePathname()
+  const projectId = resolveRouteId(params?.id) ?? resolveProjectPathnameId(pathname)
   const { orders, users } = useProjectReferenceOptions()
   const orderMap = React.useMemo(() => new Map(orders.map((order) => [order.id, order.label])), [orders])
   const userMap = React.useMemo(() => new Map(users.map((user) => [user.id, user.label])), [users])
@@ -50,6 +57,11 @@ export default function ProjectDetailPage() {
   const [error, setError] = React.useState<string | null>(null)
 
   const loadProject = React.useCallback(async () => {
+    if (!projectId) {
+      setLoading(false)
+      setError(t('projects.detail.notFound', 'Project not found.'))
+      return
+    }
     setLoading(true)
     setError(null)
     try {
