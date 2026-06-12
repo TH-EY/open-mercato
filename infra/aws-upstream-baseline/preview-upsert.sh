@@ -97,17 +97,17 @@ cd "$workdir"
 if [[ "$branch" == "fork/EPC" ]]; then
   echo "EPC pre-build cleanup before build:"
   df -h /
-  docker system df || true
+  timeout 30s docker system df || echo "docker system df skipped, failed, or timed out"
   timeout 6m docker builder prune -af || echo "docker builder prune skipped, failed, or timed out"
   timeout 3m docker image prune -f || echo "docker image prune skipped, failed, or timed out"
   echo "EPC pre-build cleanup after cleanup:"
   df -h /
-  docker system df || true
+  timeout 30s docker system df || echo "docker system df skipped, failed, or timed out"
 fi
 if [[ "$branch" != "fork/EPC" ]]; then
   docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml down --remove-orphans --volumes >/dev/null 2>&1 || true
 fi
-if ! docker image inspect opencode-mvp:latest >/dev/null 2>&1; then
+if ! timeout 30s docker image inspect opencode-mvp:latest >/dev/null 2>&1; then
   docker build -t opencode-mvp:latest docker/opencode
 fi
 build_log="/tmp/openmercato-preview-${preview_env}-build.log"
