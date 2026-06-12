@@ -29,48 +29,6 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Preflight disk cleanup
-        timeout-minutes: 15
-        shell: bash
-        run: |
-          set -euo pipefail
-          source ./infra/aws-upstream-baseline/preview-common.sh
-
-          REMOTE_SCRIPT="$(mktemp)"
-          cat > "${REMOTE_SCRIPT}" <<'SCRIPT'
-          bash <<'BASH'
-          set -euo pipefail
-          echo "Before cleanup:"
-          df -h /
-          docker system df || true
-
-          timeout 6m docker builder prune -af || echo "docker builder prune skipped, failed, or timed out"
-          timeout 3m docker image prune -f || echo "docker image prune skipped, failed, or timed out"
-
-          echo "After cleanup:"
-          df -h /
-          docker system df || true
-          BASH
-          SCRIPT
-
-          COMMANDS_JSON="$(python3 - <<'PY' "${REMOTE_SCRIPT}"
-          import json, sys
-          path = sys.argv[1]
-          print(json.dumps({'commands': [open(path, 'r', encoding='utf-8').read()]}))
-          PY
-          )"
-          COMMAND_ID="$(aws ssm send-command \
-            --region "${AWS_REGION}" \
-            --instance-ids "${PREVIEW_INSTANCE_ID}" \
-            --document-name AWS-RunShellScript \
-            --parameters "${COMMANDS_JSON}" \
-            --query 'Command.CommandId' \
-            --output text)"
-          echo "Preflight cleanup SSM command sent: ${COMMAND_ID}"
-          wait_for_ssm_command "${COMMAND_ID}" "${PREVIEW_INSTANCE_ID}"
-
-          rm -f "${REMOTE_SCRIPT}"
-
       - name: Upsert preview
         id: preview
         timeout-minutes: 70
