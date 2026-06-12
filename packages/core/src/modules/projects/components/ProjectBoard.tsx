@@ -137,6 +137,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
     const entries = await Promise.all(items.map(async (task) => {
       const payload = await apiCall<{ items?: unknown[] }>(
         `/api/attachments?entityId=${encodeURIComponent(E.projects.project_task)}&recordId=${encodeURIComponent(task.id)}`,
+        { cache: 'no-store' },
       ).then((call) => call.result).catch(() => null)
       return [task.id, Array.isArray(payload?.items) ? payload.items.length : 0] as const
     }))
@@ -153,7 +154,7 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
         sortField: 'position',
         sortDir: 'asc',
       })
-      const payload = await readApiResultOrThrow<TasksResponse>(`/api/projects/tasks?${params.toString()}`)
+      const payload = await readApiResultOrThrow<TasksResponse>(`/api/projects/tasks?${params.toString()}`, { cache: 'no-store' })
       const nextTasks = (Array.isArray(payload.items) ? payload.items : [])
         .map(normalizeTask)
         .filter((task): task is TaskRow => task !== null)
