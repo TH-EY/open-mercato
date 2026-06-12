@@ -123,6 +123,9 @@ target_path.write_text('\n'.join(f'{key}={values[key]}' for key in keys if key i
 PY
 
 cd "$workdir"
+set -a
+. ./.env
+set +a
 if [[ "$branch" == "fork/EPC" ]]; then
   echo "EPC pre-build app image cleanup; preserving database and named volumes:"
   COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml stop app >/dev/null 2>&1 || true
