@@ -38,6 +38,7 @@
   "projects.table.tasks.summary": "{open} open / {done} done",
   "projects.table.updatedAt": "Updated",
   "projects.tasks.create": "Add task",
+  "projects.tasks.createInColumn": "Add task to {status}",
   "projects.tasks.dialog.create": "Create task",
   "projects.tasks.dialog.description": "Manage task details, ownership, deadline, and attachments.",
   "projects.tasks.dialog.edit": "Edit task",

@@ -38,6 +38,7 @@
   "projects.table.tasks.summary": "{open} abiertas / {done} completadas",
   "projects.table.updatedAt": "Actualizado",
   "projects.tasks.create": "Agregar tarea",
+  "projects.tasks.createInColumn": "Agregar tarea a {status}",
   "projects.tasks.dialog.create": "Crear tarea",
   "projects.tasks.dialog.description": "Gestiona los detalles de la tarea, el propietario, la fecha límite y los adjuntos.",
   "projects.tasks.dialog.edit": "Editar tarea",

@@ -285,7 +285,13 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
             >
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div className="text-sm font-semibold">{projectTaskStatusLabels[status]}</div>
-                <Button type="button" variant="ghost" size="sm" onClick={() => openCreate(status)}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={t('projects.tasks.createInColumn', 'Add task to {status}', { status: projectTaskStatusLabels[status] })}
+                  onClick={() => openCreate(status)}
+                >
                   <Plus className="h-4 w-4" />
                 </Button>
               </div>
@@ -337,12 +343,8 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
               {t('projects.tasks.dialog.description', 'Manage task details, ownership, deadline, and attachments.')}
             </DialogDescription>
           </DialogHeader>
-          <form
+          <div
             className="space-y-4"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void saveTask()
-            }}
           >
             <div className="grid gap-3 md:grid-cols-2">
               <label className="space-y-1 text-sm">
@@ -397,10 +399,10 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
               </div>
               <div className="flex gap-2">
                 <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>{t('common.cancel', 'Cancel')}</Button>
-                <Button type="submit">{t('common.save', 'Save')}</Button>
+                <Button type="button" onClick={() => { void saveTask() }}>{t('common.save', 'Save')}</Button>
               </div>
             </div>
-          </form>
+          </div>
         </DialogContent>
       </Dialog>
     </section>
