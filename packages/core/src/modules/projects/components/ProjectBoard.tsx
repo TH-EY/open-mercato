@@ -48,6 +48,8 @@ const emptyDraft = (status: ProjectTaskStatus): TaskDraft => ({
   deadlineAt: '',
 })
 
+const taskDragDataType = 'application/x-open-mercato-project-task'
+
 function normalizeTask(item: Record<string, unknown>): TaskRow | null {
   const id = typeof item.id === 'string' ? item.id : null
   if (!id) return null
@@ -257,12 +259,17 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
     })
   }, [projectId, retryLastMutation, runMutation])
 
-  const handleDrop = React.useCallback(async (status: ProjectTaskStatus, beforeId?: string) => {
-    if (!draggingTaskId) return
-    const nextTasks = reorderTasks(tasks, draggingTaskId, status, beforeId)
+  const handleDrop = React.useCallback(async (status: ProjectTaskStatus, beforeId?: string, droppedTaskId?: string) => {
+    const taskId = droppedTaskId || draggingTaskId
+    if (!taskId) return
+    const nextTasks = reorderTasks(tasks, taskId, status, beforeId)
     setDraggingTaskId(null)
     await persistOrder(nextTasks)
   }, [draggingTaskId, persistOrder, tasks])
+
+  const readDraggedTaskId = React.useCallback((event: React.DragEvent<HTMLElement>) => (
+    event.dataTransfer.getData(taskDragDataType) || event.dataTransfer.getData('text/plain') || undefined
+  ), [])
 
   return (
     <section className="space-y-4">
@@ -281,7 +288,10 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
               key={status}
               className="min-h-[360px] rounded-md border bg-muted/20 p-3"
               onDragOver={(event) => event.preventDefault()}
-              onDrop={() => { void handleDrop(status) }}
+              onDrop={(event) => {
+                event.preventDefault()
+                void handleDrop(status, undefined, readDraggedTaskId(event))
+              }}
             >
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div className="text-sm font-semibold">{projectTaskStatusLabels[status]}</div>
@@ -304,11 +314,17 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
                     key={task.id}
                     type="button"
                     draggable
-                    onDragStart={() => setDraggingTaskId(task.id)}
+                    onDragStart={(event) => {
+                      setDraggingTaskId(task.id)
+                      event.dataTransfer.effectAllowed = 'move'
+                      event.dataTransfer.setData(taskDragDataType, task.id)
+                      event.dataTransfer.setData('text/plain', task.id)
+                    }}
                     onDragOver={(event) => event.preventDefault()}
                     onDrop={(event) => {
+                      event.preventDefault()
                       event.stopPropagation()
-                      void handleDrop(status, task.id)
+                      void handleDrop(status, task.id, readDraggedTaskId(event))
                     }}
                     onClick={() => openEdit(task)}
                     className="w-full rounded-md border bg-background p-3 text-left shadow-sm transition hover:border-primary/60"
