@@ -45,6 +45,7 @@ function buildContext(tasks: Array<Record<string, unknown>>) {
     fork: jest.fn(),
     find: jest.fn().mockResolvedValue(tasks),
     flush: jest.fn().mockResolvedValue(undefined),
+    nativeUpdate: jest.fn().mockResolvedValue(1),
   }
   em.fork.mockReturnValue(em)
   return {
@@ -79,8 +80,8 @@ describe('projects.tasks.reorder command', () => {
     }, ctx)
 
     expect(result).toEqual({ moved: 2 })
-    expect(firstTask).toMatchObject({ status: 'in_progress', position: 1 })
-    expect(secondTask).toMatchObject({ status: 'done', position: 0 })
+    expect(firstTask).toMatchObject({ status: 'todo', position: 0 })
+    expect(secondTask).toMatchObject({ status: 'todo', position: 1 })
     expect(em.find).toHaveBeenCalledWith(expect.anything(), {
       id: { $in: [FIRST_TASK_ID, SECOND_TASK_ID] },
       project: PROJECT_ID,
@@ -88,7 +89,18 @@ describe('projects.tasks.reorder command', () => {
       organizationId: ORG_ID,
       deletedAt: null,
     })
-    expect(em.flush).toHaveBeenCalledTimes(1)
+    expect(em.nativeUpdate).toHaveBeenCalledTimes(2)
+    expect(em.nativeUpdate).toHaveBeenNthCalledWith(1, expect.anything(), { id: FIRST_TASK_ID }, expect.objectContaining({
+      status: 'in_progress',
+      position: 1,
+      updatedAt: expect.any(Date),
+    }))
+    expect(em.nativeUpdate).toHaveBeenNthCalledWith(2, expect.anything(), { id: SECOND_TASK_ID }, expect.objectContaining({
+      status: 'done',
+      position: 0,
+      updatedAt: expect.any(Date),
+    }))
+    expect(em.flush).not.toHaveBeenCalled()
     expect(emitProjectsEvent).toHaveBeenCalledWith('projects.task.moved', {
       projectId: PROJECT_ID,
       taskIds: [FIRST_TASK_ID, SECOND_TASK_ID],
@@ -110,6 +122,7 @@ describe('projects.tasks.reorder command', () => {
       ],
     }, ctx)).rejects.toThrow('One or more tasks were not found in this project.')
 
+    expect(em.nativeUpdate).not.toHaveBeenCalled()
     expect(em.flush).not.toHaveBeenCalled()
     expect(emitProjectsEvent).not.toHaveBeenCalled()
   })

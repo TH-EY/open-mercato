@@ -162,21 +162,25 @@ const reorderProjectTasksCommand: CommandHandler<ProjectTaskReorderInput, { move
     })
     if (tasks.length !== ids.length) throw new CrudHttpError(400, { error: 'One or more tasks were not found in this project.' })
     const taskById = new Map(tasks.map((task) => [task.id, task]))
+    const now = new Date()
+    let moved = 0
     for (const move of parsed.moves) {
       const task = taskById.get(move.id)
       if (!task) continue
-      task.status = normalizeProjectTaskStatus(move.status)
-      task.position = move.position
-      task.updatedAt = new Date()
+      await em.nativeUpdate(ProjectTask, { id: task.id }, {
+        status: normalizeProjectTaskStatus(move.status),
+        position: move.position,
+        updatedAt: now,
+      })
+      moved += 1
     }
-    await em.flush()
     await emitProjectsEvent('projects.task.moved', {
       projectId: project.id,
       taskIds: ids,
       tenantId: project.tenantId,
       organizationId: project.organizationId,
     })
-    return { moved: tasks.length }
+    return { moved }
   },
 }
 
