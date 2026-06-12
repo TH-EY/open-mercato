@@ -98,18 +98,20 @@ jobs:
 
       - name: Upsert preview
         id: preview
+        timeout-minutes: 70
         shell: bash
         env:
           PREVIEW_ADMIN_EMAIL: ${{ secrets.EPC_PREVIEW_ADMIN_EMAIL || secrets.SMOKE_TEST_EMAIL }}
           PREVIEW_ADMIN_PASSWORD: ${{ secrets.EPC_PREVIEW_ADMIN_PASSWORD || secrets.SMOKE_TEST_PASSWORD }}
         run: |
           set -euo pipefail
-          OUTPUT="$(bash ./infra/aws-upstream-baseline/preview-upsert.sh 'fork/EPC')"
-          echo "$OUTPUT"
+          OUTPUT_FILE="$(mktemp)"
+          bash ./infra/aws-upstream-baseline/preview-upsert.sh 'fork/EPC' | tee "${OUTPUT_FILE}"
           while IFS='=' read -r key value; do
             [[ -z "$key" ]] && continue
             echo "$key=$value" >> "$GITHUB_OUTPUT"
-          done < <(printf '%s\n' "$OUTPUT" | grep '^preview_')
+          done < <(grep '^preview_' "${OUTPUT_FILE}")
+          rm -f "${OUTPUT_FILE}"
 
       - name: Smoke test preview
         env:

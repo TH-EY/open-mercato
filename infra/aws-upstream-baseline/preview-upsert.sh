@@ -19,11 +19,14 @@ PREVIEW_SLUG="$(branch_to_preview_slug "${BRANCH}")"
 PREVIEW_HOSTNAME="$(preview_hostname_for_slug "${PREVIEW_SLUG}")"
 PREVIEW_RUNTIME_ENV="$(preview_runtime_env_for_slug "${PREVIEW_SLUG}")"
 TARGET_GROUP_NAME="$(target_group_name_for_slug "${PREVIEW_SLUG}")"
+echo "Preparing preview ${PREVIEW_SLUG} for ${BRANCH}"
+echo "Resolving preview port for ${PREVIEW_HOSTNAME}"
 PREVIEW_PORT="$(choose_preview_port "${PREVIEW_SLUG}" "${TARGET_GROUP_NAME}")"
 PREVIEW_ENV="${PREVIEW_RUNTIME_ENV}"
 PREVIEW_PROJECT="preview-${PREVIEW_SLUG}"
 PREVIEW_URL="https://${PREVIEW_HOSTNAME}"
 REMOTE_WORKDIR="${PREVIEW_REMOTE_ROOT}/${PREVIEW_SLUG}"
+echo "Preview port resolved: ${PREVIEW_PORT}"
 
 REMOTE_SCRIPT="$(mktemp)"
 {
@@ -129,7 +132,9 @@ COMMAND_ID="$(aws ssm send-command \
   --parameters "${COMMANDS_JSON}" \
   --query 'Command.CommandId' \
   --output text)"
+echo "SSM deploy command sent: ${COMMAND_ID}"
 wait_for_ssm_command "${COMMAND_ID}" "${PREVIEW_INSTANCE_ID}"
+echo "SSM deploy command completed: ${COMMAND_ID}"
 rm -f "${REMOTE_SCRIPT}"
 
 TARGET_GROUP_ARN="$(aws elbv2 describe-target-groups --region "${AWS_REGION}" --names "${TARGET_GROUP_NAME}" --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || true)"
@@ -154,6 +159,7 @@ if [[ -z "${TARGET_GROUP_ARN}" || "${TARGET_GROUP_ARN}" == "None" ]]; then
 fi
 
 aws elbv2 register-targets --region "${AWS_REGION}" --target-group-arn "${TARGET_GROUP_ARN}" --targets "Id=${PREVIEW_INSTANCE_ID},Port=${PREVIEW_PORT}" >/dev/null
+echo "Registered preview target on port ${PREVIEW_PORT}"
 
 RULE_ARN="$(existing_rule_arn_for_host "${PREVIEW_HOSTNAME}")"
 if [[ -z "${RULE_ARN}" ]]; then
@@ -175,7 +181,9 @@ else
 fi
 
 wait_for_target_healthy "${TARGET_GROUP_ARN}" 90
+echo "Target group is healthy"
 wait_for_http_200 "${PREVIEW_URL}/login" 90
+echo "Preview login endpoint is reachable"
 
 echo "preview_branch=${BRANCH}"
 echo "preview_slug=${PREVIEW_SLUG}"
