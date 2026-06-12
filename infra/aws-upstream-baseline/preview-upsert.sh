@@ -164,9 +164,19 @@ if [[ "$branch" == "fork/EPC" ]]; then
 fi
 if [[ "$branch" == "fork/EPC" && -n "$existing_epc_postgres" ]]; then
   if [[ -n "${POSTGRES_PASSWORD:-}" ]]; then
-    docker exec -i "$existing_epc_postgres" psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -v postgres_password="$POSTGRES_PASSWORD" <<'SQL'
-alter user postgres with password :'postgres_password';
-SQL
+    pg_password_sql="/tmp/openmercato-preview-${preview_env}-postgres-password.sql"
+    python3 - <<'PY' > "$pg_password_sql"
+import os
+
+password = os.environ["POSTGRES_PASSWORD"]
+escaped = password.replace("'", "''")
+print("set password_encryption = 'scram-sha-256';")
+print(f"alter role postgres login password '{escaped}';")
+PY
+    docker cp "$pg_password_sql" "$existing_epc_postgres:/tmp/openmercato-preview-postgres-password.sql"
+    rm -f "$pg_password_sql"
+    docker exec "$existing_epc_postgres" psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -v ON_ERROR_STOP=1 -f /tmp/openmercato-preview-postgres-password.sql >/dev/null
+    docker exec "$existing_epc_postgres" rm -f /tmp/openmercato-preview-postgres-password.sql
   fi
   COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --no-deps --no-build --force-recreate app
 else
