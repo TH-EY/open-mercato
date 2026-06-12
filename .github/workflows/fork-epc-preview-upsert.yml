@@ -100,8 +100,8 @@ jobs:
         id: preview
         shell: bash
         env:
-          PREVIEW_ADMIN_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
-          PREVIEW_ADMIN_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+          PREVIEW_ADMIN_EMAIL: ${{ secrets.EPC_PREVIEW_ADMIN_EMAIL || secrets.SMOKE_TEST_EMAIL }}
+          PREVIEW_ADMIN_PASSWORD: ${{ secrets.EPC_PREVIEW_ADMIN_PASSWORD || secrets.SMOKE_TEST_PASSWORD }}
         run: |
           set -euo pipefail
           OUTPUT="$(bash ./infra/aws-upstream-baseline/preview-upsert.sh 'fork/EPC')"
@@ -114,8 +114,8 @@ jobs:
       - name: Smoke test preview
         env:
           BASE_URL: ${{ steps.preview.outputs.preview_url }}
-          SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
-          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+          SMOKE_TEST_EMAIL: ${{ secrets.EPC_PREVIEW_ADMIN_EMAIL || secrets.SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.EPC_PREVIEW_ADMIN_PASSWORD || secrets.SMOKE_TEST_PASSWORD }}
         run: bash ./infra/aws-upstream-baseline/smoke.sh
 
       - name: Workflow summary
