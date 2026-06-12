@@ -39,6 +39,7 @@
   "projects.table.updatedAt": "Aktualisiert",
   "projects.tasks.create": "Aufgabe hinzufügen",
   "projects.tasks.dialog.create": "Aufgabe erstellen",
+  "projects.tasks.dialog.description": "Verwalte Aufgabendetails, Verantwortlichkeit, Frist und Anhänge.",
   "projects.tasks.dialog.edit": "Aufgabe bearbeiten",
   "projects.tasks.flash.deleted": "Aufgabe wurde gelöscht.",
   "projects.tasks.flash.saved": "Aufgabe wurde gespeichert.",

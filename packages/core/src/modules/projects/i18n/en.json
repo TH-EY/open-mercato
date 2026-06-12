@@ -39,6 +39,7 @@
   "projects.table.updatedAt": "Updated",
   "projects.tasks.create": "Add task",
   "projects.tasks.dialog.create": "Create task",
+  "projects.tasks.dialog.description": "Manage task details, ownership, deadline, and attachments.",
   "projects.tasks.dialog.edit": "Edit task",
   "projects.tasks.flash.deleted": "Task deleted.",
   "projects.tasks.flash.saved": "Task saved.",

@@ -39,6 +39,7 @@
   "projects.table.updatedAt": "Zaktualizowano",
   "projects.tasks.create": "Dodaj zadanie",
   "projects.tasks.dialog.create": "Utwórz zadanie",
+  "projects.tasks.dialog.description": "Zarządzaj szczegółami zadania, właścicielem, deadline'em i załącznikami.",
   "projects.tasks.dialog.edit": "Edytuj zadanie",
   "projects.tasks.flash.deleted": "Zadanie zostało usunięte.",
   "projects.tasks.flash.saved": "Zadanie zostało zapisane.",

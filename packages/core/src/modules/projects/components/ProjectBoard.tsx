@@ -4,7 +4,7 @@ import * as React from 'react'
 import { Button } from '@open-mercato/ui/primitives/button'
 import { Input } from '@open-mercato/ui/primitives/input'
 import { Textarea } from '@open-mercato/ui/primitives/textarea'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@open-mercato/ui/primitives/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@open-mercato/ui/primitives/dialog'
 import { apiCall, readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
@@ -218,6 +218,16 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
     if (draft.id) setDialogOpen(false)
   }, [draft, loadTasks, projectId, retryLastMutation, runMutation, t])
 
+  const handleTaskDialogKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault()
+      void saveTask()
+    }
+    if (event.key === 'Escape') {
+      setDialogOpen(false)
+    }
+  }, [saveTask])
+
   const deleteTask = React.useCallback(async () => {
     if (!draft.id) return
     const id = draft.id
@@ -320,11 +330,20 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
         })}
       </div>
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl" onKeyDown={handleTaskDialogKeyDown}>
           <DialogHeader>
             <DialogTitle>{draft.id ? t('projects.tasks.dialog.edit', 'Edit task') : t('projects.tasks.dialog.create', 'Create task')}</DialogTitle>
+            <DialogDescription>
+              {t('projects.tasks.dialog.description', 'Manage task details, ownership, deadline, and attachments.')}
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void saveTask()
+            }}
+          >
             <div className="grid gap-3 md:grid-cols-2">
               <label className="space-y-1 text-sm">
                 <span>{t('projects.tasks.form.name', 'Name')}</span>
@@ -378,10 +397,10 @@ export function ProjectBoard({ projectId }: { projectId: string }) {
               </div>
               <div className="flex gap-2">
                 <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>{t('common.cancel', 'Cancel')}</Button>
-                <Button type="button" onClick={() => { void saveTask() }}>{t('common.save', 'Save')}</Button>
+                <Button type="submit">{t('common.save', 'Save')}</Button>
               </div>
             </div>
-          </div>
+          </form>
         </DialogContent>
       </Dialog>
     </section>
