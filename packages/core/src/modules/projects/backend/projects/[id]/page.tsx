@@ -4,7 +4,7 @@ import * as React from 'react'
 import { usePathname } from 'next/navigation'
 import { Page, PageBody } from '@open-mercato/ui/backend/Page'
 import { Button } from '@open-mercato/ui/primitives/button'
-import { readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
+import { apiCall, readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
 import { updateCrud } from '@open-mercato/ui/backend/utils/crud'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { LoadingMessage, ErrorMessage } from '@open-mercato/ui/backend/detail'
@@ -55,6 +55,28 @@ export default function ProjectDetailPage({ params }: ProjectDetailPageProps) {
   const [project, setProject] = React.useState<ProjectDetail | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
+  const [canManage, setCanManage] = React.useState(false)
+
+  React.useEffect(() => {
+    let cancelled = false
+    async function loadPermissions() {
+      try {
+        const call = await apiCall<{ granted?: string[]; ok?: boolean }>('/api/auth/feature-check', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ features: ['projects.manage'] }),
+        })
+        if (!cancelled) {
+          const granted = Array.isArray(call.result?.granted) ? call.result.granted : []
+          setCanManage(granted.includes('projects.manage'))
+        }
+      } catch {
+        if (!cancelled) setCanManage(false)
+      }
+    }
+    void loadPermissions()
+    return () => { cancelled = true }
+  }, [])
 
   const loadProject = React.useCallback(async () => {
     if (!projectId) {
@@ -114,18 +136,20 @@ export default function ProjectDetailPage({ params }: ProjectDetailPageProps) {
             <Button asChild variant="outline"><a href="/backend/projects">{t('projects.detail.back', 'Back to projects')}</a></Button>
           </div>
         </div>
-        <ProjectForm
-          title={t('projects.detail.editTitle', 'Project details')}
-          backHref="/backend/projects"
-          cancelHref="/backend/projects"
-          submitLabel={t('common.save', 'Save')}
-          initialValues={project}
-          onSubmit={async (values) => {
-            await updateCrud('projects', { ...values, id: project.id })
-            flash(t('projects.detail.flash.updated', 'Project updated.'), 'success')
-            await loadProject()
-          }}
-        />
+        {canManage ? (
+          <ProjectForm
+            title={t('projects.detail.editTitle', 'Project details')}
+            backHref="/backend/projects"
+            cancelHref="/backend/projects"
+            submitLabel={t('common.save', 'Save')}
+            initialValues={project}
+            onSubmit={async (values) => {
+              await updateCrud('projects', { ...values, id: project.id })
+              flash(t('projects.detail.flash.updated', 'Project updated.'), 'success')
+              await loadProject()
+            }}
+          />
+        ) : null}
         <ProjectBoard projectId={project.id} />
       </PageBody>
     </Page>

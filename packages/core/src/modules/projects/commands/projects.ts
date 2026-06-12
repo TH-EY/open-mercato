@@ -4,7 +4,7 @@ import type { EntityManager } from '@mikro-orm/postgresql'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { SalesOrder } from '@open-mercato/core/modules/sales/data/entities'
-import { Project } from '../data/entities'
+import { Project, ProjectTask } from '../data/entities'
 import {
   projectCreateSchema,
   projectUpdateSchema,
@@ -109,8 +109,18 @@ const deleteProjectCommand: CommandHandler<{ id: string }, { projectId: string }
     if (!project) throw new CrudHttpError(404, { error: 'Project not found.' })
     ensureTenantScope(ctx, project.tenantId)
     ensureOrganizationScope(ctx, project.organizationId)
-    project.deletedAt = new Date()
-    project.updatedAt = new Date()
+    const now = new Date()
+    project.deletedAt = now
+    project.updatedAt = now
+    await em.nativeUpdate(ProjectTask, {
+      project: project.id,
+      tenantId: project.tenantId,
+      organizationId: project.organizationId,
+      deletedAt: null,
+    }, {
+      deletedAt: now,
+      updatedAt: now,
+    })
     await em.flush()
     await emitProjectsEvent('projects.project.deleted', {
       id: project.id,

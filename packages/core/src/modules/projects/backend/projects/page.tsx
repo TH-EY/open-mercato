@@ -9,7 +9,7 @@ import { DataTable } from '@open-mercato/ui/backend/DataTable'
 import { RowActions } from '@open-mercato/ui/backend/RowActions'
 import { useConfirmDialog } from '@open-mercato/ui/backend/confirm-dialog'
 import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
-import { readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
+import { apiCall, readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
 import { deleteCrud } from '@open-mercato/ui/backend/utils/crud'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { Button } from '@open-mercato/ui/primitives/button'
@@ -72,9 +72,31 @@ export default function ProjectsPage() {
   const [totalPages, setTotalPages] = React.useState(1)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
+  const [canManage, setCanManage] = React.useState(false)
   const { runMutation, retryLastMutation } = useGuardedMutation<{ retryLastMutation: () => Promise<boolean> }>({
     contextId: 'projects.list',
   })
+
+  React.useEffect(() => {
+    let cancelled = false
+    async function loadPermissions() {
+      try {
+        const call = await apiCall<{ granted?: string[]; ok?: boolean }>('/api/auth/feature-check', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ features: ['projects.manage'] }),
+        })
+        if (!cancelled) {
+          const granted = Array.isArray(call.result?.granted) ? call.result.granted : []
+          setCanManage(granted.includes('projects.manage'))
+        }
+      } catch {
+        if (!cancelled) setCanManage(false)
+      }
+    }
+    void loadPermissions()
+    return () => { cancelled = true }
+  }, [])
 
   const loadProjects = React.useCallback(async () => {
     setLoading(true)
@@ -155,14 +177,14 @@ export default function ProjectsPage() {
           columns={columns}
           data={rows}
           title={t('projects.list.title', 'Projects')}
-          actions={(
+          actions={canManage ? (
             <Button asChild>
               <a href="/backend/projects/create">
                 <Plus className="mr-2 h-4 w-4" />
                 {t('projects.create.title', 'Create project')}
               </a>
             </Button>
-          )}
+          ) : null}
           entityId={E.projects.project}
           extensionTableId="projects.projects"
           searchValue={search}
@@ -190,11 +212,15 @@ export default function ProjectsPage() {
           onRowClick={(row) => router.push(`/backend/projects/${row.id}`)}
           rowActions={(row) => (
             <RowActions
-              items={[
-                { id: 'open', label: t('common.open', 'Open'), href: `/backend/projects/${row.id}` },
-                { id: 'edit', label: t('common.edit', 'Edit'), href: `/backend/projects/${row.id}` },
-                { id: 'delete', label: t('common.delete', 'Delete'), destructive: true, onSelect: () => { void deleteProject(row) } },
-              ]}
+              items={canManage
+                ? [
+                    { id: 'open', label: t('common.open', 'Open'), href: `/backend/projects/${row.id}` },
+                    { id: 'edit', label: t('common.edit', 'Edit'), href: `/backend/projects/${row.id}` },
+                    { id: 'delete', label: t('common.delete', 'Delete'), destructive: true, onSelect: () => { void deleteProject(row) } },
+                  ]
+                : [
+                    { id: 'open', label: t('common.open', 'Open'), href: `/backend/projects/${row.id}` },
+                  ]}
             />
           )}
         />
