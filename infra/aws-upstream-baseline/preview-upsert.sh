@@ -178,7 +178,16 @@ print(f"alter role postgres login password '{escaped}';")
 PY
     docker cp "$pg_password_sql" "$existing_epc_postgres:/tmp/openmercato-preview-postgres-password.sql"
     rm -f "$pg_password_sql"
-    docker exec "$existing_epc_postgres" psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -v ON_ERROR_STOP=1 -f /tmp/openmercato-preview-postgres-password.sql >/dev/null
+    for attempt in 1 2 3 4 5; do
+      if docker exec "$existing_epc_postgres" psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -v ON_ERROR_STOP=1 -f /tmp/openmercato-preview-postgres-password.sql >/dev/null; then
+        break
+      fi
+      if [[ "$attempt" == "5" ]]; then
+        exit 1
+      fi
+      echo "Postgres password sync attempt ${attempt} failed; retrying"
+      sleep "$((attempt * 2))"
+    done
     docker exec "$existing_epc_postgres" rm -f /tmp/openmercato-preview-postgres-password.sql
   fi
   docker rm -f "${preview_project}-app-1" >/dev/null 2>&1 || true
