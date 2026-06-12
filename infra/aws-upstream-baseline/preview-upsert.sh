@@ -79,6 +79,13 @@ values.update({
     'TENANT_DATA_ENCRYPTION_KEY': secrets.token_urlsafe(48),
     'MEILISEARCH_MASTER_KEY': secrets.token_urlsafe(32),
 })
+if preview_host == 'preview-epc.om.they.dev':
+    values.update({
+        'SYSTEM_EMAIL_PROVIDER': 'ses',
+        'AWS_SES_REGION': values.get('AWS_SES_REGION') or values.get('AWS_REGION') or 'eu-west-2',
+        'EMAIL_FROM': values.get('EMAIL_FROM') or 'no-reply@they.dev',
+        'NOTIFICATIONS_EMAIL_FROM': values.get('NOTIFICATIONS_EMAIL_FROM') or values.get('EMAIL_FROM') or 'no-reply@they.dev',
+    })
 if preview_admin_email:
     values['OM_INIT_SUPERADMIN_EMAIL'] = preview_admin_email
     values['ADMIN_EMAIL'] = preview_admin_email
@@ -88,7 +95,8 @@ keys = [
     'APP_NAME','DEPLOY_ENV','APP_PORT','APP_URL','POSTGRES_USER','POSTGRES_PASSWORD','POSTGRES_DB',
     'JWT_SECRET','AUTH_SECRET','TENANT_DATA_ENCRYPTION_KEY','MEILISEARCH_MASTER_KEY',
     'SELF_SERVICE_ONBOARDING_ENABLED','DEMO_MODE','ADMIN_EMAIL','OM_INIT_SUPERADMIN_EMAIL',
-    'OM_INIT_SUPERADMIN_PASSWORD','OPENAI_API_KEY','RESEND_API_KEY','EMAIL_FROM'
+    'OM_INIT_SUPERADMIN_PASSWORD','OPENAI_API_KEY','SYSTEM_EMAIL_PROVIDER','AWS_SES_REGION',
+    'AWS_SES_CONFIGURATION_SET','RESEND_API_KEY','EMAIL_FROM','NOTIFICATIONS_EMAIL_FROM'
 ]
 Path(target).write_text('\n'.join(f'{key}={values[key]}' for key in keys if key in values) + '\n')
 PY
