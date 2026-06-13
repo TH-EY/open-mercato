@@ -17,11 +17,10 @@ if [[ -z "${SMOKE_TEST_PASSWORD:-}" ]]; then
   exit 1
 fi
 
-echo "[baseline-smoke] Using BASE_URL=${BASE_URL}"
-
 if [[ -f "${REPO_ROOT}/scripts/smoke-auth-dashboard.mjs" ]]; then
   exec node "${REPO_ROOT}/scripts/smoke-auth-dashboard.mjs"
 fi
 
+echo "[baseline-smoke] Using BASE_URL=${BASE_URL}"
 curl -k -fsS "${BASE_URL%/}/login" >/dev/null
 echo "[baseline-smoke] Login page is reachable"

@@ -1,33 +1,24 @@
 #!/usr/bin/env node
 
-const baseUrl = (process.env.BASE_URL || 'https://om.they.dev').replace(/\/+$/, '')
-const email = process.env.SMOKE_TEST_EMAIL || ''
-const password = process.env.SMOKE_TEST_PASSWORD || ''
-const smokePaths = (process.env.SMOKE_TEST_PATHS || '/backend')
-  .split(/[\s,]+/)
-  .map((value) => value.trim())
-  .filter(Boolean)
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-function fail(message) {
-  console.error(`[baseline-smoke] ${message}`)
-  process.exit(1)
+export function parseSmokePaths(value = '/backend') {
+  return value
+    .split(/[\s,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
 }
 
-function splitSetCookieHeader(value) {
+export function splitSetCookieHeader(value) {
   if (!value) return []
   const cookies = []
   let current = ''
-  let inExpires = false
   for (let index = 0; index < value.length; index += 1) {
     const char = value[index]
-    const next = value.slice(index, index + 9).toLowerCase()
-    if (next === 'expires=') {
-      inExpires = true
-    }
-    if (inExpires && char === ';') {
-      inExpires = false
-    }
-    if (char === ',' && !inExpires) {
+    const remaining = value.slice(index + 1)
+    const beginsNextCookie = /^\s*[!#$%&'*+\-.^_`|~0-9A-Za-z]+=/.test(remaining)
+    if (char === ',' && beginsNextCookie) {
       cookies.push(current.trim())
       current = ''
       continue
@@ -38,7 +29,7 @@ function splitSetCookieHeader(value) {
   return cookies
 }
 
-function extractSetCookies(headers) {
+export function extractSetCookies(headers) {
   if (typeof headers.getSetCookie === 'function') {
     return headers.getSetCookie()
   }
@@ -53,67 +44,88 @@ async function readText(response) {
   }
 }
 
-if (!email) fail('Missing required environment variable: SMOKE_TEST_EMAIL')
-if (!password) fail('Missing required environment variable: SMOKE_TEST_PASSWORD')
+export async function runSmoke(options = {}) {
+  const env = options.env ?? process.env
+  const fetchImpl = options.fetch ?? globalThis.fetch
+  const log = options.log ?? console.log
+  const baseUrl = (env.BASE_URL || 'https://om.they.dev').replace(/\/+$/, '')
+  const email = env.SMOKE_TEST_EMAIL || ''
+  const password = env.SMOKE_TEST_PASSWORD || ''
+  const smokePaths = parseSmokePaths(env.SMOKE_TEST_PATHS || '/backend')
 
-console.log(`[baseline-smoke] Using BASE_URL=${baseUrl}`)
+  if (!email) throw new Error('Missing required environment variable: SMOKE_TEST_EMAIL')
+  if (!password) throw new Error('Missing required environment variable: SMOKE_TEST_PASSWORD')
 
-const loginPageResponse = await fetch(`${baseUrl}/login`, {
-  headers: { 'accept-language': 'en-US,en;q=0.9' },
-})
-if (!loginPageResponse.ok) {
-  fail(`Login page returned HTTP ${loginPageResponse.status}`)
-}
-console.log('[baseline-smoke] Login page is reachable')
+  log(`[baseline-smoke] Using BASE_URL=${baseUrl}`)
 
-const loginBody = new URLSearchParams({
-  email,
-  password,
-  remember: '0',
-})
-const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
-  method: 'POST',
-  headers: {
-    'content-type': 'application/x-www-form-urlencoded',
-    'accept-language': 'en-US,en;q=0.9',
-  },
-  body: loginBody,
-})
-const loginText = await readText(loginResponse)
-let loginJson = null
-try {
-  loginJson = loginText ? JSON.parse(loginText) : null
-} catch {
-  loginJson = null
-}
-if (!loginResponse.ok || loginJson?.ok !== true) {
-  fail(`Authenticated login failed with HTTP ${loginResponse.status}`)
-}
+  const loginPageResponse = await fetchImpl(`${baseUrl}/login`, {
+    headers: { 'accept-language': 'en-US,en;q=0.9' },
+  })
+  if (!loginPageResponse.ok) {
+    throw new Error(`Login page returned HTTP ${loginPageResponse.status}`)
+  }
+  log('[baseline-smoke] Login page is reachable')
 
-const cookieHeader = extractSetCookies(loginResponse.headers)
-  .map((cookie) => cookie.split(';')[0])
-  .filter(Boolean)
-  .join('; ')
-if (!cookieHeader.includes('auth_token=')) {
-  fail('Authenticated login did not return auth_token cookie')
-}
-console.log('[baseline-smoke] Authenticated login succeeded')
-
-for (const smokePath of smokePaths) {
-  const normalizedPath = smokePath.startsWith('/') ? smokePath : `/${smokePath}`
-  const response = await fetch(`${baseUrl}${normalizedPath}`, {
+  const loginBody = new URLSearchParams({
+    email,
+    password,
+    remember: '0',
+  })
+  const loginResponse = await fetchImpl(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
     headers: {
-      cookie: cookieHeader,
+      'content-type': 'application/x-www-form-urlencoded',
       'accept-language': 'en-US,en;q=0.9',
     },
+    body: loginBody,
   })
-  if (!response.ok) {
-    fail(`${normalizedPath} returned HTTP ${response.status}`)
+  const loginText = await readText(loginResponse)
+  let loginJson = null
+  try {
+    loginJson = loginText ? JSON.parse(loginText) : null
+  } catch {
+    loginJson = null
   }
-  if (response.url && new URL(response.url).pathname === '/login') {
-    fail(`${normalizedPath} redirected to /login`)
+  if (!loginResponse.ok || loginJson?.ok !== true) {
+    throw new Error(`Authenticated login failed with HTTP ${loginResponse.status}`)
   }
-  console.log(`[baseline-smoke] Authenticated page is reachable: ${normalizedPath}`)
+
+  const cookieHeader = extractSetCookies(loginResponse.headers)
+    .map((cookie) => cookie.split(';')[0])
+    .filter(Boolean)
+    .join('; ')
+  if (!cookieHeader.includes('auth_token=')) {
+    throw new Error('Authenticated login did not return auth_token cookie')
+  }
+  log('[baseline-smoke] Authenticated login succeeded')
+
+  for (const smokePath of smokePaths) {
+    const normalizedPath = smokePath.startsWith('/') ? smokePath : `/${smokePath}`
+    const response = await fetchImpl(`${baseUrl}${normalizedPath}`, {
+      headers: {
+        cookie: cookieHeader,
+        'accept-language': 'en-US,en;q=0.9',
+      },
+    })
+    if (!response.ok) {
+      throw new Error(`${normalizedPath} returned HTTP ${response.status}`)
+    }
+    if (response.url && new URL(response.url).pathname === '/login') {
+      throw new Error(`${normalizedPath} redirected to /login`)
+    }
+    log(`[baseline-smoke] Authenticated page is reachable: ${normalizedPath}`)
+  }
 }
 
-process.exit(0)
+const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+
+if (isDirectRun) {
+  runSmoke()
+    .then(() => {
+      process.exit(0)
+    })
+    .catch((error) => {
+      console.error(`[baseline-smoke] ${error instanceof Error ? error.message : String(error)}`)
+      process.exit(1)
+    })
+}
