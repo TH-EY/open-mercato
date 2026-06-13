@@ -51,6 +51,11 @@ jobs:
           BASE_URL: ${{ steps.preview.outputs.preview_url }}
           SMOKE_TEST_EMAIL: ${{ secrets.EPC_PREVIEW_ADMIN_EMAIL || secrets.SMOKE_TEST_EMAIL }}
           SMOKE_TEST_PASSWORD: ${{ secrets.EPC_PREVIEW_ADMIN_PASSWORD || secrets.SMOKE_TEST_PASSWORD }}
+          SMOKE_TEST_PATHS: >-
+            /backend/projects
+            /backend/projects/templates
+            /backend/projects/task-templates
+            /backend/projects/create
         run: bash ./infra/aws-upstream-baseline/smoke.sh
 
       - name: Workflow summary
