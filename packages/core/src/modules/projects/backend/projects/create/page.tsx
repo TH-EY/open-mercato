@@ -20,7 +20,8 @@ export default function CreateProjectPage() {
           backHref="/backend/projects"
           cancelHref="/backend/projects"
           submitLabel={t('projects.create.submit', 'Create project')}
-          initialValues={{ name: '', orderId: null, ownerUserId: null, isActive: true }}
+          enableTemplateSelection
+          initialValues={{ name: '', orderId: null, ownerUserId: null, templateId: null, isActive: true }}
           onSubmit={async (values: ProjectFormValues) => {
             const { result } = await createCrud<{ id?: string }>('projects', values)
             flash(t('projects.create.flash.created', 'Project created.'), 'success')

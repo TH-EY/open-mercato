@@ -73,6 +73,7 @@ export default function ProjectsPage() {
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [canManage, setCanManage] = React.useState(false)
+  const [canManageTemplates, setCanManageTemplates] = React.useState(false)
   const { runMutation, retryLastMutation } = useGuardedMutation<{ retryLastMutation: () => Promise<boolean> }>({
     contextId: 'projects.list',
   })
@@ -84,14 +85,18 @@ export default function ProjectsPage() {
         const call = await apiCall<{ granted?: string[]; ok?: boolean }>('/api/auth/feature-check', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ features: ['projects.manage'] }),
+          body: JSON.stringify({ features: ['projects.manage', 'projects.templates.manage'] }),
         })
         if (!cancelled) {
           const granted = Array.isArray(call.result?.granted) ? call.result.granted : []
           setCanManage(granted.includes('projects.manage'))
+          setCanManageTemplates(granted.includes('projects.templates.manage'))
         }
       } catch {
-        if (!cancelled) setCanManage(false)
+        if (!cancelled) {
+          setCanManage(false)
+          setCanManageTemplates(false)
+        }
       }
     }
     void loadPermissions()
@@ -177,14 +182,28 @@ export default function ProjectsPage() {
           columns={columns}
           data={rows}
           title={t('projects.list.title', 'Projects')}
-          actions={canManage ? (
-            <Button asChild>
-              <a href="/backend/projects/create">
-                <Plus className="mr-2 h-4 w-4" />
-                {t('projects.create.title', 'Create project')}
-              </a>
-            </Button>
-          ) : null}
+          actions={(
+            <div className="flex flex-wrap gap-2">
+              {canManageTemplates ? (
+                <>
+                  <Button asChild variant="outline">
+                    <a href="/backend/projects/templates">{t('projects.templates.project.list.title', 'Project templates')}</a>
+                  </Button>
+                  <Button asChild variant="outline">
+                    <a href="/backend/projects/task-templates">{t('projects.templates.task.list.title', 'Task templates')}</a>
+                  </Button>
+                </>
+              ) : null}
+              {canManage ? (
+                <Button asChild>
+                  <a href="/backend/projects/create">
+                    <Plus className="mr-2 h-4 w-4" />
+                    {t('projects.create.title', 'Create project')}
+                  </a>
+                </Button>
+              ) : null}
+            </div>
+          )}
           entityId={E.projects.project}
           extensionTableId="projects.projects"
           searchValue={search}

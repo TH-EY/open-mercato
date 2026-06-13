@@ -68,6 +68,64 @@ export const searchConfig: SearchModuleConfig = {
         ])
       },
     },
+    {
+      entityId: 'projects:project_task_template',
+      enabled: true,
+      priority: 6,
+      buildSource: async (ctx) => {
+        const { t } = await resolveTranslations()
+        const title = pickString(ctx.record.name, ctx.customFields.name) ?? t('projects.search.badge.taskTemplate', 'Task template')
+        return buildSource(ctx, {
+          title,
+          subtitle: pickString(ctx.record.description, ctx.record.status) ?? undefined,
+          icon: 'copy-check',
+          badge: t('projects.search.badge.taskTemplate', 'Task template'),
+        }, [
+          `Name: ${title}`,
+          ...(ctx.record.description ? [`Description: ${String(ctx.record.description)}`] : []),
+          ...(ctx.record.status ? [`Status: ${String(ctx.record.status)}`] : []),
+          ...(ctx.record.due_in_days ? [`Due in days: ${String(ctx.record.due_in_days)}`] : []),
+        ])
+      },
+    },
+    {
+      entityId: 'projects:project_template',
+      enabled: true,
+      priority: 6,
+      buildSource: async (ctx) => {
+        const { t } = await resolveTranslations()
+        const title = pickString(ctx.record.name, ctx.customFields.name) ?? t('projects.search.badge.projectTemplate', 'Project template')
+        return buildSource(ctx, {
+          title,
+          subtitle: pickString(ctx.record.description) ?? undefined,
+          icon: 'clipboard-list',
+          badge: t('projects.search.badge.projectTemplate', 'Project template'),
+        }, [
+          `Name: ${title}`,
+          ...(ctx.record.description ? [`Description: ${String(ctx.record.description)}`] : []),
+        ])
+      },
+    },
+    {
+      entityId: 'projects:project_template_task',
+      enabled: true,
+      priority: 5,
+      buildSource: async (ctx) => {
+        const { t } = await resolveTranslations()
+        const title = pickString(ctx.record.name, ctx.customFields.name) ?? t('projects.search.badge.projectTemplateTask', 'Project template task')
+        return buildSource(ctx, {
+          title,
+          subtitle: pickString(ctx.record.description, ctx.record.status) ?? undefined,
+          icon: 'list-plus',
+          badge: t('projects.search.badge.projectTemplateTask', 'Project template task'),
+        }, [
+          `Name: ${title}`,
+          ...(ctx.record.description ? [`Description: ${String(ctx.record.description)}`] : []),
+          ...(ctx.record.status ? [`Status: ${String(ctx.record.status)}`] : []),
+          ...(ctx.record.due_in_days ? [`Due in days: ${String(ctx.record.due_in_days)}`] : []),
+        ])
+      },
+    },
   ],
 }
 

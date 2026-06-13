@@ -4,7 +4,7 @@ import type { EntityManager } from '@mikro-orm/postgresql'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { SalesOrder } from '@open-mercato/core/modules/sales/data/entities'
-import { Project, ProjectTask } from '../data/entities'
+import { Project, ProjectTask, ProjectTemplate, ProjectTemplateTask } from '../data/entities'
 import {
   projectCreateSchema,
   projectUpdateSchema,
@@ -12,6 +12,7 @@ import {
   type ProjectUpdateInput,
 } from '../data/validators'
 import { emitProjectsEvent } from '../events'
+import { deadlineFromDueInDays, resolveProjectTemplateTask } from '../lib/templates'
 import { ensureOrganizationScope, ensureTenantScope } from './shared'
 
 async function assertScopedOrder(
@@ -53,12 +54,76 @@ const createProjectCommand: CommandHandler<ProjectCreateInput, { projectId: stri
       deletedAt: null,
     })
     em.persist(project)
+    let createdFromTemplate = false
+    if (parsed.templateId) {
+      const projectTemplate = await findOneWithDecryption(
+        em,
+        ProjectTemplate,
+        {
+          id: parsed.templateId,
+          tenantId: parsed.tenantId,
+          organizationId: parsed.organizationId,
+          isActive: true,
+          deletedAt: null,
+        },
+        undefined,
+        { tenantId: parsed.tenantId, organizationId: parsed.organizationId },
+      )
+      if (!projectTemplate) throw new CrudHttpError(400, { error: 'Project template not found for this organization.' })
+      const templateTasks = await em.find(
+        ProjectTemplateTask,
+        {
+          projectTemplate,
+          tenantId: parsed.tenantId,
+          organizationId: parsed.organizationId,
+          deletedAt: null,
+        },
+        { populate: ['taskTemplate'], orderBy: { position: 'asc' } },
+      )
+      for (const templateTask of templateTasks) {
+        const taskTemplate = templateTask.taskTemplate?.deletedAt || templateTask.taskTemplate?.isActive === false
+          ? null
+          : templateTask.taskTemplate ?? null
+        const resolvedTask = resolveProjectTemplateTask({
+          name: templateTask.name,
+          status: templateTask.status,
+          description: templateTask.description,
+          ownerUserId: templateTask.ownerUserId,
+          dueInDays: templateTask.dueInDays,
+          position: templateTask.position,
+          taskTemplate,
+        })
+        em.persist(em.create(ProjectTask, {
+          tenantId: parsed.tenantId,
+          organizationId: parsed.organizationId,
+          project,
+          name: resolvedTask.name,
+          status: resolvedTask.status,
+          description: resolvedTask.description,
+          ownerUserId: resolvedTask.ownerUserId,
+          deadlineAt: deadlineFromDueInDays(now, resolvedTask.dueInDays),
+          position: resolvedTask.position,
+          createdAt: now,
+          updatedAt: now,
+          deletedAt: null,
+        }))
+      }
+      createdFromTemplate = true
+    }
     await em.flush()
     await emitProjectsEvent('projects.project.created', {
       id: project.id,
       tenantId: project.tenantId,
       organizationId: project.organizationId,
     })
+    if (createdFromTemplate) {
+      await emitProjectsEvent('projects.project.created_from_template', {
+        id: project.id,
+        templateId: parsed.templateId,
+        tenantId: project.tenantId,
+        organizationId: project.organizationId,
+      })
+    }
     return { projectId: project.id }
   },
 }

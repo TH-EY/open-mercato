@@ -12,6 +12,12 @@ export const features = [
     module: 'projects',
     dependsOn: ['projects.view'],
   },
+  {
+    id: 'projects.templates.manage',
+    title: 'Manage project templates',
+    module: 'projects',
+    dependsOn: ['projects.view'],
+  },
 ]
 
 export default features

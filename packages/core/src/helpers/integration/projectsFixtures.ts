@@ -18,6 +18,33 @@ export type ProjectTaskListItem = {
   position?: number;
 };
 
+export type ProjectTaskTemplateListItem = {
+  id?: string;
+  name?: string;
+  status?: ProjectTaskStatus;
+  description?: string | null;
+  owner_user_id?: string | null;
+  ownerUserId?: string | null;
+  due_in_days?: number | null;
+  dueInDays?: number | null;
+};
+
+export type ProjectTemplateTaskListItem = {
+  id?: string;
+  project_template_id?: string;
+  projectTemplateId?: string;
+  task_template_id?: string | null;
+  taskTemplateId?: string | null;
+  name?: string | null;
+  status?: ProjectTaskStatus | null;
+  description?: string | null;
+  owner_user_id?: string | null;
+  ownerUserId?: string | null;
+  due_in_days?: number | null;
+  dueInDays?: number | null;
+  position?: number;
+};
+
 function readFirstId(payload: unknown, keys: string[]): string {
   if (!payload || typeof payload !== 'object') return '';
   const record = payload as Record<string, unknown>;
@@ -41,6 +68,7 @@ export async function createProjectFixture(
     name: string;
     orderId?: string | null;
     ownerUserId?: string | null;
+    templateId?: string | null;
     isActive?: boolean;
   },
 ): Promise<string> {
@@ -116,4 +144,100 @@ export async function reorderProjectTasks(
   expect(response.status(), 'POST /api/projects/tasks/reorder should return 200').toBe(200);
   expect(body?.ok, 'Reorder response should report ok=true').toBe(true);
   return typeof body?.moved === 'number' ? body.moved : 0;
+}
+
+export async function createProjectTaskTemplateFixture(
+  request: APIRequestContext,
+  token: string,
+  input: {
+    name: string;
+    status?: ProjectTaskStatus;
+    description?: string | null;
+    ownerUserId?: string | null;
+    dueInDays?: number | null;
+    isActive?: boolean;
+  },
+): Promise<string> {
+  const response = await apiRequest(request, 'POST', '/api/projects/task-templates', { token, data: input });
+  const body = await readJsonSafe(response);
+  expect(response.status(), 'POST /api/projects/task-templates should return 201').toBe(201);
+  return expectId(readFirstId(body, ['id', 'taskTemplateId']), 'Project task template creation response should include id');
+}
+
+export async function deleteProjectTaskTemplateIfExists(
+  request: APIRequestContext,
+  token: string | null,
+  taskTemplateId: string | null,
+): Promise<void> {
+  if (!token || !taskTemplateId) return;
+  await apiRequest(request, 'DELETE', `/api/projects/task-templates?id=${encodeURIComponent(taskTemplateId)}`, { token }).catch(() => undefined);
+}
+
+export async function createProjectTemplateFixture(
+  request: APIRequestContext,
+  token: string,
+  input: {
+    name: string;
+    description?: string | null;
+    isActive?: boolean;
+  },
+): Promise<string> {
+  const response = await apiRequest(request, 'POST', '/api/projects/templates', { token, data: input });
+  const body = await readJsonSafe(response);
+  expect(response.status(), 'POST /api/projects/templates should return 201').toBe(201);
+  return expectId(readFirstId(body, ['id', 'templateId']), 'Project template creation response should include id');
+}
+
+export async function deleteProjectTemplateIfExists(
+  request: APIRequestContext,
+  token: string | null,
+  templateId: string | null,
+): Promise<void> {
+  if (!token || !templateId) return;
+  await apiRequest(request, 'DELETE', `/api/projects/templates?id=${encodeURIComponent(templateId)}`, { token }).catch(() => undefined);
+}
+
+export async function createProjectTemplateTaskFixture(
+  request: APIRequestContext,
+  token: string,
+  input: {
+    projectTemplateId: string;
+    taskTemplateId?: string | null;
+    name?: string | null;
+    status?: ProjectTaskStatus | null;
+    description?: string | null;
+    ownerUserId?: string | null;
+    dueInDays?: number | null;
+    position?: number;
+  },
+): Promise<string> {
+  const response = await apiRequest(request, 'POST', '/api/projects/templates/tasks', { token, data: input });
+  const body = await readJsonSafe(response);
+  expect(response.status(), 'POST /api/projects/templates/tasks should return 201').toBe(201);
+  return expectId(readFirstId(body, ['id', 'templateTaskId']), 'Project template task creation response should include id');
+}
+
+export async function deleteProjectTemplateTaskIfExists(
+  request: APIRequestContext,
+  token: string | null,
+  templateTaskId: string | null,
+): Promise<void> {
+  if (!token || !templateTaskId) return;
+  await apiRequest(request, 'DELETE', `/api/projects/templates/tasks?id=${encodeURIComponent(templateTaskId)}`, { token }).catch(() => undefined);
+}
+
+export async function readProjectTemplateTasks(
+  request: APIRequestContext,
+  token: string,
+  projectTemplateId: string,
+): Promise<ProjectTemplateTaskListItem[]> {
+  const response = await apiRequest(
+    request,
+    'GET',
+    `/api/projects/templates/tasks?projectTemplateId=${encodeURIComponent(projectTemplateId)}&pageSize=100&sortField=position&sortDir=asc`,
+    { token },
+  );
+  expect(response.status(), 'GET /api/projects/templates/tasks should return 200').toBe(200);
+  const body = await readJsonSafe<{ items?: ProjectTemplateTaskListItem[] }>(response);
+  return Array.isArray(body?.items) ? body.items : [];
 }
