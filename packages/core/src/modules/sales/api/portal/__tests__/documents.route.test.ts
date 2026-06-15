@@ -1,5 +1,6 @@
 /** @jest-environment node */
-import { SalesOrder, SalesOrderLine, SalesQuote, SalesQuoteLine } from '@open-mercato/core/modules/sales/data/entities'
+import { SalesNote, SalesOrder, SalesOrderLine, SalesQuote, SalesQuoteLine } from '@open-mercato/core/modules/sales/data/entities'
+import { Attachment } from '@open-mercato/core/modules/attachments/data/entities'
 
 const mockGetCustomerAuth = jest.fn()
 const mockRequireCustomerFeature = jest.fn()
@@ -7,6 +8,7 @@ const mockEmFindAndCount = jest.fn()
 const mockEmFindOne = jest.fn()
 const mockEmFind = jest.fn()
 const mockCommandExecute = jest.fn()
+const mockActionLogList = jest.fn()
 
 const mockEm = {
   findAndCount: mockEmFindAndCount,
@@ -14,6 +16,7 @@ const mockEm = {
   find: mockEmFind,
   fork: jest.fn(() => mockEm),
   transactional: jest.fn(async (callback: (trx: typeof mockEm) => Promise<unknown>) => callback(mockEm)),
+  create: jest.fn((_entity: unknown, data: unknown) => data),
   persist: jest.fn(),
   flush: jest.fn(async () => undefined),
 }
@@ -23,6 +26,7 @@ const mockContainer = {
     if (token === 'customerRbacService') return {}
     if (token === 'em') return mockEm
     if (token === 'commandBus') return { execute: mockCommandExecute }
+    if (token === 'actionLogService') return { list: mockActionLogList }
     return null
   }),
 }
@@ -165,6 +169,45 @@ function makeQuoteLine(overrides: Partial<SalesQuoteLine> = {}): SalesQuoteLine 
   } as SalesQuoteLine
 }
 
+function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
+  return {
+    id: '99999999-9999-4999-8999-999999999999',
+    tenantId,
+    organizationId: orgId,
+    entityId: 'sales:sales_order',
+    recordId: '44444444-4444-4444-8444-444444444444',
+    partitionCode: 'default',
+    fileName: 'proposal.pdf',
+    mimeType: 'application/pdf',
+    fileSize: 1234,
+    storageDriver: 'local',
+    storagePath: 'proposal.pdf',
+    storageMetadata: null,
+    url: '/api/attachments/file/99999999-9999-4999-8999-999999999999',
+    content: null,
+    createdAt: new Date('2026-06-03T00:00:00Z'),
+    ...overrides,
+  } as Attachment
+}
+
+function makeNote(overrides: Partial<SalesNote> = {}): SalesNote {
+  return {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    tenantId,
+    organizationId: orgId,
+    contextType: 'quote',
+    contextId: '55555555-5555-4555-8555-555555555555',
+    authorUserId: 'user-1',
+    appearanceIcon: 'message-circle',
+    appearanceColor: 'blue',
+    body: 'Can you confirm install timing?',
+    createdAt: new Date('2026-06-04T00:00:00Z'),
+    updatedAt: new Date('2026-06-04T00:00:00Z'),
+    deletedAt: null,
+    ...overrides,
+  } as SalesNote
+}
+
 describe('sales portal document list routes', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -173,6 +216,7 @@ describe('sales portal document list routes', () => {
     mockEmFindOne.mockResolvedValue(null)
     mockEmFind.mockResolvedValue([])
     mockCommandExecute.mockResolvedValue({ result: { orderId: '88888888-8888-4888-8888-888888888888' } })
+    mockActionLogList.mockResolvedValue({ items: [] })
   })
 
   it('returns 401 when the customer is not authenticated', async () => {
@@ -352,6 +396,121 @@ describe('sales portal document list routes', () => {
     expect(body.quote.lines).toHaveLength(1)
   })
 
+  it('generates an order PDF inside the authenticated company scope', async () => {
+    const { getPortalDocumentPdf } = await import('@open-mercato/core/modules/sales/api/portal/documents')
+    mockEmFindOne.mockResolvedValue(makeOrder())
+    mockEmFind.mockResolvedValue([makeOrderLine()])
+
+    const res = await getPortalDocumentPdf(
+      new Request('http://localhost/api/sales/portal/orders/44444444-4444-4444-8444-444444444444/pdf'),
+      'orders',
+      '44444444-4444-4444-8444-444444444444',
+    )
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('application/pdf')
+    expect(mockEmFindOne).toHaveBeenCalledWith(
+      SalesOrder,
+      expect.objectContaining({
+        id: '44444444-4444-4444-8444-444444444444',
+        tenantId,
+        organizationId: orgId,
+        customerEntityId,
+      }),
+      expect.any(Object),
+    )
+  })
+
+  it('lists order attachments only after the document scope check passes', async () => {
+    const { listPortalDocumentAttachments } = await import('@open-mercato/core/modules/sales/api/portal/documents')
+    mockEmFindOne.mockResolvedValue(makeOrder())
+    mockEmFind.mockImplementation((entity: unknown) => {
+      if (entity === SalesOrderLine) return Promise.resolve([makeOrderLine()])
+      if (entity === Attachment) return Promise.resolve([makeAttachment()])
+      return Promise.resolve([])
+    })
+
+    const res = await listPortalDocumentAttachments(
+      new Request('http://localhost/api/sales/portal/orders/44444444-4444-4444-8444-444444444444/attachments'),
+      'orders',
+      '44444444-4444-4444-8444-444444444444',
+    )
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(mockEmFind).toHaveBeenCalledWith(
+      Attachment,
+      expect.objectContaining({
+        tenantId,
+        organizationId: orgId,
+        entityId: 'sales:sales_order',
+        recordId: '44444444-4444-4444-8444-444444444444',
+      }),
+      expect.any(Object),
+    )
+    expect(body.attachments[0]).toMatchObject({
+      fileName: 'proposal.pdf',
+      downloadUrl: '/api/sales/portal/orders/44444444-4444-4444-8444-444444444444/attachments/99999999-9999-4999-8999-999999999999?download=1',
+    })
+  })
+
+  it('creates a quote comment only with the comment feature', async () => {
+    const { createPortalQuoteComment } = await import('@open-mercato/core/modules/sales/api/portal/documents')
+    mockEmFindOne.mockResolvedValue(makeQuote())
+    mockEmFind.mockResolvedValue([makeQuoteLine()])
+
+    const res = await createPortalQuoteComment(
+      new Request('http://localhost/api/sales/portal/quotes/55555555-5555-4555-8555-555555555555/comments', {
+        method: 'POST',
+        body: JSON.stringify({ body: 'Can you confirm install timing?' }),
+      }),
+      '55555555-5555-4555-8555-555555555555',
+    )
+
+    expect(res.status).toBe(200)
+    expect(mockRequireCustomerFeature).toHaveBeenCalledWith(
+      expect.objectContaining({ sub: 'user-1' }),
+      ['portal.quotes.comment'],
+      {},
+    )
+    expect(mockEm.create).toHaveBeenCalledWith(
+      SalesNote,
+      expect.objectContaining({
+        contextType: 'quote',
+        appearanceIcon: 'message-circle',
+        body: 'Can you confirm install timing?',
+      }),
+    )
+  })
+
+  it('lists an order timeline with portal-visible notes', async () => {
+    const { listPortalOrderTimeline } = await import('@open-mercato/core/modules/sales/api/portal/documents')
+    mockEmFindOne.mockResolvedValue(makeOrder())
+    mockEmFind.mockImplementation((entity: unknown) => {
+      if (entity === SalesOrderLine) return Promise.resolve([makeOrderLine()])
+      if (entity === SalesNote) return Promise.resolve([makeNote({
+        contextType: 'order',
+        contextId: '44444444-4444-4444-8444-444444444444',
+      })])
+      return Promise.resolve([])
+    })
+
+    const res = await listPortalOrderTimeline(
+      new Request('http://localhost/api/sales/portal/orders/44444444-4444-4444-8444-444444444444/timeline'),
+      '44444444-4444-4444-8444-444444444444',
+    )
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(mockActionLogList).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId,
+      organizationId: orgId,
+      resourceKind: 'sales.order',
+      resourceId: '44444444-4444-4444-8444-444444444444',
+    }))
+    expect(body.timeline[0]).toMatchObject({ kind: 'comment', action: 'Can you confirm install timing?' })
+  })
+
   it('blocks portal quote acceptance without the accept feature', async () => {
     mockRequireCustomerFeature
       .mockResolvedValueOnce(undefined)
@@ -366,18 +525,34 @@ describe('sales portal document list routes', () => {
     expect(mockCommandExecute).not.toHaveBeenCalled()
   })
 
+  it('requires signer name and terms for portal quote acceptance', async () => {
+    const res = await acceptPortalQuote(
+      new Request('http://localhost/api/sales/portal/quotes/55555555-5555-4555-8555-555555555555/accept', { method: 'POST' }),
+      '55555555-5555-4555-8555-555555555555',
+    )
+    const body = await res.json()
+
+    expect(res.status).toBe(400)
+    expect(body).toMatchObject({ ok: false })
+    expect(mockCommandExecute).not.toHaveBeenCalled()
+  })
+
   it('accepts a portal quote and converts it to an order atomically', async () => {
     const acceptedOrderId = '88888888-8888-4888-8888-888888888888'
     const quote = makeQuote({ status: 'sent', convertedOrderId: null })
+    const order = makeOrder({ id: acceptedOrderId, orderNumber: 'SO-ACCEPT' })
     mockEmFindOne.mockImplementation((entity: unknown) => {
       if (entity === SalesQuote) return Promise.resolve(quote)
-      if (entity === SalesOrder) return Promise.resolve(makeOrder({ id: acceptedOrderId, orderNumber: 'SO-ACCEPT' }))
+      if (entity === SalesOrder) return Promise.resolve(order)
       return Promise.resolve(null)
     })
     mockCommandExecute.mockResolvedValue({ result: { orderId: acceptedOrderId } })
 
     const res = await acceptPortalQuote(
-      new Request('http://localhost/api/sales/portal/quotes/55555555-5555-4555-8555-555555555555/accept', { method: 'POST' }),
+      new Request('http://localhost/api/sales/portal/quotes/55555555-5555-4555-8555-555555555555/accept', {
+        method: 'POST',
+        body: JSON.stringify({ acceptedByName: 'Alex Green', acceptedTerms: true }),
+      }),
       '55555555-5555-4555-8555-555555555555',
     )
     const body = await res.json()
@@ -391,5 +566,25 @@ describe('sales portal document list routes', () => {
       }),
     )
     expect(quote.status).toBe('confirmed')
+    expect(quote.metadata).toMatchObject({
+      portalAcceptance: {
+        source: 'customer_portal',
+        acceptedByName: 'Alex Green',
+        acceptedTerms: true,
+      },
+    })
+    expect(order.metadata).toMatchObject({
+      portalAcceptance: {
+        acceptedByName: 'Alex Green',
+        acceptedTerms: true,
+      },
+    })
+    expect(mockEm.create).toHaveBeenCalledWith(
+      SalesNote,
+      expect.objectContaining({
+        contextType: 'quote',
+        appearanceIcon: 'check-circle',
+      }),
+    )
   })
 })

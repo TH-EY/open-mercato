@@ -5,7 +5,7 @@ import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import type { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { sendEmail } from '@open-mercato/shared/lib/email/send'
-import { SalesOrder, SalesQuote } from '../data/entities'
+import { SalesNote, SalesOrder, SalesQuote } from '../data/entities'
 import { resolveStatusEntryIdByValue } from './statusHelpers'
 import { QuoteAcceptedAdminEmail } from '../emails/QuoteAcceptedAdminEmail'
 
@@ -31,6 +31,24 @@ type AcceptQuoteInput = {
   scope?: AcceptanceScope
   translate: Translate
   loadQuoteForUpdate: (trx: EntityManager) => Promise<SalesQuote | null>
+  acceptedBy?: {
+    customerUserId: string
+    email: string
+    displayName: string
+    acceptedByName: string
+    acceptedTerms: true
+    source: 'customer_portal'
+  }
+}
+
+type PortalAcceptanceAudit = {
+  source: 'customer_portal'
+  acceptedAt: string
+  acceptedByName: string
+  acceptedByEmail: string
+  acceptedByDisplayName: string
+  acceptedByCustomerUserId: string
+  acceptedTerms: true
 }
 
 function buildEncryptionScope(scope?: AcceptanceScope) {
@@ -46,6 +64,7 @@ async function notifyAdminQuoteAccepted(input: {
   orderId: string
   orderNumber: string
   translate: Translate
+  acceptedBy?: AcceptQuoteInput['acceptedBy']
 }) {
   const adminEmail = process.env.ADMIN_EMAIL || ''
   if (!adminEmail) return
@@ -57,7 +76,13 @@ async function notifyAdminQuoteAccepted(input: {
     const copy = {
       preview: input.translate('sales.quotes.accept.adminEmail.preview', 'Quote {quoteNumber} accepted', { quoteNumber: input.quote.quoteNumber }),
       heading: input.translate('sales.quotes.accept.adminEmail.heading', 'Quote {quoteNumber} accepted', { quoteNumber: input.quote.quoteNumber }),
-      body: input.translate('sales.quotes.accept.adminEmail.body', 'The customer accepted quote {quoteNumber}. An order has been created: {orderNumber}.', {
+      body: input.acceptedBy
+        ? input.translate('sales.quotes.accept.adminEmail.bodyPortal', '{acceptedBy} accepted quote {quoteNumber}. An order has been created: {orderNumber}.', {
+          acceptedBy: input.acceptedBy.acceptedByName,
+          quoteNumber: input.quote.quoteNumber,
+          orderNumber: input.orderNumber,
+        })
+        : input.translate('sales.quotes.accept.adminEmail.body', 'The customer accepted quote {quoteNumber}. An order has been created: {orderNumber}.', {
         quoteNumber: input.quote.quoteNumber,
         orderNumber: input.orderNumber,
       }),
@@ -78,6 +103,35 @@ async function notifyAdminQuoteAccepted(input: {
   } catch (err) {
     console.error('sales.quotes.accept.adminEmail failed', err)
   }
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function buildPortalAcceptanceAudit(input: AcceptQuoteInput['acceptedBy'], acceptedAt: Date): PortalAcceptanceAudit | null {
+  if (!input) return null
+  return {
+    source: input.source,
+    acceptedAt: acceptedAt.toISOString(),
+    acceptedByName: input.acceptedByName,
+    acceptedByEmail: input.email,
+    acceptedByDisplayName: input.displayName,
+    acceptedByCustomerUserId: input.customerUserId,
+    acceptedTerms: input.acceptedTerms,
+  }
+}
+
+function buildAcceptanceNoteBody(quote: SalesQuote, orderNumber: string, audit: PortalAcceptanceAudit, translate: Translate): string {
+  return translate(
+    'sales.quotes.accept.auditNote',
+    '{acceptedBy} accepted quote {quoteNumber} through the customer portal and accepted the terms. Order created: {orderNumber}.',
+    {
+      acceptedBy: audit.acceptedByName,
+      quoteNumber: quote.quoteNumber,
+      orderNumber,
+    },
+  )
 }
 
 export async function acceptQuoteAndConvertToOrder(input: AcceptQuoteInput): Promise<{
@@ -111,12 +165,20 @@ export async function acceptQuoteAndConvertToOrder(input: AcceptQuoteInput): Pro
       })
     }
 
+    const acceptanceAudit = buildPortalAcceptanceAudit(input.acceptedBy, now)
+
     quote.status = 'confirmed'
     quote.statusEntryId = await resolveStatusEntryIdByValue(trx, {
       tenantId: quote.tenantId,
       organizationId: quote.organizationId,
       value: 'confirmed',
     })
+    if (acceptanceAudit) {
+      quote.metadata = {
+        ...readRecord(quote.metadata),
+        portalAcceptance: acceptanceAudit,
+      }
+    }
     quote.updatedAt = now
     trx.persist(quote)
     await trx.flush()
@@ -134,6 +196,49 @@ export async function acceptQuoteAndConvertToOrder(input: AcceptQuoteInput): Pro
     const result = (await commandBus.execute('sales.quotes.convert_to_order', { input: { quoteId: quote.id }, ctx })) as ConvertToOrderResult | null
     const orderId = result?.result?.orderId ?? result?.orderId ?? quote.convertedOrderId ?? quote.id
 
+    if (acceptanceAudit) {
+      const order = await findOneWithDecryption(trx, SalesOrder, { id: orderId, deletedAt: null }, {}, encryptionScope)
+      const orderNumber = order?.orderNumber ?? orderId
+      const noteBody = buildAcceptanceNoteBody(quote, orderNumber, acceptanceAudit, input.translate)
+
+      trx.persist(trx.create(SalesNote, {
+        tenantId: quote.tenantId,
+        organizationId: quote.organizationId,
+        contextType: 'quote',
+        contextId: quote.id,
+        quote,
+        authorUserId: acceptanceAudit.acceptedByCustomerUserId,
+        appearanceIcon: 'check-circle',
+        appearanceColor: 'green',
+        body: noteBody,
+        createdAt: now,
+        updatedAt: now,
+      }))
+
+      if (order) {
+        order.metadata = {
+          ...readRecord(order.metadata),
+          portalAcceptance: acceptanceAudit,
+        }
+        order.updatedAt = now
+        trx.persist(order)
+        trx.persist(trx.create(SalesNote, {
+          tenantId: order.tenantId,
+          organizationId: order.organizationId,
+          contextType: 'order',
+          contextId: order.id,
+          order,
+          authorUserId: acceptanceAudit.acceptedByCustomerUserId,
+          appearanceIcon: 'check-circle',
+          appearanceColor: 'green',
+          body: noteBody,
+          createdAt: now,
+          updatedAt: now,
+        }))
+      }
+      await trx.flush()
+    }
+
     return { quote, orderId }
   })
 
@@ -145,6 +250,7 @@ export async function acceptQuoteAndConvertToOrder(input: AcceptQuoteInput): Pro
     orderId,
     orderNumber,
     translate: input.translate,
+    acceptedBy: input.acceptedBy,
   })
 
   return { quote, orderId, orderNumber }

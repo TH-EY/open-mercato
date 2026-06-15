@@ -113,6 +113,7 @@ const DEFAULT_ROLES = [
         'portal.orders.create',
         'portal.quotes.view',
         'portal.quotes.accept',
+        'portal.quotes.comment',
         'portal.quotes.request',
         'portal.invoices.view',
         'portal.catalog.view',

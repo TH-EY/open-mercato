@@ -3,15 +3,31 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { useParams, usePathname } from 'next/navigation'
-import { AlertCircle, ArrowLeft, CheckCircle2, FileText, ShoppingBag } from 'lucide-react'
+import {
+  AlertCircle,
+  ArrowLeft,
+  CheckCircle2,
+  Clock3,
+  CreditCard,
+  Download,
+  ExternalLink,
+  FileText,
+  MessageSquare,
+  Paperclip,
+  Send,
+  ShoppingBag,
+} from 'lucide-react'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { apiCall } from '@open-mercato/ui/backend/utils/apiCall'
-import { useConfirmDialog } from '@open-mercato/ui/backend/confirm-dialog'
 import { PortalPageHeader } from '@open-mercato/ui/portal/components/PortalPageHeader'
 import { PortalCard, PortalCardHeader, PortalStatRow, PortalCardDivider } from '@open-mercato/ui/portal/components/PortalCard'
 import { PortalEmptyState } from '@open-mercato/ui/portal/components/PortalEmptyState'
 import { Button } from '@open-mercato/ui/primitives/button'
+import { Checkbox } from '@open-mercato/ui/primitives/checkbox'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@open-mercato/ui/primitives/dialog'
+import { Input } from '@open-mercato/ui/primitives/input'
 import { Spinner } from '@open-mercato/ui/primitives/spinner'
+import { Textarea } from '@open-mercato/ui/primitives/textarea'
 
 type DocumentKind = 'orders' | 'quotes'
 
@@ -59,6 +75,8 @@ type PortalOrderDetail = {
   refundedTotalAmount: string
   outstandingAmount: string
   currencyCode: string | null
+  acceptanceAudit: PortalAcceptanceAudit | null
+  payment: PortalPayment
   lines: PortalLine[]
 }
 
@@ -81,7 +99,54 @@ type PortalQuoteDetail = {
   currencyCode: string | null
   canAccept: boolean
   acceptanceBlockedReason: string | null
+  acceptanceAudit: PortalAcceptanceAudit | null
   lines: PortalLine[]
+}
+
+type PortalAcceptanceAudit = {
+  source: string
+  acceptedAt: string | null
+  acceptedByName: string | null
+  acceptedByEmail: string | null
+  acceptedByCustomerUserId: string | null
+  acceptedTerms: boolean
+}
+
+type PortalPayment = {
+  outstandingAmount: string
+  paidTotalAmount: string
+  paymentStatus: string | null
+  portalPaymentUrl: string | null
+  depositAmount: string | null
+  instructions: string | null
+}
+
+type PortalAttachment = {
+  id: string
+  fileName: string
+  fileSize: number
+  mimeType: string | null
+  createdAt: string
+  downloadUrl: string
+}
+
+type PortalTimelineEntry = {
+  id: string
+  occurredAt: string
+  kind: 'status' | 'action' | 'comment'
+  action: string
+  actor: {
+    id: string | null
+    label: string
+  }
+}
+
+type PortalComment = {
+  id: string
+  body: string
+  authorName: string | null
+  authorEmail: string | null
+  createdAt: string
 }
 
 type PortalOrderDetailResponse = {
@@ -98,6 +163,26 @@ type PortalAcceptResponse = {
   ok: true
   orderId: string
   orderNumber: string
+}
+
+type PortalAttachmentsResponse = {
+  ok: true
+  attachments: PortalAttachment[]
+}
+
+type PortalTimelineResponse = {
+  ok: true
+  timeline: PortalTimelineEntry[]
+}
+
+type PortalCommentsResponse = {
+  ok: true
+  comments: PortalComment[]
+}
+
+type PortalCommentCreateResponse = {
+  ok: true
+  comment: PortalComment
 }
 
 type SalesPortalDocumentDetailPageProps = {
@@ -120,6 +205,13 @@ function formatMoney(amount: string | undefined, currencyCode: string | null): s
   } catch {
     return `${value.toFixed(2)} ${currencyCode}`
   }
+}
+
+function formatFileSize(size: number): string {
+  if (!Number.isFinite(size) || size <= 0) return '0 B'
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function statusLabel(value: string | null | undefined): string {
@@ -208,6 +300,194 @@ function LinesTable({ lines, currencyCode }: { lines: PortalLine[]; currencyCode
   )
 }
 
+function AttachmentsSection({ attachments }: { attachments: PortalAttachment[] }) {
+  const t = useT()
+  return (
+    <PortalCard>
+      <PortalCardHeader
+        title={t('sales.portal.detail.attachments.title', 'Attachments')}
+        description={t('sales.portal.detail.attachments.description', 'Files shared with this document.')}
+      />
+      {attachments.length === 0 ? (
+        <PortalEmptyState
+          icon={<Paperclip className="size-5" aria-hidden />}
+          title={t('sales.portal.detail.attachments.empty.title', 'No attachments')}
+          description={t('sales.portal.detail.attachments.empty.description', 'Files shared by the team will appear here.')}
+        />
+      ) : (
+        <div className="divide-y rounded-md border bg-background">
+          {attachments.map((attachment) => (
+            <div key={attachment.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-foreground">{attachment.fileName}</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {formatFileSize(attachment.fileSize)} · {formatDate(attachment.createdAt)}
+                </div>
+              </div>
+              <Button asChild type="button" variant="outline" size="sm">
+                <a href={attachment.downloadUrl}>
+                  <Download className="mr-2 size-4" aria-hidden />
+                  {t('sales.portal.detail.attachments.download', 'Download')}
+                </a>
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </PortalCard>
+  )
+}
+
+function AcceptanceAuditSection({ audit }: { audit: PortalAcceptanceAudit | null }) {
+  const t = useT()
+  if (!audit) return null
+  return (
+    <PortalCard className="border-green-500/30 bg-green-500/10">
+      <PortalCardHeader
+        title={t('sales.portal.detail.acceptance.title', 'Acceptance')}
+        description={t('sales.portal.detail.acceptance.description', 'Acceptance captured through the customer portal.')}
+      />
+      <DetailStatGrid>
+        <PortalStatRow label={t('sales.portal.detail.acceptance.by', 'Accepted by')} value={audit.acceptedByName || '-'} />
+        <PortalStatRow label={t('sales.portal.detail.acceptance.email', 'Email')} value={audit.acceptedByEmail || '-'} />
+        <PortalStatRow label={t('sales.portal.detail.acceptance.at', 'Accepted at')} value={formatDate(audit.acceptedAt)} />
+        <PortalStatRow
+          label={t('sales.portal.detail.acceptance.terms', 'Terms')}
+          value={audit.acceptedTerms ? t('sales.portal.detail.acceptance.termsAccepted', 'Accepted') : '-'}
+        />
+      </DetailStatGrid>
+    </PortalCard>
+  )
+}
+
+function PaymentPanel({ payment, currencyCode }: { payment: PortalPayment; currencyCode: string | null }) {
+  const t = useT()
+  return (
+    <PortalCard>
+      <PortalCardHeader
+        title={t('sales.portal.detail.payment.title', 'Payment')}
+        description={t('sales.portal.detail.payment.description', 'Payment status and deposit information.')}
+      />
+      <DetailStatGrid>
+        <PortalStatRow label={t('sales.portal.orders.columns.payment', 'Payment')} value={<StatusPill value={payment.paymentStatus} />} />
+        <PortalStatRow label={t('sales.portal.detail.payment.paid', 'Paid')} value={formatMoney(payment.paidTotalAmount, currencyCode)} />
+        <PortalStatRow label={t('sales.portal.detail.payment.outstanding', 'Outstanding')} value={formatMoney(payment.outstandingAmount, currencyCode)} />
+        <PortalStatRow label={t('sales.portal.detail.payment.deposit', 'Deposit')} value={payment.depositAmount ? formatMoney(payment.depositAmount, currencyCode) : '-'} />
+      </DetailStatGrid>
+      {payment.instructions ? (
+        <div className="mt-4 rounded-md border bg-background p-4 text-sm text-muted-foreground">{payment.instructions}</div>
+      ) : (
+        <div className="mt-4 rounded-md border bg-background p-4 text-sm text-muted-foreground">
+          {t('sales.portal.detail.payment.instructionsFallback', 'EPC will confirm any deposit or payment details separately.')}
+        </div>
+      )}
+      {payment.portalPaymentUrl ? (
+        <div className="mt-4">
+          <Button asChild type="button" variant="outline">
+            <a href={payment.portalPaymentUrl} target="_blank" rel="noreferrer">
+              <CreditCard className="mr-2 size-4" aria-hidden />
+              {t('sales.portal.detail.payment.openLink', 'Open payment link')}
+              <ExternalLink className="ml-2 size-4" aria-hidden />
+            </a>
+          </Button>
+        </div>
+      ) : null}
+    </PortalCard>
+  )
+}
+
+function TimelineSection({ timeline }: { timeline: PortalTimelineEntry[] }) {
+  const t = useT()
+  return (
+    <PortalCard>
+      <PortalCardHeader
+        title={t('sales.portal.detail.timeline.title', 'Timeline')}
+        description={t('sales.portal.detail.timeline.description', 'Recent order status and activity.')}
+      />
+      {timeline.length === 0 ? (
+        <PortalEmptyState
+          icon={<Clock3 className="size-5" aria-hidden />}
+          title={t('sales.portal.detail.timeline.empty.title', 'No timeline yet')}
+          description={t('sales.portal.detail.timeline.empty.description', 'Order updates will appear here.')}
+        />
+      ) : (
+        <div className="space-y-4">
+          {timeline.map((entry) => (
+            <div key={entry.id} className="flex gap-3">
+              <span className="mt-1 inline-flex size-2 shrink-0 rounded-full bg-accent-indigo" aria-hidden />
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-foreground">{statusLabel(entry.action)}</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {formatDate(entry.occurredAt)} · {entry.actor.label}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </PortalCard>
+  )
+}
+
+function QuoteCommentsSection({
+  comments,
+  body,
+  isSubmitting,
+  onBodyChange,
+  onSubmit,
+}: {
+  comments: PortalComment[]
+  body: string
+  isSubmitting: boolean
+  onBodyChange: (value: string) => void
+  onSubmit: () => void
+}) {
+  const t = useT()
+  return (
+    <PortalCard>
+      <PortalCardHeader
+        title={t('sales.portal.detail.comments.title', 'Questions and comments')}
+        description={t('sales.portal.detail.comments.description', 'Send a question to the EPC team about this quote.')}
+      />
+      <div className="space-y-4">
+        {comments.length === 0 ? (
+          <PortalEmptyState
+            icon={<MessageSquare className="size-5" aria-hidden />}
+            title={t('sales.portal.detail.comments.empty.title', 'No comments yet')}
+            description={t('sales.portal.detail.comments.empty.description', 'Questions sent from the portal will appear here.')}
+          />
+        ) : (
+          <div className="space-y-3">
+            {comments.map((comment) => (
+              <div key={comment.id} className="rounded-md border bg-background p-4">
+                <div className="text-sm text-foreground">{comment.body}</div>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  {comment.authorName || t('sales.portal.detail.comments.customer', 'Customer')} · {formatDate(comment.createdAt)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="space-y-2">
+          <Textarea
+            value={body}
+            maxLength={2000}
+            showCount
+            placeholder={t('sales.portal.detail.comments.placeholder', 'Ask a question about this quote...')}
+            onChange={(event) => onBodyChange(event.target.value)}
+          />
+          <div className="flex justify-end">
+            <Button type="button" onClick={onSubmit} disabled={isSubmitting || body.trim().length === 0}>
+              {isSubmitting ? <Spinner className="mr-2 size-4" /> : <Send className="mr-2 size-4" aria-hidden />}
+              {t('sales.portal.detail.comments.submit', 'Send comment')}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </PortalCard>
+  )
+}
+
 export function SalesPortalDocumentDetailPage({ kind }: SalesPortalDocumentDetailPageProps) {
   const t = useT()
   const params = useParams()
@@ -216,13 +496,38 @@ export function SalesPortalDocumentDetailPage({ kind }: SalesPortalDocumentDetai
   const id = readRouteParam(params?.id) || readPathSegment(pathname, kind, 'id')
   const orgSlug = readRouteParam(params?.orgSlug) || readPathSegment(pathname, kind, 'orgSlug')
   const [document, setDocument] = React.useState<PortalOrderDetail | PortalQuoteDetail | null>(null)
+  const [attachments, setAttachments] = React.useState<PortalAttachment[]>([])
+  const [timeline, setTimeline] = React.useState<PortalTimelineEntry[]>([])
+  const [comments, setComments] = React.useState<PortalComment[]>([])
+  const [commentBody, setCommentBody] = React.useState('')
   const [isLoading, setIsLoading] = React.useState(true)
   const [isAccepting, setIsAccepting] = React.useState(false)
+  const [isCommentSubmitting, setIsCommentSubmitting] = React.useState(false)
+  const [acceptDialogOpen, setAcceptDialogOpen] = React.useState(false)
+  const [acceptedByName, setAcceptedByName] = React.useState('')
+  const [acceptedTerms, setAcceptedTerms] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [acceptResult, setAcceptResult] = React.useState<PortalAcceptResponse | null>(null)
-  const { confirm, ConfirmDialogElement } = useConfirmDialog()
 
   const backHref = `/${orgSlug}/portal/${kind}`
+
+  const loadAttachments = React.useCallback(async () => {
+    if (!id) return
+    const { ok, result } = await apiCall<PortalAttachmentsResponse>(`/api/sales/portal/${kind}/${id}/attachments`)
+    setAttachments(ok && result?.ok ? result.attachments : [])
+  }, [id, kind])
+
+  const loadTimeline = React.useCallback(async () => {
+    if (!id || !isOrders) return
+    const { ok, result } = await apiCall<PortalTimelineResponse>(`/api/sales/portal/orders/${id}/timeline`)
+    setTimeline(ok && result?.ok ? result.timeline : [])
+  }, [id, isOrders])
+
+  const loadComments = React.useCallback(async () => {
+    if (!id || isOrders) return
+    const { ok, result } = await apiCall<PortalCommentsResponse>(`/api/sales/portal/quotes/${id}/comments`)
+    setComments(ok && result?.ok ? result.comments : [])
+  }, [id, isOrders])
 
   const loadDocument = React.useCallback(async () => {
     if (!id) return
@@ -236,13 +541,18 @@ export function SalesPortalDocumentDetailPage({ kind }: SalesPortalDocumentDetai
         return
       }
       setDocument(isOrders && 'order' in result ? result.order : !isOrders && 'quote' in result ? result.quote : null)
+      await Promise.all([
+        loadAttachments().catch(() => setAttachments([])),
+        loadTimeline().catch(() => setTimeline([])),
+        loadComments().catch(() => setComments([])),
+      ])
     } catch {
       setDocument(null)
       setError(t('sales.portal.detail.error.load', 'Failed to load document.'))
     } finally {
       setIsLoading(false)
     }
-  }, [id, isOrders, kind, t])
+  }, [id, isOrders, kind, loadAttachments, loadComments, loadTimeline, t])
 
   React.useEffect(() => {
     void loadDocument()
@@ -250,29 +560,28 @@ export function SalesPortalDocumentDetailPage({ kind }: SalesPortalDocumentDetai
 
   const handleAcceptQuote = React.useCallback(async () => {
     if (!document || isOrders || !('quoteNumber' in document)) return
-    const confirmed = await confirm({
-      title: t('sales.portal.quotes.accept.confirm.title', 'Accept quote?'),
-      text: t(
-        'sales.portal.quotes.accept.confirm.description',
-        'Accepting quote {{number}} for {{total}} will create an order for your company.',
-        { number: document.quoteNumber, total: formatMoney(document.grandTotalGrossAmount, document.currencyCode) },
-      ),
-      confirmText: t('sales.portal.quotes.accept.confirm.action', 'Accept quote'),
-      cancelText: t('sales.portal.quotes.accept.confirm.cancel', 'Cancel'),
-    })
-    if (!confirmed) return
+    if (acceptedByName.trim().length < 2 || !acceptedTerms) {
+      setError(t('sales.portal.quotes.accept.validation', 'Accepting a quote requires your name and terms acceptance.'))
+      return
+    }
 
     setIsAccepting(true)
     setError(null)
     try {
       const { ok, result } = await apiCall<PortalAcceptResponse>(`/api/sales/portal/quotes/${document.id}/accept`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          acceptedByName: acceptedByName.trim(),
+          acceptedTerms,
+        }),
       })
       if (!ok || !result?.ok) {
         setError(t('sales.portal.quotes.accept.error', 'Failed to accept quote.'))
         return
       }
       setAcceptResult(result)
+      setAcceptDialogOpen(false)
       setDocument((current) => {
         if (!current || isOrders || !('quoteNumber' in current)) return current
         return {
@@ -281,14 +590,48 @@ export function SalesPortalDocumentDetailPage({ kind }: SalesPortalDocumentDetai
           convertedOrderId: result.orderId,
           canAccept: false,
           acceptanceBlockedReason: 'converted',
+          acceptanceAudit: {
+            source: 'customer_portal',
+            acceptedAt: new Date().toISOString(),
+            acceptedByName: acceptedByName.trim(),
+            acceptedByEmail: null,
+            acceptedByCustomerUserId: null,
+            acceptedTerms,
+          },
         }
       })
+      await Promise.all([
+        loadComments().catch(() => undefined),
+      ])
     } catch {
       setError(t('sales.portal.quotes.accept.error', 'Failed to accept quote.'))
     } finally {
       setIsAccepting(false)
     }
-  }, [confirm, document, isOrders, t])
+  }, [acceptedByName, acceptedTerms, document, isOrders, loadComments, t])
+
+  const handleCommentSubmit = React.useCallback(async () => {
+    if (!document || isOrders || commentBody.trim().length === 0) return
+    setIsCommentSubmitting(true)
+    setError(null)
+    try {
+      const { ok, result } = await apiCall<PortalCommentCreateResponse>(`/api/sales/portal/quotes/${document.id}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: commentBody.trim() }),
+      })
+      if (!ok || !result?.ok) {
+        setError(t('sales.portal.detail.comments.error', 'Failed to send comment.'))
+        return
+      }
+      setComments((current) => [...current, result.comment])
+      setCommentBody('')
+    } catch {
+      setError(t('sales.portal.detail.comments.error', 'Failed to send comment.'))
+    } finally {
+      setIsCommentSubmitting(false)
+    }
+  }, [commentBody, document, isOrders, t])
 
   if (isLoading) {
     return (
@@ -329,7 +672,64 @@ export function SalesPortalDocumentDetailPage({ kind }: SalesPortalDocumentDetai
 
   return (
     <div className="flex flex-col gap-6">
-      {ConfirmDialogElement}
+      <Dialog open={acceptDialogOpen} onOpenChange={setAcceptDialogOpen}>
+        <DialogContent>
+          <DialogHeader leading={<CheckCircle2 className="size-5" aria-hidden />} leadingTone="success">
+            <DialogTitle>{t('sales.portal.quotes.accept.confirm.title', 'Accept quote?')}</DialogTitle>
+            <DialogDescription>
+              {t(
+                'sales.portal.quotes.accept.confirm.description',
+                'Accepting quote {{number}} for {{total}} will create an order for your company.',
+                {
+                  number: !isOrders && 'quoteNumber' in document ? document.quoteNumber : '',
+                  total: formatMoney(document.grandTotalGrossAmount, document.currencyCode),
+                },
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void handleAcceptQuote()
+            }}
+            onKeyDown={(event) => {
+              if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                event.preventDefault()
+                void handleAcceptQuote()
+              }
+            }}
+          >
+            <label className="block space-y-2 text-sm">
+              <span className="font-medium text-foreground">{t('sales.portal.quotes.accept.acceptedByName', 'Name of accepting person')}</span>
+              <Input
+                value={acceptedByName}
+                placeholder={t('sales.portal.quotes.accept.acceptedByName.placeholder', 'Full name')}
+                onChange={(event) => setAcceptedByName(event.target.value)}
+              />
+            </label>
+            <label className="flex items-start gap-3 rounded-md border bg-background p-3 text-sm">
+              <Checkbox
+                checked={acceptedTerms}
+                onCheckedChange={(value) => setAcceptedTerms(value === true)}
+                aria-label={t('sales.portal.quotes.accept.terms.ariaLabel', 'Accept terms')}
+              />
+              <span className="text-muted-foreground">
+                {t('sales.portal.quotes.accept.terms', 'I accept the terms of this quote and understand that accepting it will create an order.')}
+              </span>
+            </label>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setAcceptDialogOpen(false)}>
+                {t('sales.portal.quotes.accept.confirm.cancel', 'Cancel')}
+              </Button>
+              <Button type="submit" disabled={isAccepting || acceptedByName.trim().length < 2 || !acceptedTerms}>
+                {isAccepting ? <Spinner className="mr-2 size-4" /> : <CheckCircle2 className="mr-2 size-4" aria-hidden />}
+                {t('sales.portal.quotes.accept.confirm.action', 'Accept quote')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       <PortalPageHeader
         title={title}
         description={isOrders
@@ -344,9 +744,15 @@ export function SalesPortalDocumentDetailPage({ kind }: SalesPortalDocumentDetai
                 {t('sales.portal.detail.back', 'Back')}
               </Link>
             </Button>
+            <Button asChild type="button" variant="outline">
+              <a href={`/api/sales/portal/${kind}/${document.id}/pdf`}>
+                <Download className="mr-2 size-4" aria-hidden />
+                {t('sales.portal.detail.pdf.download', 'Download PDF')}
+              </a>
+            </Button>
             {canAccept ? (
-              <Button type="button" onClick={() => { void handleAcceptQuote() }} disabled={isAccepting}>
-                {isAccepting ? <Spinner className="mr-2 size-4" /> : <CheckCircle2 className="mr-2 size-4" aria-hidden />}
+              <Button type="button" onClick={() => setAcceptDialogOpen(true)} disabled={isAccepting}>
+                <CheckCircle2 className="mr-2 size-4" aria-hidden />
                 {t('sales.portal.quotes.accept.action', 'Accept quote')}
               </Button>
             ) : null}
@@ -372,6 +778,8 @@ export function SalesPortalDocumentDetailPage({ kind }: SalesPortalDocumentDetai
           </div>
         </PortalCard>
       ) : null}
+
+      <AcceptanceAuditSection audit={document.acceptanceAudit} />
 
       {error ? (
         <PortalCard className="border-destructive/30 bg-destructive/10">
@@ -445,6 +853,24 @@ export function SalesPortalDocumentDetailPage({ kind }: SalesPortalDocumentDetai
           </div>
         ) : null}
       </PortalCard>
+
+      <AttachmentsSection attachments={attachments} />
+
+      {isOrders && 'payment' in document ? (
+        <PaymentPanel payment={document.payment} currencyCode={document.currencyCode} />
+      ) : null}
+
+      {isOrders ? (
+        <TimelineSection timeline={timeline} />
+      ) : (
+        <QuoteCommentsSection
+          comments={comments}
+          body={commentBody}
+          isSubmitting={isCommentSubmitting}
+          onBodyChange={setCommentBody}
+          onSubmit={handleCommentSubmit}
+        />
+      )}
     </div>
   )
 }

@@ -67,6 +67,15 @@ export const setup: ModuleSetupConfig = {
       'sales.credit_memos.manage',
     ],
   },
+  defaultCustomerRoleFeatures: {
+    buyer: [
+      'portal.orders.view',
+      'portal.quotes.view',
+      'portal.quotes.accept',
+      'portal.quotes.comment',
+    ],
+    viewer: ['portal.orders.view'],
+  },
 
   async onTenantCreated({ em, tenantId, organizationId }) {
     const exists = await em.findOne(SalesSettings, { tenantId, organizationId })
