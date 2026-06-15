@@ -1,0 +1,72 @@
+name: Deploy om.they.dev baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to deploy
+        required: true
+        type: string
+        default: upstream-baseline
+      deploy_mode:
+        description: Deployment mode
+        required: true
+        type: choice
+        default: full
+        options:
+          - full
+          - config-restart
+
+concurrency:
+  group: upstream-baseline-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-2
+
+jobs:
+  deploy-baseline:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy baseline
+        id: baseline
+        shell: bash
+        env:
+          BRANCH: ${{ inputs.branch }}
+          DEPLOY_MODE: ${{ inputs.deploy_mode }}
+        run: |
+          set -euo pipefail
+          OUTPUT="$(bash ./infra/aws-upstream-baseline/baseline-deploy.sh)"
+          echo "$OUTPUT"
+          while IFS='=' read -r key value; do
+            [[ -z "$key" ]] && continue
+            echo "$key=$value" >> "$GITHUB_OUTPUT"
+          done < <(printf '%s\n' "$OUTPUT" | grep '^baseline_')
+
+      - name: Smoke /login
+        env:
+          BASE_URL: ${{ steps.baseline.outputs.baseline_url }}
+          SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+          SMOKE_TEST_TENANT_ID: ${{ secrets.SMOKE_TEST_TENANT_ID }}
+        run: bash ./infra/aws-upstream-baseline/smoke.sh
+
+      - name: Workflow summary
+        run: |
+          echo "Baseline URL: ${{ steps.baseline.outputs.baseline_url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Branch: ${{ steps.baseline.outputs.baseline_branch }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deploy mode: ${{ steps.baseline.outputs.baseline_deploy_mode }}" >> "$GITHUB_STEP_SUMMARY"

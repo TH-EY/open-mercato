@@ -4,32 +4,27 @@ on:
   push:
     branches:
       - 'contrib/**'
-  pull_request_target:
-    types:
-      - opened
-      - synchronize
-      - reopened
   workflow_dispatch:
     inputs:
       branch:
         description: Branch to deploy
         required: true
         type: string
+      deploy_mode:
+        description: Deployment mode
+        required: true
+        type: choice
+        default: full
+        options:
+          - full
+          - config-restart
 
 concurrency:
-  group: contrib-preview-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.branch || github.event_name == 'pull_request_target' && github.event.pull_request.head.ref || github.ref_name }}
+  group: contrib-preview-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.branch || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   deploy-preview:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && startsWith(github.ref_name, 'contrib/')) ||
-      (
-        github.event_name == 'pull_request_target' &&
-        github.event.pull_request.head.repo.full_name == github.repository &&
-        startsWith(github.event.pull_request.head.ref, 'contrib/')
-      )
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -50,8 +45,6 @@ jobs:
           set -euo pipefail
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             BRANCH="${{ github.event.inputs.branch }}"
-          elif [[ "${GITHUB_EVENT_NAME}" == "pull_request_target" ]]; then
-            BRANCH="${{ github.event.pull_request.head.ref }}"
           else
             BRANCH="${GITHUB_REF_NAME}"
           fi
@@ -73,6 +66,8 @@ jobs:
         env:
           PREVIEW_ADMIN_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
           PREVIEW_ADMIN_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+          PREVIEW_ADMIN_TENANT_ID: ${{ secrets.SMOKE_TEST_TENANT_ID }}
+          DEPLOY_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'full' }}
         run: |
           set -euo pipefail
           OUTPUT="$(bash ./infra/aws-upstream-baseline/preview-upsert.sh '${{ steps.branch.outputs.branch }}')"
@@ -87,6 +82,7 @@ jobs:
           BASE_URL: ${{ steps.preview.outputs.preview_url }}
           SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
           SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+          SMOKE_TEST_TENANT_ID: ${{ secrets.SMOKE_TEST_TENANT_ID }}
         run: bash ./infra/aws-upstream-baseline/smoke.sh
 
       - name: Comment preview URL on same-repo PRs
