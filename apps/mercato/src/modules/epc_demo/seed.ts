@@ -99,6 +99,14 @@ type CustomerContext = {
 
 const SEED_ID = 'epc_demo'
 const DEMO_PASSWORD = process.env.EPC_DEMO_CUSTOMER_PASSWORD ?? 'EpcDemo!2026-ChangeMe'
+const EXISTING_DEMO_USER_LINKS = [
+  {
+    email: 'w+epc3@they.dev',
+    displayName: 'EPC Preview Buyer',
+    companyKey: 'canvey-self-build',
+    roleSlug: 'buyer' as const,
+  },
+] as const
 
 const COMPANY_SEEDS: EpcCompanySeed[] = [
   {
@@ -723,9 +731,13 @@ async function ensurePortalUsers(
   const roleBySlug = new Map(roles.map((role) => [role.slug, role]))
   const now = new Date()
 
-  for (const context of companies.values()) {
-    const { seed, entity } = context
-    const emailHash = hashForLookup(seed.user.email)
+  async function upsertUserForCompany(input: {
+    email: string
+    displayName: string
+    roleSlug: 'buyer' | 'viewer'
+    entity: CustomerEntity
+  }) {
+    const emailHash = hashForLookup(input.email)
     let user = await em.findOne(CustomerUser, {
       tenantId: scope.tenantId,
       emailHash,
@@ -736,28 +748,28 @@ async function ensurePortalUsers(
         id: randomUUID(),
         tenantId: scope.tenantId,
         organizationId: scope.organizationId,
-        email: seed.user.email,
+        email: input.email,
         emailHash,
         passwordHash: await hash(DEMO_PASSWORD, 10),
-        displayName: seed.user.displayName,
+        displayName: input.displayName,
         emailVerifiedAt: now,
         failedLoginAttempts: 0,
-        customerEntityId: entity.id,
+        customerEntityId: input.entity.id,
         isActive: true,
         createdAt: now,
         updatedAt: now,
       })
       em.persist(user)
     } else {
-      user.customerEntityId = entity.id
-      user.displayName = seed.user.displayName
+      user.customerEntityId = input.entity.id
+      user.displayName = input.displayName
       user.emailVerifiedAt = user.emailVerifiedAt ?? now
       user.isActive = true
       em.persist(user)
     }
 
-    const role = roleBySlug.get(seed.user.roleSlug)
-    if (!role) continue
+    const role = roleBySlug.get(input.roleSlug)
+    if (!role) return
     const existingLink = await em.findOne(CustomerUserRole, { user, role, deletedAt: null })
     if (!existingLink) {
       em.persist(em.create(CustomerUserRole, {
@@ -767,6 +779,27 @@ async function ensurePortalUsers(
         createdAt: now,
       }))
     }
+  }
+
+  for (const context of companies.values()) {
+    const { seed, entity } = context
+    await upsertUserForCompany({
+      email: seed.user.email,
+      displayName: seed.user.displayName,
+      roleSlug: seed.user.roleSlug,
+      entity,
+    })
+  }
+
+  for (const link of EXISTING_DEMO_USER_LINKS) {
+    const context = companies.get(link.companyKey)
+    if (!context) continue
+    await upsertUserForCompany({
+      email: link.email,
+      displayName: link.displayName,
+      roleSlug: link.roleSlug,
+      entity: context.entity,
+    })
   }
   await em.flush()
 }
@@ -1104,4 +1137,3 @@ export async function seedEpcDemoExamples(
   await seedQuotes(em, calculationService, scope, companies)
   await seedOrders(em, calculationService, scope, companies)
 }
-

@@ -116,6 +116,8 @@
   "customer_accounts.admin.portalFeatures.orders.view": "View orders",
   "customer_accounts.admin.portalFeatures.profile.edit": "Edit profile",
   "customer_accounts.admin.portalFeatures.profile.view": "View profile",
+  "customer_accounts.admin.portalFeatures.quotes.accept": "Accept quotes",
+  "customer_accounts.admin.portalFeatures.quotes.accept.description": "Allows accepting quotes and converting them to orders",
   "customer_accounts.admin.portalFeatures.quotes.request": "Request quotes",
   "customer_accounts.admin.portalFeatures.quotes.view": "View quotes",
   "customer_accounts.admin.portalFeatures.users.invite": "Invite team members",
