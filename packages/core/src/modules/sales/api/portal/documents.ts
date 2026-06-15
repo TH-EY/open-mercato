@@ -480,7 +480,7 @@ export async function acceptPortalQuote(req: Request, id: string): Promise<NextR
       req,
       container: authorized.container,
       em,
-      auth: authorized.auth,
+      auth: null,
       scope,
       translate,
       loadQuoteForUpdate: (trx) =>

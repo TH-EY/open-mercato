@@ -11,11 +11,7 @@ import { QuoteAcceptedAdminEmail } from '../emails/QuoteAcceptedAdminEmail'
 
 type RequestContainer = Awaited<ReturnType<typeof createRequestContainer>>
 
-type Translate = (
-  key: string,
-  fallback: string,
-  values?: Record<string, string | number | null | undefined>,
-) => string
+type Translate = (key: string, fallback: string, values?: Record<string, string | number>) => string
 
 type AcceptanceScope = {
   tenantId?: string
