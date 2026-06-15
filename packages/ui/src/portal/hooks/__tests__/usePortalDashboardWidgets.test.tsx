@@ -1,12 +1,16 @@
 /** @jest-environment jsdom */
 import * as React from 'react'
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 
 const loadInjectionWidgetsForSpotMock = jest.fn()
+const getInjectionRegistryVersionMock = jest.fn()
+const subscribeToInjectionRegistryChangesMock = jest.fn()
 const apiCallMock = jest.fn()
 
 jest.mock('@open-mercato/shared/modules/widgets/injection-loader', () => ({
+  getInjectionRegistryVersion: () => getInjectionRegistryVersionMock(),
   loadInjectionWidgetsForSpot: (...args: unknown[]) => loadInjectionWidgetsForSpotMock(...args),
+  subscribeToInjectionRegistryChanges: (listener: () => void) => subscribeToInjectionRegistryChangesMock(listener),
 }))
 
 jest.mock('../../../backend/utils/apiCall', () => ({
@@ -35,8 +39,18 @@ function mockFeatureCheckGranted(granted: string[]) {
 }
 
 describe('usePortalDashboardWidgets — feature gating (Phase 1 regression)', () => {
+  let registryVersion = 0
+  let registryListener: (() => void) | null = null
+
   beforeEach(() => {
     jest.clearAllMocks()
+    registryVersion = 0
+    registryListener = null
+    getInjectionRegistryVersionMock.mockImplementation(() => registryVersion)
+    subscribeToInjectionRegistryChangesMock.mockImplementation((listener: () => void) => {
+      registryListener = listener
+      return jest.fn()
+    })
   })
 
   it('returns widgets without required features regardless of grants', async () => {
@@ -113,5 +127,24 @@ describe('usePortalDashboardWidgets — feature gating (Phase 1 regression)', ()
 
     await waitFor(() => expect(result.current.isLoading).toBe(false))
     expect(result.current.widgets.map((w) => w.widgetId)).toEqual(['real'])
+  })
+
+  it('reloads widgets when the injection registry is registered after the first render', async () => {
+    loadInjectionWidgetsForSpotMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([widget('after-registry')])
+
+    const { result } = renderHook(() => usePortalDashboardWidgets('portal:dashboard:sections' as any))
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.widgets).toHaveLength(0)
+
+    registryVersion = 1
+    act(() => {
+      registryListener?.()
+    })
+
+    await waitFor(() => expect(result.current.widgets.map((w) => w.widgetId)).toEqual(['after-registry']))
+    expect(loadInjectionWidgetsForSpotMock).toHaveBeenCalledTimes(2)
   })
 })
