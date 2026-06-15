@@ -17,6 +17,7 @@ Add a first-class `projects` module for project tracking linked to Sales Orders.
   - `/backend/projects`
   - `/backend/projects/create`
   - `/backend/projects/[id]`
+  - `/backend/projects/[id]/board`
 - APIs:
   - `GET/POST/PUT/DELETE /api/projects`
   - `GET/POST/PUT/DELETE /api/projects/tasks`
@@ -60,7 +61,7 @@ Add a first-class `projects` module for project tracking linked to Sales Orders.
 - API coverage should create its own Sales Order fixture, create/update/delete a Project, create/update/delete ProjectTasks, verify order scoping, and verify task reorder persistence.
 - API coverage should create/update/delete task templates, project templates, and project template tasks; create a project from a template; assert task status, position, owner, description, and relative deadline persistence; and verify soft-deleted templates cannot be used for project creation.
 - ACL coverage should verify `projects.templates.manage` is required for template administration and not granted to employee defaults.
-- UI coverage should verify Projects table navigation, project creation linked to a Sales Order, task creation from the board, status move, within-column reorder, task edit fields, attachment upload, reload persistence.
+- UI coverage should verify Projects table navigation, direct row action navigation to the standalone board, project creation linked to a Sales Order, task creation from the board, status move, within-column reorder, task edit fields, attachment upload, reload persistence.
 - UI coverage should verify task template creation, project template creation with reusable/inline task rows, project creation from a selected template, generated task display on Kanban, and employee denial for template screens.
 
 ## Backward Compatibility

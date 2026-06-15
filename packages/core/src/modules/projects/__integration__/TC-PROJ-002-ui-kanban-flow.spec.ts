@@ -64,6 +64,11 @@ test.describe('TC-PROJ-002: Projects UI Kanban flow', () => {
       const projectRow = page.getByRole('row', { name: new RegExp(projectName) });
       await expect(projectRow).toBeVisible();
       await expect(projectRow).toContainText('0 open / 0 done');
+      await projectRow.getByRole('button', { name: 'Open actions' }).click();
+      await page.getByRole('menuitem', { name: 'Kanban board' }).click();
+      await page.waitForURL(new RegExp(`/backend/projects/${projectId}/board(?:\\?.*)?$`), { timeout: 10_000 });
+      await expect(page.getByRole('heading', { name: projectName })).toBeVisible();
+      await expect(page.getByText('Todo', { exact: true })).toBeVisible();
 
       const createdProjectResponse = await apiRequest(request, 'GET', `/api/projects?id=${projectId}`, {
         token: adminToken,
@@ -96,7 +101,7 @@ test.describe('TC-PROJ-002: Projects UI Kanban flow', () => {
       });
 
       await loginEnglish(page);
-      await page.goto(`/backend/projects/${projectId}`, { waitUntil: 'domcontentloaded' });
+      await page.goto(`/backend/projects/${projectId}/board`, { waitUntil: 'domcontentloaded' });
       await expect(page.getByRole('heading', { name: projectName })).toBeVisible();
       await expect(page.getByText('Todo', { exact: true })).toBeVisible();
       await expect(page.getByText('In progress', { exact: true })).toBeVisible();
@@ -203,7 +208,7 @@ test.describe('TC-PROJ-002: Projects UI Kanban flow', () => {
       });
 
       await loginEnglish(page);
-      await page.goto(`/backend/projects/${projectId}`, { waitUntil: 'domcontentloaded' });
+      await page.goto(`/backend/projects/${projectId}/board`, { waitUntil: 'domcontentloaded' });
       await expect(page.getByRole('heading', { name: projectName })).toBeVisible();
 
       await page.getByRole('button', { name: new RegExp(taskBName) }).dragTo(

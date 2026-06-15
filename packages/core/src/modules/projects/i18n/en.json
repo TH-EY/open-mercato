@@ -1,4 +1,7 @@
 {
+  "projects.board.action": "Kanban board",
+  "projects.board.breadcrumb": "Board",
+  "projects.board.title": "Kanban board",
   "projects.create.flash.created": "Project created.",
   "projects.create.submit": "Create project",
   "projects.create.template.label": "Project template",
@@ -16,6 +19,7 @@
   "projects.detail.flash.updated": "Project updated.",
   "projects.detail.loadError": "Failed to load project.",
   "projects.detail.notFound": "Project not found.",
+  "projects.detail.openBoard": "Open board",
   "projects.detail.order": "Order",
   "projects.detail.owner": "Owner",
   "projects.detail.tasks": "Tasks",

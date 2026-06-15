@@ -234,11 +234,13 @@ export default function ProjectsPage() {
               items={canManage
                 ? [
                     { id: 'open', label: t('common.open', 'Open'), href: `/backend/projects/${row.id}` },
+                    { id: 'kanban-board', label: t('projects.board.action', 'Kanban board'), href: `/backend/projects/${row.id}/board` },
                     { id: 'edit', label: t('common.edit', 'Edit'), href: `/backend/projects/${row.id}` },
                     { id: 'delete', label: t('common.delete', 'Delete'), destructive: true, onSelect: () => { void deleteProject(row) } },
                   ]
                 : [
                     { id: 'open', label: t('common.open', 'Open'), href: `/backend/projects/${row.id}` },
+                    { id: 'kanban-board', label: t('projects.board.action', 'Kanban board'), href: `/backend/projects/${row.id}/board` },
                   ]}
             />
           )}
