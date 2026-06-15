@@ -273,13 +273,22 @@ export function SalesPortalDocumentDetailPage({ kind }: SalesPortalDocumentDetai
         return
       }
       setAcceptResult(result)
-      await loadDocument()
+      setDocument((current) => {
+        if (!current || isOrders || !('quoteNumber' in current)) return current
+        return {
+          ...current,
+          status: 'confirmed',
+          convertedOrderId: result.orderId,
+          canAccept: false,
+          acceptanceBlockedReason: 'converted',
+        }
+      })
     } catch {
       setError(t('sales.portal.quotes.accept.error', 'Failed to accept quote.'))
     } finally {
       setIsAccepting(false)
     }
-  }, [confirm, document, isOrders, loadDocument, t])
+  }, [confirm, document, isOrders, t])
 
   if (isLoading) {
     return (
