@@ -106,6 +106,14 @@ values.update({
     'TENANT_DATA_ENCRYPTION_KEY': secrets.token_urlsafe(48),
     'MEILISEARCH_MASTER_KEY': secrets.token_urlsafe(32),
 })
+platform_domains = [
+    domain.strip()
+    for domain in (values.get('PLATFORM_DOMAINS') or 'localhost,openmercato.com').split(',')
+    if domain.strip()
+]
+if preview_host.lower() not in {domain.lower() for domain in platform_domains}:
+    platform_domains.append(preview_host)
+values['PLATFORM_DOMAINS'] = ','.join(platform_domains)
 for key in [
     'POSTGRES_PASSWORD',
     'JWT_SECRET',
@@ -130,7 +138,7 @@ if preview_admin_password:
     values['OM_INIT_SUPERADMIN_PASSWORD'] = preview_admin_password
 keys = [
     'APP_NAME','DEPLOY_ENV','APP_PORT','APP_URL','NEXT_PUBLIC_APP_URL',
-    'PLATFORM_PORTAL_BASE_URL','POSTGRES_USER','POSTGRES_PASSWORD','POSTGRES_DB',
+    'PLATFORM_PORTAL_BASE_URL','PLATFORM_DOMAINS','POSTGRES_USER','POSTGRES_PASSWORD','POSTGRES_DB',
     'JWT_SECRET','AUTH_SECRET','TENANT_DATA_ENCRYPTION_KEY','MEILISEARCH_MASTER_KEY',
     'SELF_SERVICE_ONBOARDING_ENABLED','DEMO_MODE','ADMIN_EMAIL','OM_INIT_SUPERADMIN_EMAIL',
     'OM_INIT_SUPERADMIN_PASSWORD','OPENAI_API_KEY','SYSTEM_EMAIL_PROVIDER','AWS_SES_REGION',
