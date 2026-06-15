@@ -102,6 +102,7 @@ for key in [
         values[key] = existing[key]
 if preview_host == 'preview-epc.om.they.dev':
     values.update({
+        'SELF_SERVICE_ONBOARDING_ENABLED': 'false',
         'SYSTEM_EMAIL_PROVIDER': 'ses',
         'AWS_SES_REGION': values.get('AWS_SES_REGION') or values.get('AWS_REGION') or 'eu-west-2',
         'EMAIL_FROM': values.get('EMAIL_FROM') or 'no-reply@they.dev',
