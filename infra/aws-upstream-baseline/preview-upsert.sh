@@ -14,12 +14,18 @@ if [[ "${BRANCH}" != contrib/* && "${BRANCH}" != "fork/EPC" ]]; then
   echo "Preview deployments are only supported for contrib/* branches and fork/EPC" >&2
   exit 1
 fi
+DEPLOY_MODE="${DEPLOY_MODE:-full}"
+if [[ "${DEPLOY_MODE}" != "full" && "${DEPLOY_MODE}" != "config-restart" ]]; then
+  echo "DEPLOY_MODE must be either 'full' or 'config-restart'" >&2
+  exit 1
+fi
 
 PREVIEW_SLUG="$(branch_to_preview_slug "${BRANCH}")"
 PREVIEW_HOSTNAME="$(preview_hostname_for_slug "${PREVIEW_SLUG}")"
 PREVIEW_RUNTIME_ENV="$(preview_runtime_env_for_slug "${PREVIEW_SLUG}")"
 TARGET_GROUP_NAME="$(target_group_name_for_slug "${PREVIEW_SLUG}")"
 echo "Preparing preview ${PREVIEW_SLUG} for ${BRANCH}"
+echo "Deploy mode: ${DEPLOY_MODE}"
 echo "Resolving preview port for ${PREVIEW_HOSTNAME}"
 PREVIEW_PORT="$(choose_preview_port "${PREVIEW_SLUG}" "${TARGET_GROUP_NAME}")"
 PREVIEW_ENV="${PREVIEW_RUNTIME_ENV}"
@@ -38,6 +44,7 @@ REMOTE_SCRIPT="$(mktemp)"
   printf 'preview_project=%q\n' "${PREVIEW_PROJECT}"
   printf 'preview_hostname=%q\n' "${PREVIEW_HOSTNAME}"
   printf 'preview_port=%q\n' "${PREVIEW_PORT}"
+  printf 'deploy_mode=%q\n' "${DEPLOY_MODE}"
   printf 'workdir=%q\n' "${REMOTE_WORKDIR}"
   printf 'remote_root=%q\n' "${PREVIEW_REMOTE_ROOT}"
   printf 'baseline_env_file=%q\n' "${BASELINE_ENV_FILE_REMOTE}"
@@ -49,23 +56,29 @@ command -v docker >/dev/null 2>&1 || { echo "Missing docker on preview host" >&2
 
 mkdir -p "$remote_root"
 if [[ ! -d "$workdir/.git" ]]; then
+  if [[ "$deploy_mode" == "config-restart" ]]; then
+    echo "Config-only deploy requires an existing preview checkout at ${workdir}" >&2
+    exit 1
+  fi
   git clone --branch "$branch" --single-branch "$repo_url" "$workdir"
 else
-  git -C "$workdir" remote set-url origin "$repo_url"
-  git -C "$workdir" fetch origin "$branch" --prune
-  git -C "$workdir" checkout -B "$branch" "origin/$branch"
-  git -C "$workdir" reset --hard "origin/$branch"
-  if [[ "$branch" == "fork/EPC" ]]; then
-    git -C "$workdir" clean -fdx -e .env
-  else
-    git -C "$workdir" clean -fdx
+  if [[ "$deploy_mode" == "full" ]]; then
+    git -C "$workdir" remote set-url origin "$repo_url"
+    git -C "$workdir" fetch origin "$branch" --prune
+    git -C "$workdir" checkout -B "$branch" "origin/$branch"
+    git -C "$workdir" reset --hard "origin/$branch"
+    if [[ "$branch" == "fork/EPC" ]]; then
+      git -C "$workdir" clean -fdx -e .env
+    else
+      git -C "$workdir" clean -fdx
+    fi
   fi
 fi
 
-python3 - <<'PY' "$baseline_env_file" "$workdir/.env" "$preview_env" "$preview_port" "$preview_hostname" "$preview_admin_email" "$preview_admin_password"
+python3 - <<'PY' "$baseline_env_file" "$workdir/.env" "$preview_env" "$preview_port" "$preview_hostname" "$preview_admin_email" "$preview_admin_password" "$deploy_mode"
 import secrets, sys
 from pathlib import Path
-baseline, target, preview_env, preview_port, preview_host, preview_admin_email, preview_admin_password = sys.argv[1:8]
+baseline, target, preview_env, preview_port, preview_host, preview_admin_email, preview_admin_password, deploy_mode = sys.argv[1:9]
 values = {}
 existing = {}
 for line in Path(baseline).read_text().splitlines():
@@ -74,7 +87,7 @@ for line in Path(baseline).read_text().splitlines():
     key, value = line.split('=', 1)
     values[key] = value
 target_path = Path(target)
-if preview_env == 'epc' and target_path.exists():
+if target_path.exists():
     for line in target_path.read_text().splitlines():
         if not line or line.startswith('#') or '=' not in line:
             continue
@@ -98,7 +111,7 @@ for key in [
     'TENANT_DATA_ENCRYPTION_KEY',
     'MEILISEARCH_MASTER_KEY',
 ]:
-    if existing.get(key):
+    if (preview_env == 'epc' or deploy_mode == 'config-restart') and existing.get(key):
         values[key] = existing[key]
 if preview_host == 'preview-epc.om.they.dev':
     values.update({
@@ -127,49 +140,37 @@ cd "$workdir"
 set -a
 . ./.env
 set +a
-if [[ "$branch" == "fork/EPC" ]]; then
-  echo "EPC pre-build app image cleanup; preserving database and named volumes:"
-  COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml stop app >/dev/null 2>&1 || true
-  COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml rm -f app >/dev/null 2>&1 || true
-  docker rm -f "${preview_project}-app-1" >/dev/null 2>&1 || true
-  docker image rm -f "open-mercato/app:$preview_env" >/dev/null 2>&1 || true
-  timeout 8m docker system prune -af || echo "docker system prune skipped, failed, or timed out"
-  echo "EPC pre-build cleanup before build:"
-  df -h /
-  timeout 30s docker system df || echo "docker system df skipped, failed, or timed out"
-  timeout 6m docker builder prune -af || echo "docker builder prune skipped, failed, or timed out"
-  timeout 3m docker image prune -f || echo "docker image prune skipped, failed, or timed out"
-  echo "EPC pre-build cleanup after cleanup:"
-  df -h /
-  timeout 30s docker system df || echo "docker system df skipped, failed, or timed out"
-fi
-if [[ "$branch" != "fork/EPC" ]]; then
-  docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml down --remove-orphans --volumes >/dev/null 2>&1 || true
-fi
-if ! timeout 30s docker image inspect opencode-mvp:latest >/dev/null 2>&1; then
-  docker build -t opencode-mvp:latest docker/opencode
-fi
-build_log="/tmp/openmercato-preview-${preview_env}-build.log"
-rm -f "$build_log"
-if ! DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain timeout 45m docker build --progress=plain \
-  --build-arg CONTAINER_PORT="${CONTAINER_PORT:-3000}" \
-  -t "open-mercato/app:$preview_env" \
-  . >"$build_log" 2>&1; then
-  tail -n 240 "$build_log" || true
-  exit 1
-fi
-tail -n 80 "$build_log" || true
-if [[ "$branch" == "fork/EPC" ]]; then
-  echo "EPC preview keeps Docker volumes intact; preserving demo database state."
-fi
-existing_epc_postgres=""
-if [[ "$branch" == "fork/EPC" ]]; then
-  existing_epc_postgres="$(COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml ps -q postgres 2>/dev/null || true)"
-fi
-if [[ "$branch" == "fork/EPC" && -n "$existing_epc_postgres" ]]; then
-  if [[ -n "${POSTGRES_PASSWORD:-}" ]]; then
-    pg_password_sql="/tmp/openmercato-preview-${preview_env}-postgres-password.sql"
-    python3 - <<'PY' > "$pg_password_sql"
+
+compose() {
+  COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml "$@"
+}
+
+wait_for_local_login() {
+  local url="http://127.0.0.1:${APP_PORT:-3000}/login"
+  for attempt in $(seq 1 40); do
+    status="$(curl -fsS -o /tmp/openmercato-preview-login.html -w '%{http_code}' "$url" 2>/dev/null || true)"
+    if [[ "$status" =~ ^[23] ]]; then
+      echo "Local preview login endpoint is reachable: ${url} (${status})"
+      return 0
+    fi
+    echo "Waiting for local preview login endpoint (${attempt}/40): ${status:-no response}"
+    sleep 5
+  done
+  cat /tmp/openmercato-preview-login.html 2>/dev/null || true
+  echo "Preview app did not become reachable at ${url}" >&2
+  return 1
+}
+
+sync_epc_postgres_password() {
+  if [[ "$branch" != "fork/EPC" || -z "${POSTGRES_PASSWORD:-}" ]]; then
+    return 0
+  fi
+  existing_epc_postgres="$(compose ps -q postgres 2>/dev/null || true)"
+  if [[ -z "$existing_epc_postgres" ]]; then
+    return 0
+  fi
+  pg_password_sql="/tmp/openmercato-preview-${preview_env}-postgres-password.sql"
+  python3 - <<'PY' > "$pg_password_sql"
 import os
 
 password = os.environ["POSTGRES_PASSWORD"]
@@ -177,25 +178,67 @@ escaped = password.replace("'", "''")
 print("set password_encryption = 'scram-sha-256';")
 print(f"alter role postgres login password '{escaped}';")
 PY
-    docker cp "$pg_password_sql" "$existing_epc_postgres:/tmp/openmercato-preview-postgres-password.sql"
-    rm -f "$pg_password_sql"
-    for attempt in 1 2 3 4 5; do
-      if docker exec "$existing_epc_postgres" psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -v ON_ERROR_STOP=1 -f /tmp/openmercato-preview-postgres-password.sql >/dev/null; then
-        break
-      fi
-      if [[ "$attempt" == "5" ]]; then
-        exit 1
-      fi
-      echo "Postgres password sync attempt ${attempt} failed; retrying"
-      sleep "$((attempt * 2))"
-    done
-    docker exec "$existing_epc_postgres" rm -f /tmp/openmercato-preview-postgres-password.sql
+  docker cp "$pg_password_sql" "$existing_epc_postgres:/tmp/openmercato-preview-postgres-password.sql"
+  rm -f "$pg_password_sql"
+  for attempt in 1 2 3 4 5; do
+    if docker exec "$existing_epc_postgres" psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -v ON_ERROR_STOP=1 -f /tmp/openmercato-preview-postgres-password.sql >/dev/null; then
+      break
+    fi
+    if [[ "$attempt" == "5" ]]; then
+      return 1
+    fi
+    echo "Postgres password sync attempt ${attempt} failed; retrying"
+    sleep "$((attempt * 2))"
+  done
+  docker exec "$existing_epc_postgres" rm -f /tmp/openmercato-preview-postgres-password.sql
+}
+
+post_deploy_cleanup() {
+  echo "Post-deploy cleanup; app is already running:"
+  df -h /
+  timeout 30s docker system df || echo "docker system df skipped, failed, or timed out"
+  timeout 6m docker builder prune -af || echo "docker builder prune skipped, failed, or timed out"
+  timeout 3m docker image prune -f || echo "docker image prune skipped, failed, or timed out"
+  echo "Post-deploy cleanup complete:"
+  df -h /
+  timeout 30s docker system df || echo "docker system df skipped, failed, or timed out"
+}
+
+if [[ "$deploy_mode" == "config-restart" ]]; then
+  echo "Config-only deploy: skipping image build and restarting app with existing image."
+  if ! timeout 30s docker image inspect "open-mercato/app:$preview_env" >/dev/null 2>&1; then
+    echo "Missing existing image open-mercato/app:$preview_env; run a full deploy first." >&2
+    exit 1
   fi
-  docker rm -f "${preview_project}-app-1" >/dev/null 2>&1 || true
-  COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --no-deps --no-build --force-recreate app
+  sync_epc_postgres_password
+  compose up -d --no-deps --no-build --force-recreate app
 else
-  COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml up -d --no-build --remove-orphans
+  if ! timeout 30s docker image inspect opencode-mvp:latest >/dev/null 2>&1; then
+    docker build -t opencode-mvp:latest docker/opencode
+  fi
+  build_log="/tmp/openmercato-preview-${preview_env}-build.log"
+  rm -f "$build_log"
+  echo "Building new app image while the current app container stays online."
+  if ! DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain timeout 45m docker build --progress=plain \
+    --build-arg CONTAINER_PORT="${CONTAINER_PORT:-3000}" \
+    -t "open-mercato/app:$preview_env" \
+    . >"$build_log" 2>&1; then
+    tail -n 240 "$build_log" || true
+    exit 1
+  fi
+  tail -n 80 "$build_log" || true
+  if [[ "$branch" == "fork/EPC" ]]; then
+    echo "EPC preview keeps Docker volumes intact; preserving demo database state."
+    sync_epc_postgres_password
+    compose up -d --no-deps --no-build --force-recreate app
+  else
+    echo "Recreating non-EPC preview after successful image build."
+    compose down --remove-orphans --volumes >/dev/null 2>&1 || true
+    compose up -d --no-build --remove-orphans
+  fi
 fi
+wait_for_local_login
+post_deploy_cleanup
 EOF
 } > "${REMOTE_SCRIPT}"
 

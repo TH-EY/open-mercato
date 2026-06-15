@@ -5,6 +5,15 @@ on:
     branches:
       - 'fork/EPC'
   workflow_dispatch:
+    inputs:
+      deploy_mode:
+        description: Deployment mode
+        required: true
+        type: choice
+        default: full
+        options:
+          - full
+          - config-restart
 
 concurrency:
   group: fork-preview-epc
@@ -39,6 +48,7 @@ jobs:
         env:
           PREVIEW_ADMIN_EMAIL: ${{ secrets.EPC_PREVIEW_ADMIN_EMAIL || secrets.SMOKE_TEST_EMAIL }}
           PREVIEW_ADMIN_PASSWORD: ${{ secrets.EPC_PREVIEW_ADMIN_PASSWORD || secrets.SMOKE_TEST_PASSWORD }}
+          DEPLOY_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'full' }}
         run: |
           set -euo pipefail
           OUTPUT_FILE="$(mktemp)"
