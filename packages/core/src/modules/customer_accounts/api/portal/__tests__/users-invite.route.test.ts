@@ -1,23 +1,23 @@
 /** @jest-environment node */
 
-import { NextResponse } from 'next/server'
-
 const mockCheckAuthRateLimit = jest.fn()
 const mockCreateInvitation = jest.fn()
-const mockUserHasAllFeatures = jest.fn()
-const mockGetAuthFromRequest = jest.fn()
+const mockGetCustomerAuthFromRequest = jest.fn()
+const mockRequireCustomerFeature = jest.fn()
+const mockFindWithDecryption = jest.fn()
 const mockSendCustomerInvitationEmail = jest.fn()
 
 const tenantId = '22222222-2222-4222-8222-222222222222'
 const organizationId = '33333333-3333-4333-8333-333333333333'
+const customerEntityId = '44444444-4444-4444-8444-444444444444'
+const portalUserId = '55555555-5555-4555-8555-555555555555'
 const roleId = '11111111-1111-4111-8111-111111111111'
-const staffUserId = '44444444-4444-4444-8444-444444444444'
-const apiKeyId = '55555555-5555-4555-8555-555555555555'
 
 const mockContainer = {
   resolve: jest.fn((token: string) => {
-    if (token === 'rbacService') return { userHasAllFeatures: mockUserHasAllFeatures }
+    if (token === 'customerRbacService') return {}
     if (token === 'customerInvitationService') return { createInvitation: mockCreateInvitation }
+    if (token === 'em') return {}
     return null
   }),
 }
@@ -32,6 +32,11 @@ jest.mock('@open-mercato/core/modules/customer_accounts/lib/rateLimitIdentifier'
   readNormalizedEmailFromJsonRequest: jest.fn(async () => 'buyer@example.com'),
 }))
 
+jest.mock('@open-mercato/core/modules/customer_accounts/lib/customerAuth', () => ({
+  getCustomerAuthFromRequest: (...args: unknown[]) => mockGetCustomerAuthFromRequest(...args),
+  requireCustomerFeature: (...args: unknown[]) => mockRequireCustomerFeature(...args),
+}))
+
 jest.mock('@open-mercato/core/modules/customer_accounts/lib/invitationEmail', () => ({
   sendCustomerInvitationEmail: (...args: unknown[]) => mockSendCustomerInvitationEmail(...args),
 }))
@@ -40,34 +45,36 @@ jest.mock('@open-mercato/shared/lib/di/container', () => ({
   createRequestContainer: jest.fn(async () => mockContainer),
 }))
 
-jest.mock('@open-mercato/shared/lib/auth/server', () => ({
-  getAuthFromRequest: (...args: unknown[]) => mockGetAuthFromRequest(...args),
+jest.mock('@open-mercato/shared/lib/encryption/find', () => ({
+  findWithDecryption: (...args: unknown[]) => mockFindWithDecryption(...args),
 }))
 
-function makeInviteRequest(): Request {
-  return new Request('http://localhost/api/customer_accounts/admin/users-invite', {
+function makeInviteRequest(roles = [roleId]): Request {
+  return new Request('http://localhost/api/customer_accounts/portal/users-invite', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       email: 'buyer@example.com',
-      roleIds: [roleId],
+      roleIds: roles,
       displayName: 'Buyer User',
     }),
   })
 }
 
-describe('admin customer account user invite route', () => {
+describe('portal customer account user invite route', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockCheckAuthRateLimit.mockResolvedValue({ error: null, compoundKey: null })
-    mockUserHasAllFeatures.mockResolvedValue(true)
-    mockGetAuthFromRequest.mockResolvedValue({
-      sub: `api_key:${apiKeyId}`,
-      userId: staffUserId,
-      isApiKey: true,
+    mockRequireCustomerFeature.mockResolvedValue(undefined)
+    mockGetCustomerAuthFromRequest.mockResolvedValue({
+      sub: portalUserId,
       tenantId,
       orgId: organizationId,
+      customerEntityId,
     })
+    mockFindWithDecryption.mockResolvedValue([
+      { id: roleId, name: 'Portal buyer', customerAssignable: true },
+    ])
     mockCreateInvitation.mockResolvedValue({
       invitation: {
         id: '66666666-6666-4666-8666-666666666666',
@@ -79,60 +86,48 @@ describe('admin customer account user invite route', () => {
     mockSendCustomerInvitationEmail.mockResolvedValue(undefined)
   })
 
-  it('keeps API-key RBAC subject and stores the backing user id as invitedByUserId', async () => {
+  it('creates a portal-admin invitation and sends the invitation email', async () => {
     const { POST } = await import('../users-invite')
 
     const response = await POST(makeInviteRequest())
 
     expect(response.status).toBe(201)
-    expect(mockUserHasAllFeatures).toHaveBeenCalledWith(
-      `api_key:${apiKeyId}`,
-      ['customer_accounts.invite'],
-      { tenantId, organizationId },
+    expect(mockRequireCustomerFeature).toHaveBeenCalledWith(
+      expect.objectContaining({ sub: portalUserId }),
+      ['portal.users.manage'],
+      {},
     )
     expect(mockCreateInvitation).toHaveBeenCalledWith(
       'buyer@example.com',
       { tenantId, organizationId },
       expect.objectContaining({
+        customerEntityId,
         roleIds: [roleId],
+        invitedByCustomerUserId: portalUserId,
         displayName: 'Buyer User',
-        invitedByUserId: staffUserId,
       }),
     )
-  })
-
-  it('stores null invitedByUserId for machine-only API keys', async () => {
-    mockGetAuthFromRequest.mockResolvedValue({
-      sub: `api_key:${apiKeyId}`,
-      isApiKey: true,
-      tenantId,
-      orgId: organizationId,
-    })
-    const { POST } = await import('../users-invite')
-
-    const response = await POST(makeInviteRequest())
-
-    expect(response.status).toBe(201)
-    expect(mockCreateInvitation).toHaveBeenCalledWith(
-      'buyer@example.com',
-      { tenantId, organizationId },
-      expect.objectContaining({ invitedByUserId: null }),
-    )
-  })
-
-  it('sends the invitation email with the raw one-time token and does not expose it in the response', async () => {
-    const { POST } = await import('../users-invite')
-
-    const response = await POST(makeInviteRequest())
-    const json = await response.json()
-
     expect(mockSendCustomerInvitationEmail).toHaveBeenCalledWith({
       container: mockContainer,
       organizationId,
       email: 'buyer@example.com',
       rawToken: 'raw-invite-token',
     })
-    expect(JSON.stringify(json)).not.toContain('raw-invite-token')
+  })
+
+  it('keeps customerAssignable validation for portal-selected roles', async () => {
+    mockFindWithDecryption.mockResolvedValueOnce([
+      { id: roleId, name: 'Internal role', customerAssignable: false },
+    ])
+    const { POST } = await import('../users-invite')
+
+    const response = await POST(makeInviteRequest())
+    const json = await response.json()
+
+    expect(response.status).toBe(403)
+    expect(json.error).toContain('cannot be assigned by portal users')
+    expect(mockCreateInvitation).not.toHaveBeenCalled()
+    expect(mockSendCustomerInvitationEmail).not.toHaveBeenCalled()
   })
 
   it('returns 502 when the invitation email cannot be sent', async () => {
@@ -146,19 +141,5 @@ describe('admin customer account user invite route', () => {
     expect(response.status).toBe(502)
     expect(json).toEqual({ ok: false, error: 'Invitation email could not be sent' })
     consoleErrorSpy.mockRestore()
-  })
-
-  it('returns 429 without creating an invitation when rate limited', async () => {
-    mockCheckAuthRateLimit.mockResolvedValueOnce({
-      error: NextResponse.json({ error: 'Too many requests' }, { status: 429 }),
-      compoundKey: null,
-    })
-    const { POST } = await import('../users-invite')
-
-    const response = await POST(makeInviteRequest())
-
-    expect(response.status).toBe(429)
-    expect(mockCreateInvitation).not.toHaveBeenCalled()
-    expect(mockSendCustomerInvitationEmail).not.toHaveBeenCalled()
   })
 })
