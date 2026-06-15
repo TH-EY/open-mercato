@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import { useParams, usePathname } from 'next/navigation'
 import { AlertCircle, ArrowLeft, CheckCircle2, FileText, ShoppingBag } from 'lucide-react'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { apiCall } from '@open-mercato/ui/backend/utils/apiCall'
@@ -136,6 +136,13 @@ function readRouteParam(value: string | string[] | undefined): string {
   return value ?? ''
 }
 
+function readPathSegment(pathname: string, kind: DocumentKind, segment: 'orgSlug' | 'id'): string {
+  const parts = pathname.split('/').filter(Boolean)
+  if (segment === 'orgSlug') return parts[0] ?? ''
+  const markerIndex = parts.findIndex((part, index) => part === kind && parts[index - 1] === 'portal')
+  return markerIndex >= 0 ? parts[markerIndex + 1] ?? '' : ''
+}
+
 function StatusPill({ value }: { value: string | null | undefined }) {
   return (
     <span className="inline-flex min-h-6 max-w-full items-center rounded-full border bg-background px-2 py-0.5 text-xs font-medium text-muted-foreground">
@@ -204,9 +211,10 @@ function LinesTable({ lines, currencyCode }: { lines: PortalLine[]; currencyCode
 export function SalesPortalDocumentDetailPage({ kind }: SalesPortalDocumentDetailPageProps) {
   const t = useT()
   const params = useParams()
-  const id = readRouteParam(params?.id)
-  const orgSlug = readRouteParam(params?.orgSlug)
+  const pathname = usePathname()
   const isOrders = kind === 'orders'
+  const id = readRouteParam(params?.id) || readPathSegment(pathname, kind, 'id')
+  const orgSlug = readRouteParam(params?.orgSlug) || readPathSegment(pathname, kind, 'orgSlug')
   const [document, setDocument] = React.useState<PortalOrderDetail | PortalQuoteDetail | null>(null)
   const [isLoading, setIsLoading] = React.useState(true)
   const [isAccepting, setIsAccepting] = React.useState(false)
