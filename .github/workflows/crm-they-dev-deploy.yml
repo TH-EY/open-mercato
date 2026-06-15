@@ -11,6 +11,14 @@ on:
         required: true
         type: string
         default: fork/crm-they-dev
+      deploy_mode:
+        description: Deployment mode
+        required: true
+        type: choice
+        default: full
+        options:
+          - full
+          - config-restart
 
 concurrency:
   group: crm-they-dev-deploy
@@ -42,13 +50,16 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full' }}
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Set up Docker Buildx
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Resolve ECR repository
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full' }}
         id: ecr
         run: |
           REPOSITORY_URL="$(aws ecr describe-repositories \
@@ -60,6 +71,7 @@ jobs:
           echo "image_uri=${REPOSITORY_URL}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full' }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -75,6 +87,7 @@ jobs:
         env:
           APP_IMAGE: ${{ steps.ecr.outputs.image_uri }}
           BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
+          DEPLOY_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'full' }}
         run: bash scripts/crm/deploy-crm-they-dev.sh
 
       - name: Smoke /login

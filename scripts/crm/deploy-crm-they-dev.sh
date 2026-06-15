@@ -15,10 +15,20 @@ export AWS_PAGER=""
 AWS_REGION="${AWS_REGION:-eu-west-2}"
 NAME_PREFIX="${NAME_PREFIX:-openmercato-crm-they-dev}"
 BRANCH="${BRANCH:-fork/crm-they-dev}"
-APP_IMAGE="${APP_IMAGE:?Set APP_IMAGE to the ECR image URI to deploy}"
+DEPLOY_MODE="${DEPLOY_MODE:-full}"
+APP_IMAGE="${APP_IMAGE:-}"
 REPO_URL="${REPO_URL:-https://github.com/TH-EY/open-mercato.git}"
 APP_URL="${APP_URL:-https://crm.they.dev}"
 APP_PORT="${APP_PORT:-3001}"
+
+if [[ "${DEPLOY_MODE}" != "full" && "${DEPLOY_MODE}" != "config-restart" ]]; then
+  echo "DEPLOY_MODE must be either 'full' or 'config-restart'" >&2
+  exit 1
+fi
+if [[ "${DEPLOY_MODE}" == "full" && -z "${APP_IMAGE}" ]]; then
+  echo "Set APP_IMAGE to the ECR image URI to deploy" >&2
+  exit 1
+fi
 
 if [[ "${AWS_REGION}" != "eu-west-2" ]]; then
   echo "crm.they.dev must be deployed in AWS London (eu-west-2)." >&2
@@ -44,6 +54,7 @@ REMOTE_SCRIPT="$(mktemp)"
   printf 'name_prefix=%q\n' "${NAME_PREFIX}"
   printf 'branch=%q\n' "${BRANCH}"
   printf 'repo_url=%q\n' "${REPO_URL}"
+  printf 'deploy_mode=%q\n' "${DEPLOY_MODE}"
   printf 'app_image=%q\n' "${APP_IMAGE}"
   printf 'app_url=%q\n' "${APP_URL}"
   printf 'app_port=%q\n' "${APP_PORT}"
@@ -61,18 +72,33 @@ param_value() {
 }
 
 if [[ ! -d "$workdir/.git" ]]; then
+  if [[ "$deploy_mode" == "config-restart" ]]; then
+    echo "Config-only deploy requires an existing CRM checkout at ${workdir}" >&2
+    exit 1
+  fi
   rm -rf "$workdir"
   git clone --branch "$branch" --single-branch "$repo_url" "$workdir"
 else
-  git -C "$workdir" remote set-url origin "$repo_url"
-  git -C "$workdir" fetch origin "$branch" --prune
-  git -C "$workdir" checkout -B "$branch" "origin/$branch"
-  git -C "$workdir" reset --hard "origin/$branch"
-  git -C "$workdir" clean -fdx
+  if [[ "$deploy_mode" == "full" ]]; then
+    git -C "$workdir" remote set-url origin "$repo_url"
+    git -C "$workdir" fetch origin "$branch" --prune
+    git -C "$workdir" checkout -B "$branch" "origin/$branch"
+    git -C "$workdir" reset --hard "origin/$branch"
+    git -C "$workdir" clean -fdx -e .env.crm
+  fi
 fi
 
-account_id="$(aws sts get-caller-identity --query Account --output text)"
-aws ecr get-login-password --region "$aws_region" | docker login --username AWS --password-stdin "${account_id}.dkr.ecr.${aws_region}.amazonaws.com" >/dev/null
+if [[ "$deploy_mode" == "full" ]]; then
+  account_id="$(aws sts get-caller-identity --query Account --output text)"
+  aws ecr get-login-password --region "$aws_region" | docker login --username AWS --password-stdin "${account_id}.dkr.ecr.${aws_region}.amazonaws.com" >/dev/null
+else
+  existing_app_image="$(awk -F= '$1=="APP_IMAGE"{print substr($0, index($0, "=") + 1)}' "$workdir/.env.crm" 2>/dev/null || true)"
+  app_image="${app_image:-$existing_app_image}"
+  if [[ -z "$app_image" ]]; then
+    echo "Config-only deploy cannot determine APP_IMAGE from ${workdir}/.env.crm" >&2
+    exit 1
+  fi
+fi
 
 database_url="$(secret_value "${name_prefix}/database-url")"
 jwt_secret="$(secret_value "${name_prefix}/jwt-secret")"
@@ -102,8 +128,30 @@ DATA_SYNC_QUEUE_CONCURRENCY=1
 ENV_CRM
 
 cd "$workdir"
-docker compose --env-file .env.crm -f docker-compose.crm.yml pull
-docker compose --env-file .env.crm -f docker-compose.crm.yml up -d --remove-orphans
+wait_for_local_login() {
+  local url="http://127.0.0.1:${APP_PORT:-3001}/login"
+  for attempt in $(seq 1 40); do
+    status="$(curl -fsS -o /tmp/openmercato-crm-login.html -w '%{http_code}' "$url" 2>/dev/null || true)"
+    if [[ "$status" =~ ^[23] ]]; then
+      echo "Local CRM login endpoint is reachable: ${url} (${status})"
+      return 0
+    fi
+    echo "Waiting for local CRM login endpoint (${attempt}/40): ${status:-no response}"
+    sleep 5
+  done
+  cat /tmp/openmercato-crm-login.html 2>/dev/null || true
+  echo "CRM app did not become reachable at ${url}" >&2
+  return 1
+}
+
+if [[ "$deploy_mode" == "config-restart" ]]; then
+  echo "Config-only CRM deploy: skipping image pull and recreating app/worker with existing image."
+  docker compose --env-file .env.crm -f docker-compose.crm.yml up -d --no-build --force-recreate app worker
+else
+  docker compose --env-file .env.crm -f docker-compose.crm.yml pull
+  docker compose --env-file .env.crm -f docker-compose.crm.yml up -d --remove-orphans
+fi
+wait_for_local_login
 
 docker ps --filter name=openmercato-crm --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 EOF_REMOTE_BODY
