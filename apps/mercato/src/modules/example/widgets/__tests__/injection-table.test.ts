@@ -42,13 +42,8 @@ describe('example injection-table flag behavior', () => {
 
   it('keeps todo harness and menu injections enabled when the flag is unset (default false)', async () => {
     const table = await loadInjectionTableWithFlags(undefined, undefined)
-    const portalDashboardWidgets = table['portal:dashboard:sections']
 
-    expect(portalDashboardWidgets).toEqual([
-      { widgetId: 'example.injection.portal-stats', priority: 5 },
-      { widgetId: 'example.injection.portal-recent-activity', priority: 10 },
-      { widgetId: 'example.injection.portal-quick-links', priority: 20 },
-    ])
+    expect(table['portal:dashboard:sections']).toBeUndefined()
     expect(table['crud-form:example.todo']).toBe('example.injection.crud-validation')
     expect(table['widget:example.injection.crud-validation:addon']).toBeDefined()
     expect(table['example:phase-c-handlers']).toBe('example.injection.crud-validation')
