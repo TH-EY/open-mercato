@@ -16,6 +16,11 @@ import { readNormalizedEmailFromJsonRequest } from '@open-mercato/core/modules/c
 
 export const metadata = {}
 
+function resolveInvitedByUserId(auth: NonNullable<Awaited<ReturnType<typeof getAuthFromRequest>>>): string | null {
+  if (auth.isApiKey) return auth.userId ?? null
+  return auth.sub
+}
+
 export async function POST(req: Request) {
   const auth = await getAuthFromRequest(req)
   if (!auth) {
@@ -58,7 +63,7 @@ export async function POST(req: Request) {
     {
       customerEntityId: parsed.data.customerEntityId || null,
       roleIds: parsed.data.roleIds,
-      invitedByUserId: auth.sub,
+      invitedByUserId: resolveInvitedByUserId(auth),
       displayName: parsed.data.displayName || null,
     },
   )
