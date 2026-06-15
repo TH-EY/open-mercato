@@ -98,6 +98,8 @@ values.update({
     'DEPLOY_ENV': preview_env,
     'APP_PORT': preview_port,
     'APP_URL': f'https://{preview_host}',
+    'NEXT_PUBLIC_APP_URL': f'https://{preview_host}',
+    'PLATFORM_PORTAL_BASE_URL': f'https://{preview_host}',
     'POSTGRES_PASSWORD': secrets.token_urlsafe(24),
     'JWT_SECRET': secrets.token_urlsafe(48),
     'AUTH_SECRET': secrets.token_urlsafe(48),
@@ -127,7 +129,8 @@ if preview_admin_email:
 if preview_admin_password:
     values['OM_INIT_SUPERADMIN_PASSWORD'] = preview_admin_password
 keys = [
-    'APP_NAME','DEPLOY_ENV','APP_PORT','APP_URL','POSTGRES_USER','POSTGRES_PASSWORD','POSTGRES_DB',
+    'APP_NAME','DEPLOY_ENV','APP_PORT','APP_URL','NEXT_PUBLIC_APP_URL',
+    'PLATFORM_PORTAL_BASE_URL','POSTGRES_USER','POSTGRES_PASSWORD','POSTGRES_DB',
     'JWT_SECRET','AUTH_SECRET','TENANT_DATA_ENCRYPTION_KEY','MEILISEARCH_MASTER_KEY',
     'SELF_SERVICE_ONBOARDING_ENABLED','DEMO_MODE','ADMIN_EMAIL','OM_INIT_SUPERADMIN_EMAIL',
     'OM_INIT_SUPERADMIN_PASSWORD','OPENAI_API_KEY','SYSTEM_EMAIL_PROVIDER','AWS_SES_REGION',
