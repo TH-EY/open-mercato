@@ -189,7 +189,7 @@ jobs:
           if ! DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain timeout 45m docker build --progress=plain \
             --build-arg CONTAINER_PORT="${CONTAINER_PORT:-3000}" \
             -t "$app_image" \
-            . >"$build_log" 2>&1; then
+            . 2>&1 | tee "$build_log"; then
             tail -n 240 "$build_log" || true
             exit 1
           fi
