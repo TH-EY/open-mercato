@@ -115,8 +115,8 @@ export default function EpcContactPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#eef7f0_100%)] text-slate-950">
-      <section className="mx-auto grid min-h-screen w-full max-w-6xl gap-10 px-5 py-8 md:grid-cols-[0.85fr_1.15fr] md:px-8 lg:px-10">
+    <main className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#eef7f0_100%)] pb-40 text-slate-950 md:pb-48">
+      <section className="mx-auto grid min-h-screen w-full max-w-6xl gap-10 px-5 pb-12 pt-8 md:grid-cols-[0.85fr_1.15fr] md:px-8 lg:px-10">
         <aside className="flex flex-col justify-between gap-8 py-4">
           <div>
             <div className="mb-10 flex items-center gap-3">
@@ -266,7 +266,7 @@ export default function EpcContactPage() {
               </div>
             ) : null}
 
-            <Button type="submit" disabled={!canSubmit || submitState === 'submitting'} className="w-full">
+            <Button type="submit" disabled={!canSubmit || submitState === 'submitting'} className="scroll-mb-48 w-full">
               <Send className="mr-2 size-4" aria-hidden="true" />
               {submitState === 'submitting'
                 ? t('epcDemo.leadCapture.submitting', 'Submitting...')
