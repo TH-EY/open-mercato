@@ -77,7 +77,7 @@ export type PageMetadata = {
   }
 }
 
-export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS'
 
 export type ApiHandler = (req: Request, ctx?: any) => Promise<Response> | Response
 

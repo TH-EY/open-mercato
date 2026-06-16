@@ -120,6 +120,11 @@ for key in [
     'AUTH_SECRET',
     'TENANT_DATA_ENCRYPTION_KEY',
     'MEILISEARCH_MASTER_KEY',
+    'EPC_LEAD_TENANT_ID',
+    'EPC_LEAD_ORGANIZATION_ID',
+    'EPC_LEAD_OWNER_USER_ID',
+    'EPC_LEAD_PIPELINE_STAGE_ID',
+    'EPC_LEAD_CAPTURE_ALLOWED_ORIGINS',
 ]:
     if (preview_env == 'epc' or deploy_mode == 'config-restart') and existing.get(key):
         values[key] = existing[key]
@@ -130,6 +135,7 @@ if preview_host == 'preview-epc.om.they.dev':
         'AWS_SES_REGION': values.get('AWS_SES_REGION') or values.get('AWS_REGION') or 'eu-west-2',
         'EMAIL_FROM': values.get('EMAIL_FROM') or 'no-reply@they.dev',
         'NOTIFICATIONS_EMAIL_FROM': values.get('NOTIFICATIONS_EMAIL_FROM') or values.get('EMAIL_FROM') or 'no-reply@they.dev',
+        'EPC_LEAD_CAPTURE_ALLOWED_ORIGINS': values.get('EPC_LEAD_CAPTURE_ALLOWED_ORIGINS') or f'https://{preview_host}',
     })
 if preview_admin_email:
     values['OM_INIT_SUPERADMIN_EMAIL'] = preview_admin_email
@@ -142,7 +148,9 @@ keys = [
     'JWT_SECRET','AUTH_SECRET','TENANT_DATA_ENCRYPTION_KEY','MEILISEARCH_MASTER_KEY',
     'SELF_SERVICE_ONBOARDING_ENABLED','DEMO_MODE','ADMIN_EMAIL','OM_INIT_SUPERADMIN_EMAIL',
     'OM_INIT_SUPERADMIN_PASSWORD','OPENAI_API_KEY','SYSTEM_EMAIL_PROVIDER','AWS_SES_REGION',
-    'AWS_SES_CONFIGURATION_SET','RESEND_API_KEY','EMAIL_FROM','NOTIFICATIONS_EMAIL_FROM'
+    'AWS_SES_CONFIGURATION_SET','RESEND_API_KEY','EMAIL_FROM','NOTIFICATIONS_EMAIL_FROM',
+    'EPC_LEAD_TENANT_ID','EPC_LEAD_ORGANIZATION_ID','EPC_LEAD_OWNER_USER_ID',
+    'EPC_LEAD_PIPELINE_STAGE_ID','EPC_LEAD_CAPTURE_ALLOWED_ORIGINS'
 ]
 target_path.write_text('\n'.join(f'{key}={values[key]}' for key in keys if key in values) + '\n')
 PY
@@ -155,6 +163,48 @@ set +a
 compose() {
   COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml "$@"
 }
+
+if [[ "$preview_hostname" == "preview-epc.om.they.dev" && ( -z "${EPC_LEAD_TENANT_ID:-}" || -z "${EPC_LEAD_ORGANIZATION_ID:-}" ) ]]; then
+  postgres_container="$(compose ps -q postgres 2>/dev/null || true)"
+  if [[ -z "$postgres_container" ]]; then
+    echo "Unable to derive EPC lead capture scope: preview postgres container is not running." >&2
+    exit 1
+  fi
+  scope_line="$(docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-}" "$postgres_container" psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-open-mercato}" -At -F $'\t' -c "select tenant_id::text, id::text from organizations where deleted_at is null and is_active = true order by created_at asc limit 1;" | head -n 1)"
+  if [[ -z "$scope_line" ]]; then
+    echo "Unable to derive EPC lead capture scope: no active organization found." >&2
+    exit 1
+  fi
+  IFS=$'\t' read -r epc_lead_tenant_id epc_lead_organization_id <<< "$scope_line"
+  python3 - <<'PY' "$workdir/.env" "$epc_lead_tenant_id" "$epc_lead_organization_id"
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+updates = {
+    'EPC_LEAD_TENANT_ID': sys.argv[2],
+    'EPC_LEAD_ORGANIZATION_ID': sys.argv[3],
+}
+values = {}
+order = []
+for line in path.read_text().splitlines():
+    if not line or line.startswith('#') or '=' not in line:
+        continue
+    key, value = line.split('=', 1)
+    if key not in values:
+        order.append(key)
+    values[key] = value
+for key, value in updates.items():
+    if key not in values:
+        order.append(key)
+    values[key] = value
+path.write_text('\n'.join(f'{key}={values[key]}' for key in order if key in values) + '\n')
+PY
+  set -a
+  . ./.env
+  set +a
+  echo "Derived EPC lead capture scope from preview organization ${EPC_LEAD_ORGANIZATION_ID}."
+fi
 
 wait_for_local_login() {
   local url="http://127.0.0.1:${APP_PORT:-3000}/login"

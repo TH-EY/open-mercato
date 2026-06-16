@@ -630,7 +630,7 @@ function getFeatureId(value: unknown): string | null {
   return null
 }
 
-const VALID_HTTP_METHODS: readonly HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+const VALID_HTTP_METHODS: readonly HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
 
 const programmaticApiRouteOverrides: ApiRouteOverridesMap = {}
 const modulesConfigApiRouteOverrides: ApiRouteOverridesMap = {}

@@ -66,7 +66,7 @@ import {
 import { loadGeneratorExtensions } from './extensions'
 import type { ModuleScanContext, StandaloneConfigOptions } from './extension'
 
-type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS'
 
 export interface ModuleRegistryOptions {
   resolver: PackageResolver
@@ -1125,7 +1125,7 @@ function normalizeApiMethodMetadata(raw: unknown): RuntimeApiMethodMetadata | nu
 function buildApiMetadataLiteral(metadata: unknown, method?: HttpMethod): string {
   if (!metadata || typeof metadata !== 'object') return 'undefined'
   const source = metadata as Record<string, unknown>
-  const methods: HttpMethod[] = method ? [method] : ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+  const methods: HttpMethod[] = method ? [method] : ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
   const normalized: Partial<Record<HttpMethod, RuntimeApiMethodMetadata>> = {}
 
   for (const entryMethod of methods) {
@@ -1153,7 +1153,7 @@ function detectExportedHttpMethods(sourceFile: string): HttpMethod[] {
     return []
   }
 
-  const knownMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as HttpMethod[]
+  const knownMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] as HttpMethod[]
   const exportedMethods = new Set<HttpMethod>()
   const collectKnownMethods = (rawSpecifiers: string[], opts?: { useExportedAlias?: boolean; useDestructuredProperty?: boolean }) => {
     for (const specifier of rawSpecifiers) {
@@ -1620,7 +1620,7 @@ async function processApiRoutes(options: {
   }
 
   // Legacy per-method
-  const methods: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+  const methods: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
   for (const method of methods) {
     const methodDirSegment = path.posix.join('api', method.toLowerCase())
     const methodRoots: ModuleRoots = {

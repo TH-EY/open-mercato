@@ -133,7 +133,7 @@ function normalizeLoadedMetadata(
   if (routeKind !== 'legacy') return metadata
   if (!metadata || typeof metadata !== 'object') return metadata
   const source = metadata as Record<string, unknown>
-  if (['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].some((entryMethod) => entryMethod in source)) {
+  if (['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'].some((entryMethod) => entryMethod in source)) {
     return metadata
   }
   return { [method]: metadata }
@@ -452,4 +452,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sl
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ slug: string[] }> }) {
   return handleRequest('DELETE', req, params)
+}
+
+export async function OPTIONS(req: NextRequest, { params }: { params: Promise<{ slug: string[] }> }) {
+  return handleRequest('OPTIONS', req, params)
 }

@@ -7,6 +7,7 @@ import type {
   OpenApiRequestBodyDoc,
   OpenApiResponseDoc,
   OpenApiRouteDoc,
+  OpenApiHttpMethod,
 } from './types'
 
 type PathParamInfo = {
@@ -35,6 +36,10 @@ type ExampleMap = {
 }
 
 const HTTP_METHODS: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+
+function isOpenApiHttpMethod(method: HttpMethod): method is OpenApiHttpMethod {
+  return method !== 'OPTIONS'
+}
 
 function resolveType(def: any): string | undefined {
   if (!def) return undefined
@@ -1064,7 +1069,8 @@ export function buildOpenApiDocument(modules: Module[], options: OpenApiDocument
           : [api.method as HttpMethod]
 
       for (const method of availableMethods) {
-        const methodLower = method.toLowerCase() as Lowercase<HttpMethod>
+        if (!isOpenApiHttpMethod(method)) continue
+        const methodLower = method.toLowerCase() as Lowercase<OpenApiHttpMethod>
         const existing = doc.paths[pathKey][methodLower]
         if (existing) continue
 
