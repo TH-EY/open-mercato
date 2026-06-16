@@ -286,9 +286,6 @@ jobs:
       - name: Smoke /login
         env:
           BASE_URL: ${{ env.BASELINE_URL }}
-          SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
-          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
-          SMOKE_TEST_TENANT_ID: ${{ secrets.SMOKE_TEST_TENANT_ID }}
         run: bash ./infra/aws-upstream-baseline/smoke.sh
 
       - name: Diagnostics
