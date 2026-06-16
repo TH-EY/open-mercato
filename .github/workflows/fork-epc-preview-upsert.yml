@@ -16,7 +16,7 @@ on:
           - config-restart
 
 concurrency:
-  group: fork-preview-epc
+  group: om-dokploy-host-deploy
   cancel-in-progress: false
 
 env:
