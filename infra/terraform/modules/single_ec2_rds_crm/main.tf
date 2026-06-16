@@ -218,6 +218,16 @@ resource "aws_ecr_lifecycle_policy" "app" {
   })
 }
 
+resource "aws_cloudwatch_log_group" "app" {
+  name              = "/openmercato/crm/app"
+  retention_in_days = var.cloudwatch_log_retention_days
+}
+
+resource "aws_cloudwatch_log_group" "worker" {
+  name              = "/openmercato/crm/worker"
+  retention_in_days = var.cloudwatch_log_retention_days
+}
+
 resource "aws_iam_role" "instance" {
   name = "${var.name_prefix}-ec2-role"
 
@@ -286,6 +296,20 @@ resource "aws_iam_role_policy" "runtime" {
           "ecr:DescribeImages"
         ]
         Resource = aws_ecr_repository.app.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:DescribeLogStreams",
+          "logs:PutLogEvents"
+        ]
+        Resource = [
+          aws_cloudwatch_log_group.app.arn,
+          "${aws_cloudwatch_log_group.app.arn}:*",
+          aws_cloudwatch_log_group.worker.arn,
+          "${aws_cloudwatch_log_group.worker.arn}:*"
+        ]
       }
     ]
   })

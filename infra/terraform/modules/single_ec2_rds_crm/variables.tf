@@ -22,3 +22,4 @@ variable "deploy_branch" { type = string }
 variable "admin_email" { type = string }
 variable "allowed_admin_cidr_blocks" { type = list(string) }
 variable "github_deploy_role_name" { type = string }
+variable "cloudwatch_log_retention_days" { type = number }

@@ -10,6 +10,8 @@ company instance, not previews or multi-tenant capacity.
 - CSV import from `origin/contrib/sync-excel` must remain present until it is merged upstream.
 - EC2 runs the app, worker, local Redis, and local Meilisearch.
 - RDS PostgreSQL is managed by AWS with encrypted gp3 storage and 7-day backups.
+- App and worker stdout/stderr are forwarded to CloudWatch Logs:
+  `/openmercato/crm/app` and `/openmercato/crm/worker`.
 - Ingress reuses the existing `they-lb` HTTPS listener and wildcard `*.they.dev` certificate.
 
 ## Commands

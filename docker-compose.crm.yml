@@ -16,6 +16,12 @@ services:
     volumes:
       - crm_init_marker:/tmp/init-marker
       - crm_attachments_storage:/app/apps/mercato/storage
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-eu-west-2}
+        awslogs-group: /openmercato/crm/app
+        awslogs-stream: openmercato-crm-app
     environment:
       NODE_ENV: production
       DEPLOY_ENV: crm-they-dev
@@ -73,6 +79,12 @@ services:
       - -c
       - yarn mercato queue worker --all
     working_dir: /app/apps/mercato
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-eu-west-2}
+        awslogs-group: /openmercato/crm/worker
+        awslogs-stream: openmercato-crm-worker
     environment:
       NODE_ENV: production
       DEPLOY_ENV: crm-they-dev
