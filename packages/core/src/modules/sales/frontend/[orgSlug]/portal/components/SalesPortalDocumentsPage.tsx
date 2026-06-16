@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import { useParams, usePathname } from 'next/navigation'
 import { AlertCircle, FileText, Search, ShoppingBag } from 'lucide-react'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { apiCall } from '@open-mercato/ui/backend/utils/apiCall'
@@ -101,11 +101,21 @@ function readRows(kind: DocumentKind, data: PortalDocumentsResponse | undefined)
   return []
 }
 
+function readRouteParam(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? ''
+  return value ?? ''
+}
+
+function readOrgSlugFromPathname(pathname: string): string {
+  const parts = pathname.split('/').filter(Boolean)
+  return parts[0] ?? ''
+}
+
 export function SalesPortalDocumentsPage({ kind }: SalesPortalDocumentsPageProps) {
   const t = useT()
   const params = useParams()
-  const rawOrgSlug = params?.orgSlug
-  const orgSlug = Array.isArray(rawOrgSlug) ? rawOrgSlug[0] : rawOrgSlug
+  const pathname = usePathname()
+  const orgSlug = readRouteParam(params?.orgSlug) || readOrgSlugFromPathname(pathname)
   const [rows, setRows] = React.useState<PortalDocumentRow[]>([])
   const [page, setPage] = React.useState(1)
   const [totalPages, setTotalPages] = React.useState(1)
@@ -263,7 +273,7 @@ export function SalesPortalDocumentsPage({ kind }: SalesPortalDocumentsPageProps
                     <tr key={row.id} className="bg-card">
                       <td className="px-4 py-3 font-medium text-foreground">
                         <Link
-                          href={`/${orgSlug ?? ''}/portal/${kind}/${row.id}`}
+                          href={orgSlug ? `/${orgSlug}/portal/${kind}/${row.id}` : `/portal/${kind}/${row.id}`}
                           className="underline-offset-4 hover:underline"
                         >
                           {isOrders ? row.orderNumber : row.quoteNumber}
