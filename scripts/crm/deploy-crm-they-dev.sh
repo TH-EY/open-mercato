@@ -81,9 +81,9 @@ if [[ ! -d "$workdir/.git" ]]; then
 else
   if [[ "$deploy_mode" == "full" ]]; then
     git -C "$workdir" remote set-url origin "$repo_url"
-    git -C "$workdir" fetch origin "$branch" --prune
-    git -C "$workdir" checkout -B "$branch" "origin/$branch"
-    git -C "$workdir" reset --hard "origin/$branch"
+    git -C "$workdir" fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" --prune
+    git -C "$workdir" checkout -B "$branch" "refs/remotes/origin/$branch"
+    git -C "$workdir" reset --hard "refs/remotes/origin/$branch"
     git -C "$workdir" clean -fdx -e .env.crm
   fi
 fi
