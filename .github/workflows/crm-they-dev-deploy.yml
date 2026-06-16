@@ -265,7 +265,7 @@ jobs:
           workdir=/opt/openmercato-crm
           app_image="$(awk -F= '$1=="APP_IMAGE"{print substr($0, index($0, "=") + 1)}' "${workdir}/.env.crm")"
           echo "Expected image: ${app_image}"
-          docker image inspect "${app_image}" --format 'Image ID: {{.Id}}\nCreated: {{.Created}}\nRepo digests: {{json .RepoDigests}}'
+          docker image inspect "${app_image}" --format 'Image ID: {{.Id}}\nCreated: {{.Created}}\nRepo tags: {{json .RepoTags}}\nRepo digests: {{json .RepoDigests}}'
           SSM
 
       - name: Recreate app and worker
@@ -275,7 +275,7 @@ jobs:
         run: |
           bash scripts/crm/ssm-run-step.sh <<'SSM'
           cd /opt/openmercato-crm
-          docker compose --env-file .env.crm -f docker-compose.crm.yml up -d --no-build --remove-orphans app worker
+          docker compose --env-file .env.crm -f docker-compose.crm.yml up -d --no-build --remove-orphans --force-recreate app worker
           docker ps --filter name=openmercato-crm --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
           SSM
 
@@ -345,3 +345,15 @@ jobs:
           docker logs --tail 120 openmercato-crm-worker 2>&1 || true
           exit 0
           SSM
+
+      - name: Workflow summary
+        if: always()
+        run: |
+          {
+            echo "### crm.they.dev deploy"
+            echo "- URL: https://crm.they.dev"
+            echo "- Branch: \`${{ github.event.inputs.branch || github.ref_name }}\`"
+            echo "- Deploy mode: \`${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'full' }}\`"
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } >> "$GITHUB_STEP_SUMMARY"
