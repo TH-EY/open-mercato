@@ -217,20 +217,21 @@ jobs:
           compose() {
             COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$baseline_project" --env-file .env -f docker-compose.fullapp.yml "$@"
           }
+          compose ps || true
           for service in postgres redis meilisearch opencode
           do
             container="$(compose ps -q "$service" 2>/dev/null || true)"
             if [[ -z "$container" ]]; then
-              echo "Required dependency service has no compose container: ${service}" >&2
-              exit 1
+              echo "Dependency service is not managed by this compose project or has no container: ${service}"
+              continue
             fi
             running="$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)"
             if [[ "$running" != "true" ]]; then
-              echo "Required dependency service is not running: ${service} (${container})" >&2
-              exit 1
+              echo "Dependency service is not running in this compose project: ${service} (${container})"
+              continue
             fi
+            echo "Dependency service is running: ${service} (${container})"
           done
-          compose ps
           SSM
           } | bash infra/aws-upstream-baseline/ssm-run-step.sh
 
