@@ -18,7 +18,7 @@ on:
           - config-restart
 
 concurrency:
-  group: upstream-baseline-deploy
+  group: om-dokploy-host-deploy
   cancel-in-progress: false
 
 env:
