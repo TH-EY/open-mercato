@@ -21,6 +21,9 @@ concurrency:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  AWS_REGION: eu-west-2
+  NAME_PREFIX: openmercato-upstream-baseline-dokploy
+  SSM_CLOUDWATCH_LOG_GROUP: /aws/ssm/openmercato-upstream-baseline-dokploy/epc-preview-deploy
 
 jobs:
   deploy-preview:
@@ -29,8 +32,6 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    env:
-      AWS_REGION: eu-west-2
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -41,23 +42,418 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Upsert preview
+      - name: Resolve preview metadata
         id: preview
-        timeout-minutes: 70
         shell: bash
         env:
-          PREVIEW_ADMIN_EMAIL: ${{ secrets.EPC_PREVIEW_ADMIN_EMAIL || secrets.SMOKE_TEST_EMAIL }}
-          PREVIEW_ADMIN_PASSWORD: ${{ secrets.EPC_PREVIEW_ADMIN_PASSWORD || secrets.SMOKE_TEST_PASSWORD }}
+          BRANCH: fork/EPC
           DEPLOY_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'full' }}
         run: |
           set -euo pipefail
-          OUTPUT_FILE="$(mktemp)"
-          bash ./infra/aws-upstream-baseline/preview-upsert.sh 'fork/EPC' | tee "${OUTPUT_FILE}"
-          while IFS='=' read -r key value; do
-            [[ -z "$key" ]] && continue
-            echo "$key=$value" >> "$GITHUB_OUTPUT"
-          done < <(grep '^preview_' "${OUTPUT_FILE}")
-          rm -f "${OUTPUT_FILE}"
+          source ./infra/aws-upstream-baseline/preview-common.sh
+
+          PREVIEW_SLUG="$(branch_to_preview_slug "${BRANCH}")"
+          PREVIEW_HOSTNAME="$(preview_hostname_for_slug "${PREVIEW_SLUG}")"
+          PREVIEW_RUNTIME_ENV="$(preview_runtime_env_for_slug "${PREVIEW_SLUG}")"
+          TARGET_GROUP_NAME="$(target_group_name_for_slug "${PREVIEW_SLUG}")"
+          PREVIEW_PORT="$(choose_preview_port "${PREVIEW_SLUG}" "${TARGET_GROUP_NAME}")"
+          PREVIEW_PROJECT="preview-${PREVIEW_SLUG}"
+          PREVIEW_URL="https://${PREVIEW_HOSTNAME}"
+          REMOTE_WORKDIR="${PREVIEW_REMOTE_ROOT}/${PREVIEW_SLUG}"
+
+          {
+            echo "branch=${BRANCH}"
+            echo "deploy_mode=${DEPLOY_MODE}"
+            echo "preview_slug=${PREVIEW_SLUG}"
+            echo "preview_hostname=${PREVIEW_HOSTNAME}"
+            echo "preview_runtime_env=${PREVIEW_RUNTIME_ENV}"
+            echo "preview_target_group_name=${TARGET_GROUP_NAME}"
+            echo "preview_port=${PREVIEW_PORT}"
+            echo "preview_project=${PREVIEW_PROJECT}"
+            echo "preview_url=${PREVIEW_URL}"
+            echo "preview_workdir=${REMOTE_WORKDIR}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Prepare SSM logging
+        run: |
+          aws logs create-log-group \
+            --region "${AWS_REGION}" \
+            --log-group-name "${SSM_CLOUDWATCH_LOG_GROUP}" 2>/dev/null || true
+          aws logs put-retention-policy \
+            --region "${AWS_REGION}" \
+            --log-group-name "${SSM_CLOUDWATCH_LOG_GROUP}" \
+            --retention-in-days 14 2>/dev/null || true
+
+      - name: Preflight disk and Docker usage
+        env:
+          SSM_STEP_NAME: EPC preview preflight disk and Docker usage
+          SSM_TIMEOUT_SECONDS: 180
+        run: |
+          bash infra/aws-upstream-baseline/ssm-run-step.sh <<'SSM'
+          minimum_available_gb=8
+          available_kb="$(df -Pk / | awk 'NR == 2 { print $4 }')"
+          available_gb=$((available_kb / 1024 / 1024))
+
+          echo "Root filesystem:"
+          df -h /
+          echo
+          echo "Docker usage:"
+          docker system df || true
+
+          if ((available_gb < minimum_available_gb)); then
+            echo "Only ${available_gb}GB available on /. Minimum required: ${minimum_available_gb}GB." >&2
+            exit 1
+          fi
+          SSM
+
+      - name: Safe Docker cleanup when disk is low
+        env:
+          SSM_STEP_NAME: EPC preview safe Docker cleanup
+          SSM_TIMEOUT_SECONDS: 600
+        run: |
+          bash infra/aws-upstream-baseline/ssm-run-step.sh <<'SSM'
+          cleanup_threshold_gb=12
+          available_kb="$(df -Pk / | awk 'NR == 2 { print $4 }')"
+          available_gb=$((available_kb / 1024 / 1024))
+
+          echo "Available before cleanup: ${available_gb}GB"
+          if ((available_gb >= cleanup_threshold_gb)); then
+            echo "Skipping cleanup; available disk is above ${cleanup_threshold_gb}GB."
+            exit 0
+          fi
+
+          echo "Pruning unused Docker build cache and unused images. Volumes are left untouched."
+          docker builder prune -af || true
+          docker image prune -af || true
+
+          echo "Available after cleanup:"
+          df -h /
+          docker system df || true
+          SSM
+
+      - name: Prepare checkout and runtime config
+        env:
+          PREVIEW_ADMIN_EMAIL: ${{ secrets.EPC_PREVIEW_ADMIN_EMAIL || secrets.SMOKE_TEST_EMAIL }}
+          PREVIEW_ADMIN_PASSWORD: ${{ secrets.EPC_PREVIEW_ADMIN_PASSWORD || secrets.SMOKE_TEST_PASSWORD }}
+          SSM_STEP_NAME: EPC preview prepare checkout and runtime config
+          SSM_TIMEOUT_SECONDS: 420
+        run: |
+          {
+            printf 'branch=%q\n' '${{ steps.preview.outputs.branch }}'
+            printf 'repo_url=%q\n' 'https://github.com/TH-EY/open-mercato.git'
+            printf 'preview_env=%q\n' '${{ steps.preview.outputs.preview_runtime_env }}'
+            printf 'preview_hostname=%q\n' '${{ steps.preview.outputs.preview_hostname }}'
+            printf 'preview_port=%q\n' '${{ steps.preview.outputs.preview_port }}'
+            printf 'deploy_mode=%q\n' '${{ steps.preview.outputs.deploy_mode }}'
+            printf 'workdir=%q\n' '${{ steps.preview.outputs.preview_workdir }}'
+            printf 'remote_root=%q\n' '/opt/openmercato-previews'
+            printf 'baseline_env_file=%q\n' '/etc/dokploy/compose/baseline-zjkhnl/code/.env'
+            printf 'preview_admin_email=%q\n' "${PREVIEW_ADMIN_EMAIL}"
+            printf 'preview_admin_password=%q\n' "${PREVIEW_ADMIN_PASSWORD}"
+            cat <<'SSM'
+          command -v git >/dev/null 2>&1 || { echo "Missing git on preview host" >&2; exit 1; }
+          command -v docker >/dev/null 2>&1 || { echo "Missing docker on preview host" >&2; exit 1; }
+
+          mkdir -p "$remote_root"
+          if [[ ! -d "$workdir/.git" ]]; then
+            if [[ "$deploy_mode" == "config-restart" ]]; then
+              echo "Config-only deploy requires an existing preview checkout at ${workdir}" >&2
+              exit 1
+            fi
+            git clone --branch "$branch" --single-branch "$repo_url" "$workdir"
+          elif [[ "$deploy_mode" == "full" ]]; then
+            git -C "$workdir" remote set-url origin "$repo_url"
+            git -C "$workdir" fetch origin "$branch" --prune
+            git -C "$workdir" checkout -B "$branch" "origin/$branch"
+            git -C "$workdir" reset --hard "origin/$branch"
+            git -C "$workdir" clean -fdx -e .env
+          fi
+
+          python3 - <<'PY' "$baseline_env_file" "$workdir/.env" "$preview_env" "$preview_port" "$preview_hostname" "$preview_admin_email" "$preview_admin_password" "$deploy_mode"
+          import secrets
+          import sys
+          from pathlib import Path
+
+          baseline, target, preview_env, preview_port, preview_host, preview_admin_email, preview_admin_password, deploy_mode = sys.argv[1:9]
+          values = {}
+          existing = {}
+          for line in Path(baseline).read_text().splitlines():
+              if not line or line.startswith('#') or '=' not in line:
+                  continue
+              key, value = line.split('=', 1)
+              values[key] = value
+          target_path = Path(target)
+          if target_path.exists():
+              for line in target_path.read_text().splitlines():
+                  if not line or line.startswith('#') or '=' not in line:
+                      continue
+                  key, value = line.split('=', 1)
+                  existing[key] = value
+          values.update({
+              'APP_NAME': f'preview-{preview_env}',
+              'DEPLOY_ENV': preview_env,
+              'APP_PORT': preview_port,
+              'APP_URL': f'https://{preview_host}',
+              'NEXT_PUBLIC_APP_URL': f'https://{preview_host}',
+              'PLATFORM_PORTAL_BASE_URL': f'https://{preview_host}',
+              'POSTGRES_PASSWORD': secrets.token_urlsafe(24),
+              'JWT_SECRET': secrets.token_urlsafe(48),
+              'AUTH_SECRET': secrets.token_urlsafe(48),
+              'TENANT_DATA_ENCRYPTION_KEY': secrets.token_urlsafe(48),
+              'MEILISEARCH_MASTER_KEY': secrets.token_urlsafe(32),
+          })
+          platform_domains = [
+              domain.strip()
+              for domain in (values.get('PLATFORM_DOMAINS') or 'localhost,openmercato.com').split(',')
+              if domain.strip()
+          ]
+          if preview_host.lower() not in {domain.lower() for domain in platform_domains}:
+              platform_domains.append(preview_host)
+          values['PLATFORM_DOMAINS'] = ','.join(platform_domains)
+          for key in [
+              'POSTGRES_PASSWORD',
+              'JWT_SECRET',
+              'AUTH_SECRET',
+              'TENANT_DATA_ENCRYPTION_KEY',
+              'MEILISEARCH_MASTER_KEY',
+          ]:
+              if existing.get(key):
+                  values[key] = existing[key]
+          if preview_host == 'preview-epc.om.they.dev':
+              values.update({
+                  'SELF_SERVICE_ONBOARDING_ENABLED': 'false',
+                  'SYSTEM_EMAIL_PROVIDER': 'ses',
+                  'AWS_SES_REGION': values.get('AWS_SES_REGION') or values.get('AWS_REGION') or 'eu-west-2',
+                  'EMAIL_FROM': values.get('EMAIL_FROM') or 'no-reply@they.dev',
+                  'NOTIFICATIONS_EMAIL_FROM': values.get('NOTIFICATIONS_EMAIL_FROM') or values.get('EMAIL_FROM') or 'no-reply@they.dev',
+              })
+          if preview_admin_email:
+              values['OM_INIT_SUPERADMIN_EMAIL'] = preview_admin_email
+              values['ADMIN_EMAIL'] = preview_admin_email
+          if preview_admin_password:
+              values['OM_INIT_SUPERADMIN_PASSWORD'] = preview_admin_password
+          keys = [
+              'APP_NAME','DEPLOY_ENV','APP_PORT','APP_URL','NEXT_PUBLIC_APP_URL',
+              'PLATFORM_PORTAL_BASE_URL','PLATFORM_DOMAINS','POSTGRES_USER','POSTGRES_PASSWORD','POSTGRES_DB',
+              'JWT_SECRET','AUTH_SECRET','TENANT_DATA_ENCRYPTION_KEY','MEILISEARCH_MASTER_KEY',
+              'SELF_SERVICE_ONBOARDING_ENABLED','DEMO_MODE','ADMIN_EMAIL','OM_INIT_SUPERADMIN_EMAIL',
+              'OM_INIT_SUPERADMIN_PASSWORD','OPENAI_API_KEY','SYSTEM_EMAIL_PROVIDER','AWS_SES_REGION',
+              'AWS_SES_CONFIGURATION_SET','RESEND_API_KEY','EMAIL_FROM','NOTIFICATIONS_EMAIL_FROM'
+          ]
+          target_path.write_text('\n'.join(f'{key}={values[key]}' for key in keys if key in values) + '\n')
+          PY
+
+          cd "$workdir"
+          set -a
+          . ./.env
+          set +a
+          echo "Prepared preview checkout:"
+          git rev-parse HEAD
+          echo "Branch: ${branch}"
+          echo "Deploy mode: ${deploy_mode}"
+          echo "App image: open-mercato/app:${preview_env}"
+          echo "Port: ${APP_PORT}"
+          SSM
+          } | bash infra/aws-upstream-baseline/ssm-run-step.sh
+
+      - name: Build or verify app image
+        timeout-minutes: 55
+        env:
+          SSM_STEP_NAME: EPC preview build or verify app image
+          SSM_TIMEOUT_SECONDS: 3300
+        run: |
+          {
+            printf 'deploy_mode=%q\n' '${{ steps.preview.outputs.deploy_mode }}'
+            printf 'preview_env=%q\n' '${{ steps.preview.outputs.preview_runtime_env }}'
+            printf 'workdir=%q\n' '${{ steps.preview.outputs.preview_workdir }}'
+            cat <<'SSM'
+          cd "$workdir"
+          set -a
+          . ./.env
+          set +a
+          app_image="open-mercato/app:$preview_env"
+
+          if [[ "$deploy_mode" == "config-restart" ]]; then
+            echo "Config restart requested; verifying existing app image instead of building."
+            docker image inspect "$app_image" --format '{{.Id}} {{.Created}}'
+            exit 0
+          fi
+
+          if ! timeout 30s docker image inspect opencode-mvp:latest >/dev/null 2>&1; then
+            echo "Building missing opencode-mvp helper image."
+            docker build -t opencode-mvp:latest docker/opencode
+          fi
+
+          build_log="/tmp/openmercato-preview-${preview_env}-build.log"
+          rm -f "$build_log"
+          echo "Building new app image while the current app container stays online."
+          if ! DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain timeout 45m docker build --progress=plain \
+            --build-arg CONTAINER_PORT="${CONTAINER_PORT:-3000}" \
+            -t "$app_image" \
+            . >"$build_log" 2>&1; then
+            tail -n 240 "$build_log" || true
+            exit 1
+          fi
+
+          echo "Last build log lines:"
+          tail -n 80 "$build_log" || true
+          echo "Built image:"
+          docker image inspect "$app_image" --format '{{.Id}} {{.RepoTags}} {{.Created}}'
+          SSM
+          } | bash infra/aws-upstream-baseline/ssm-run-step.sh
+
+      - name: Recreate app without touching volumes
+        env:
+          SSM_STEP_NAME: EPC preview recreate app
+          SSM_TIMEOUT_SECONDS: 900
+        run: |
+          {
+            printf 'preview_project=%q\n' '${{ steps.preview.outputs.preview_project }}'
+            printf 'workdir=%q\n' '${{ steps.preview.outputs.preview_workdir }}'
+            cat <<'SSM'
+          cd "$workdir"
+          set -a
+          . ./.env
+          set +a
+
+          compose() {
+            COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml "$@"
+          }
+
+          existing_epc_postgres="$(compose ps -q postgres 2>/dev/null || true)"
+          if [[ -n "$existing_epc_postgres" && -n "${POSTGRES_PASSWORD:-}" ]]; then
+            pg_password_sql="/tmp/openmercato-preview-${DEPLOY_ENV}-postgres-password.sql"
+            python3 - <<'PY' > "$pg_password_sql"
+          import os
+
+          password = os.environ["POSTGRES_PASSWORD"]
+          escaped = password.replace("'", "''")
+          print("set password_encryption = 'scram-sha-256';")
+          print(f"alter role postgres login password '{escaped}';")
+          PY
+            docker cp "$pg_password_sql" "$existing_epc_postgres:/tmp/openmercato-preview-postgres-password.sql"
+            rm -f "$pg_password_sql"
+            for attempt in 1 2 3 4 5; do
+              if docker exec "$existing_epc_postgres" psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -v ON_ERROR_STOP=1 -f /tmp/openmercato-preview-postgres-password.sql >/dev/null; then
+                break
+              fi
+              if [[ "$attempt" == "5" ]]; then
+                exit 1
+              fi
+              echo "Postgres password sync attempt ${attempt} failed; retrying"
+              sleep "$((attempt * 2))"
+            done
+            docker exec "$existing_epc_postgres" rm -f /tmp/openmercato-preview-postgres-password.sql
+          fi
+
+          compose up -d --no-deps --no-build --force-recreate app
+          compose ps app
+          SSM
+          } | bash infra/aws-upstream-baseline/ssm-run-step.sh
+
+      - name: Local /login healthcheck
+        env:
+          SSM_STEP_NAME: EPC preview local login healthcheck
+          SSM_TIMEOUT_SECONDS: 300
+        run: |
+          {
+            printf 'workdir=%q\n' '${{ steps.preview.outputs.preview_workdir }}'
+            cat <<'SSM'
+          cd "$workdir"
+          set -a
+          . ./.env
+          set +a
+          url="http://127.0.0.1:${APP_PORT:-3000}/login"
+
+          for attempt in $(seq 1 40); do
+            status="$(curl -fsS -o /tmp/openmercato-preview-login.html -w '%{http_code}' "$url" 2>/dev/null || true)"
+            if [[ "$status" =~ ^[23] ]]; then
+              echo "Local preview login endpoint is reachable: ${url} (${status})"
+              exit 0
+            fi
+            echo "Waiting for local preview login endpoint (${attempt}/40): ${status:-no response}"
+            sleep 5
+          done
+
+          cat /tmp/openmercato-preview-login.html 2>/dev/null || true
+          echo "Preview app did not become reachable at ${url}" >&2
+          exit 1
+          SSM
+          } | bash infra/aws-upstream-baseline/ssm-run-step.sh
+
+      - name: Post-deploy Docker cleanup
+        env:
+          SSM_STEP_NAME: EPC preview post-deploy Docker cleanup
+          SSM_TIMEOUT_SECONDS: 600
+        run: |
+          bash infra/aws-upstream-baseline/ssm-run-step.sh <<'SSM'
+          echo "Post-deploy cleanup; app is already running:"
+          df -h /
+          timeout 30s docker system df || echo "docker system df skipped, failed, or timed out"
+          timeout 6m docker builder prune -af || echo "docker builder prune skipped, failed, or timed out"
+          timeout 3m docker image prune -f || echo "docker image prune skipped, failed, or timed out"
+          echo "Post-deploy cleanup complete:"
+          df -h /
+          timeout 30s docker system df || echo "docker system df skipped, failed, or timed out"
+          SSM
+
+      - name: Upsert ALB routing
+        shell: bash
+        run: |
+          set -euo pipefail
+          source ./infra/aws-upstream-baseline/preview-common.sh
+
+          PREVIEW_HOSTNAME='${{ steps.preview.outputs.preview_hostname }}'
+          PREVIEW_PORT='${{ steps.preview.outputs.preview_port }}'
+          TARGET_GROUP_NAME='${{ steps.preview.outputs.preview_target_group_name }}'
+          PREVIEW_URL='${{ steps.preview.outputs.preview_url }}'
+
+          TARGET_GROUP_ARN="$(aws elbv2 describe-target-groups --region "${AWS_REGION}" --names "${TARGET_GROUP_NAME}" --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || true)"
+          if [[ -z "${TARGET_GROUP_ARN}" || "${TARGET_GROUP_ARN}" == "None" ]]; then
+            TARGET_GROUP_ARN="$(aws elbv2 create-target-group \
+              --region "${AWS_REGION}" \
+              --name "${TARGET_GROUP_NAME}" \
+              --protocol HTTP \
+              --port "${PREVIEW_PORT}" \
+              --vpc-id "${VPC_ID}" \
+              --target-type instance \
+              --health-check-protocol HTTP \
+              --health-check-port "${PREVIEW_PORT}" \
+              --health-check-path /login \
+              --health-check-interval-seconds 15 \
+              --health-check-timeout-seconds 10 \
+              --healthy-threshold-count 2 \
+              --unhealthy-threshold-count 2 \
+              --matcher HttpCode=200-399 \
+              --query 'TargetGroups[0].TargetGroupArn' \
+              --output text)"
+          fi
+
+          aws elbv2 register-targets --region "${AWS_REGION}" --target-group-arn "${TARGET_GROUP_ARN}" --targets "Id=${PREVIEW_INSTANCE_ID},Port=${PREVIEW_PORT}" >/dev/null
+
+          RULE_ARN="$(existing_rule_arn_for_host "${PREVIEW_HOSTNAME}")"
+          if [[ -z "${RULE_ARN}" ]]; then
+            PRIORITY="$(choose_rule_priority)"
+            RULE_ARN="$(aws elbv2 create-rule \
+              --region "${AWS_REGION}" \
+              --listener-arn "${LISTENER_ARN}" \
+              --priority "${PRIORITY}" \
+              --conditions "[{\"Field\":\"host-header\",\"HostHeaderConfig\":{\"Values\":[\"${PREVIEW_HOSTNAME}\"]}}]" \
+              --actions "[{\"Type\":\"forward\",\"TargetGroupArn\":\"${TARGET_GROUP_ARN}\"}]" \
+              --query 'Rules[0].RuleArn' \
+              --output text)"
+          else
+            aws elbv2 modify-rule \
+              --region "${AWS_REGION}" \
+              --rule-arn "${RULE_ARN}" \
+              --conditions "[{\"Field\":\"host-header\",\"HostHeaderConfig\":{\"Values\":[\"${PREVIEW_HOSTNAME}\"]}}]" \
+              --actions "[{\"Type\":\"forward\",\"TargetGroupArn\":\"${TARGET_GROUP_ARN}\"}]" >/dev/null
+          fi
+
+          wait_for_target_healthy "${TARGET_GROUP_ARN}" 90
+          wait_for_http_200 "${PREVIEW_URL}/login" 90
+
+          echo "preview_target_group_arn=${TARGET_GROUP_ARN}" >> "$GITHUB_OUTPUT"
 
       - name: Smoke test preview
         env:
@@ -71,8 +467,45 @@ jobs:
             /backend/projects/create
         run: bash ./infra/aws-upstream-baseline/smoke.sh
 
+      - name: Diagnostics
+        if: always()
+        env:
+          SSM_STEP_NAME: EPC preview diagnostics
+          SSM_TIMEOUT_SECONDS: 300
+        run: |
+          {
+            printf 'preview_project=%q\n' '${{ steps.preview.outputs.preview_project }}'
+            printf 'workdir=%q\n' '${{ steps.preview.outputs.preview_workdir }}'
+            cat <<'SSM'
+          cd "$workdir" 2>/dev/null || true
+          echo "Disk:"
+          df -h / || true
+          echo
+          echo "Docker usage:"
+          docker system df || true
+          echo
+          echo "Containers:"
+          docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | grep -E "mercato-|${preview_project}" || docker ps || true
+          echo
+          if [[ -f .env ]]; then
+            set -a
+            . ./.env
+            set +a
+            app_image="open-mercato/app:${DEPLOY_ENV:-local}"
+            echo "Current app image:"
+            docker image inspect "$app_image" --format '{{.Id}} {{.RepoTags}} {{.Created}}' || true
+          fi
+          echo
+          echo "App logs:"
+          docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml logs --tail=120 app || true
+          SSM
+          } | bash infra/aws-upstream-baseline/ssm-run-step.sh
+
       - name: Workflow summary
+        if: always()
         run: |
           echo "Preview URL: ${{ steps.preview.outputs.preview_url }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Branch: fork/EPC" >> "$GITHUB_STEP_SUMMARY"
+          echo "Branch: ${{ steps.preview.outputs.branch }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deploy mode: ${{ steps.preview.outputs.deploy_mode }}" >> "$GITHUB_STEP_SUMMARY"
           echo "Host: ${{ steps.preview.outputs.preview_hostname }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Port: ${{ steps.preview.outputs.preview_port }}" >> "$GITHUB_STEP_SUMMARY"
