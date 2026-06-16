@@ -266,7 +266,7 @@ export default function EpcContactPage() {
               </div>
             ) : null}
 
-            <Button type="submit" disabled={!canSubmit || submitState === 'submitting'} className="scroll-mb-48 w-full">
+            <Button type="submit" disabled={!canSubmit || submitState === 'submitting'} className="sticky bottom-48 z-20 w-full scroll-mb-48">
               <Send className="mr-2 size-4" aria-hidden="true" />
               {submitState === 'submitting'
                 ? t('epcDemo.leadCapture.submitting', 'Submitting...')
