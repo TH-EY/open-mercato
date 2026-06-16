@@ -201,9 +201,9 @@ jobs:
           SSM
           } | bash infra/aws-upstream-baseline/ssm-run-step.sh
 
-      - name: Start dependencies
+      - name: Verify dependencies
         env:
-          SSM_STEP_NAME: Baseline start dependencies
+          SSM_STEP_NAME: Baseline verify dependencies
           SSM_TIMEOUT_SECONDS: 600
         run: |
           {
@@ -211,10 +211,24 @@ jobs:
             printf 'workdir=%q\n' "${BASELINE_WORKDIR}"
             cat <<'SSM'
           cd "$workdir"
+          set -a
+          . ./.env
+          set +a
           compose() {
             COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$baseline_project" --env-file .env -f docker-compose.fullapp.yml "$@"
           }
-          compose up -d --no-build --remove-orphans postgres redis meilisearch opencode
+          for container in \
+            "mercato-postgres-${DEPLOY_ENV:-local}" \
+            "mercato-redis-${DEPLOY_ENV:-local}" \
+            "mercato-meilisearch-${DEPLOY_ENV:-local}" \
+            "mercato-opencode-${DEPLOY_ENV:-local}"
+          do
+            running="$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)"
+            if [[ "$running" != "true" ]]; then
+              echo "Required dependency container is not running: ${container}" >&2
+              exit 1
+            fi
+          done
           compose ps
           SSM
           } | bash infra/aws-upstream-baseline/ssm-run-step.sh
