@@ -1,0 +1,317 @@
+name: Deploy om.they.dev baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to deploy
+        required: true
+        type: string
+        default: upstream-baseline
+      deploy_mode:
+        description: Deployment mode
+        required: true
+        type: choice
+        default: full
+        options:
+          - full
+          - config-restart
+
+concurrency:
+  group: upstream-baseline-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-2
+  NAME_PREFIX: openmercato-upstream-baseline-dokploy
+  BASELINE_PROJECT: baseline-zjkhnl
+  BASELINE_WORKDIR: /etc/dokploy/compose/baseline-zjkhnl/code
+  BASELINE_URL: https://om.they.dev
+  SSM_CLOUDWATCH_LOG_GROUP: /aws/ssm/openmercato-upstream-baseline-dokploy/deploy
+
+jobs:
+  deploy-baseline:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout deploy tooling
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Prepare SSM logging
+        run: |
+          aws logs create-log-group \
+            --region "${AWS_REGION}" \
+            --log-group-name "${SSM_CLOUDWATCH_LOG_GROUP}" 2>/dev/null || true
+          aws logs put-retention-policy \
+            --region "${AWS_REGION}" \
+            --log-group-name "${SSM_CLOUDWATCH_LOG_GROUP}" \
+            --retention-in-days 14 2>/dev/null || true
+
+      - name: Preflight disk and Docker usage
+        env:
+          SSM_STEP_NAME: Baseline preflight disk and Docker usage
+          SSM_TIMEOUT_SECONDS: 180
+        run: |
+          bash infra/aws-upstream-baseline/ssm-run-step.sh <<'SSM'
+          minimum_available_gb=8
+          available_kb="$(df -Pk / | awk 'NR == 2 { print $4 }')"
+          available_gb=$((available_kb / 1024 / 1024))
+
+          echo "Root filesystem:"
+          df -h /
+          echo
+          echo "Docker usage:"
+          docker system df || true
+
+          if ((available_gb < minimum_available_gb)); then
+            echo "Only ${available_gb}GB available on /. Minimum required: ${minimum_available_gb}GB." >&2
+            exit 1
+          fi
+          SSM
+
+      - name: Safe Docker cleanup when disk is low
+        env:
+          SSM_STEP_NAME: Baseline safe Docker cleanup
+          SSM_TIMEOUT_SECONDS: 600
+        run: |
+          bash infra/aws-upstream-baseline/ssm-run-step.sh <<'SSM'
+          cleanup_threshold_gb=12
+          available_kb="$(df -Pk / | awk 'NR == 2 { print $4 }')"
+          available_gb=$((available_kb / 1024 / 1024))
+
+          echo "Available before cleanup: ${available_gb}GB"
+          if ((available_gb >= cleanup_threshold_gb)); then
+            echo "Skipping cleanup; available disk is above ${cleanup_threshold_gb}GB."
+            exit 0
+          fi
+
+          echo "Pruning unused Docker build cache and unused images. Volumes are left untouched."
+          docker builder prune -af || true
+          docker image prune -af || true
+
+          echo "Available after cleanup:"
+          df -h /
+          docker system df || true
+          SSM
+
+      - name: Prepare checkout
+        env:
+          BRANCH: ${{ inputs.branch }}
+          DEPLOY_MODE: ${{ inputs.deploy_mode }}
+          SSM_STEP_NAME: Baseline prepare checkout
+          SSM_TIMEOUT_SECONDS: 420
+        run: |
+          {
+            printf 'branch=%q\n' "${BRANCH}"
+            printf 'deploy_mode=%q\n' "${DEPLOY_MODE}"
+            printf 'baseline_project=%q\n' "${BASELINE_PROJECT}"
+            printf 'workdir=%q\n' "${BASELINE_WORKDIR}"
+            cat <<'SSM'
+          repo_url="https://github.com/TH-EY/open-mercato.git"
+          command -v git >/dev/null 2>&1 || { echo "Missing git on baseline host" >&2; exit 1; }
+          command -v docker >/dev/null 2>&1 || { echo "Missing docker on baseline host" >&2; exit 1; }
+
+          if [[ ! -d "$workdir/.git" ]]; then
+            if [[ "$deploy_mode" == "config-restart" ]]; then
+              echo "Config-only deploy requires an existing baseline checkout at ${workdir}" >&2
+              exit 1
+            fi
+            rm -rf "$workdir"
+            git clone --branch "$branch" --single-branch "$repo_url" "$workdir"
+          elif [[ "$deploy_mode" == "full" ]]; then
+            git -C "$workdir" remote set-url origin "$repo_url"
+            git -C "$workdir" config --unset-all remote.origin.fetch || true
+            git -C "$workdir" config --add remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+            git -C "$workdir" fetch origin --prune
+            git -C "$workdir" checkout -B "$branch" "origin/$branch"
+            git -C "$workdir" reset --hard "origin/$branch"
+            git -C "$workdir" clean -fdx -e .env
+          fi
+
+          cd "$workdir"
+          test -s .env || { echo "Missing baseline .env at ${workdir}/.env" >&2; exit 1; }
+          set -a
+          . ./.env
+          set +a
+
+          app_image="open-mercato/app:${DEPLOY_ENV:-local}"
+          echo "Prepared checkout:"
+          git rev-parse HEAD
+          echo "Branch: ${branch}"
+          echo "Deploy mode: ${deploy_mode}"
+          echo "App image: ${app_image}"
+          echo "Project: ${baseline_project}"
+          echo "Port: ${APP_PORT:-3001}"
+          SSM
+          } | bash infra/aws-upstream-baseline/ssm-run-step.sh
+
+      - name: Build or verify app image
+        timeout-minutes: 55
+        env:
+          DEPLOY_MODE: ${{ inputs.deploy_mode }}
+          SSM_STEP_NAME: Baseline build or verify app image
+          SSM_TIMEOUT_SECONDS: 3300
+        run: |
+          {
+            printf 'deploy_mode=%q\n' "${DEPLOY_MODE}"
+            printf 'workdir=%q\n' "${BASELINE_WORKDIR}"
+            cat <<'SSM'
+          cd "$workdir"
+          set -a
+          . ./.env
+          set +a
+          app_image="open-mercato/app:${DEPLOY_ENV:-local}"
+
+          if [[ "$deploy_mode" == "config-restart" ]]; then
+            echo "Config restart requested; verifying existing app image instead of building."
+            docker image inspect "$app_image" --format '{{.Id}} {{.Created}}'
+            exit 0
+          fi
+
+          if ! timeout 30s docker image inspect opencode-mvp:latest >/dev/null 2>&1; then
+            echo "Building missing opencode-mvp helper image."
+            docker build -t opencode-mvp:latest docker/opencode
+          fi
+
+          build_log="/tmp/openmercato-baseline-${DEPLOY_ENV:-local}-build.log"
+          rm -f "$build_log"
+          echo "Building new baseline app image while the current app container stays online."
+          if ! DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain timeout 45m docker build --progress=plain \
+            --build-arg CONTAINER_PORT="${CONTAINER_PORT:-3000}" \
+            -t "$app_image" \
+            . >"$build_log" 2>&1; then
+            tail -n 240 "$build_log" || true
+            exit 1
+          fi
+
+          echo "Last build log lines:"
+          tail -n 80 "$build_log" || true
+          echo "Built image:"
+          docker image inspect "$app_image" --format '{{.Id}} {{.RepoTags}} {{.Created}}'
+          SSM
+          } | bash infra/aws-upstream-baseline/ssm-run-step.sh
+
+      - name: Start dependencies
+        env:
+          SSM_STEP_NAME: Baseline start dependencies
+          SSM_TIMEOUT_SECONDS: 600
+        run: |
+          {
+            printf 'baseline_project=%q\n' "${BASELINE_PROJECT}"
+            printf 'workdir=%q\n' "${BASELINE_WORKDIR}"
+            cat <<'SSM'
+          cd "$workdir"
+          compose() {
+            COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$baseline_project" --env-file .env -f docker-compose.fullapp.yml "$@"
+          }
+          compose up -d --no-build --remove-orphans postgres redis meilisearch opencode
+          compose ps
+          SSM
+          } | bash infra/aws-upstream-baseline/ssm-run-step.sh
+
+      - name: Recreate app
+        env:
+          SSM_STEP_NAME: Baseline recreate app
+          SSM_TIMEOUT_SECONDS: 900
+        run: |
+          {
+            printf 'baseline_project=%q\n' "${BASELINE_PROJECT}"
+            printf 'workdir=%q\n' "${BASELINE_WORKDIR}"
+            cat <<'SSM'
+          cd "$workdir"
+          compose() {
+            COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$baseline_project" --env-file .env -f docker-compose.fullapp.yml "$@"
+          }
+          compose up -d --no-deps --no-build --force-recreate app
+          compose ps app
+          SSM
+          } | bash infra/aws-upstream-baseline/ssm-run-step.sh
+
+      - name: Local /login healthcheck
+        env:
+          SSM_STEP_NAME: Baseline local login healthcheck
+          SSM_TIMEOUT_SECONDS: 300
+        run: |
+          {
+            printf 'workdir=%q\n' "${BASELINE_WORKDIR}"
+            cat <<'SSM'
+          cd "$workdir"
+          set -a
+          . ./.env
+          set +a
+          url="http://127.0.0.1:${APP_PORT:-3001}/login"
+
+          for attempt in $(seq 1 40); do
+            status="$(curl -fsS -o /tmp/openmercato-baseline-login.html -w '%{http_code}' "$url" 2>/dev/null || true)"
+            if [[ "$status" =~ ^[23] ]]; then
+              echo "Local baseline login endpoint is reachable: ${url} (${status})"
+              exit 0
+            fi
+            echo "Waiting for local baseline login endpoint (${attempt}/40): ${status:-no response}"
+            sleep 5
+          done
+
+          cat /tmp/openmercato-baseline-login.html 2>/dev/null || true
+          echo "Baseline app did not become reachable at ${url}" >&2
+          exit 1
+          SSM
+          } | bash infra/aws-upstream-baseline/ssm-run-step.sh
+
+      - name: Smoke /login
+        env:
+          BASE_URL: ${{ env.BASELINE_URL }}
+          SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+          SMOKE_TEST_TENANT_ID: ${{ secrets.SMOKE_TEST_TENANT_ID }}
+        run: bash ./infra/aws-upstream-baseline/smoke.sh
+
+      - name: Diagnostics
+        if: always()
+        env:
+          SSM_STEP_NAME: Baseline diagnostics
+          SSM_TIMEOUT_SECONDS: 300
+        run: |
+          {
+            printf 'baseline_project=%q\n' "${BASELINE_PROJECT}"
+            printf 'workdir=%q\n' "${BASELINE_WORKDIR}"
+            cat <<'SSM'
+          cd "$workdir" 2>/dev/null || true
+          echo "Disk:"
+          df -h / || true
+          echo
+          echo "Docker usage:"
+          docker system df || true
+          echo
+          echo "Containers:"
+          docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | grep -E "mercato-|${baseline_project}" || docker ps || true
+          echo
+          if [[ -f .env ]]; then
+            set -a
+            . ./.env
+            set +a
+            app_image="open-mercato/app:${DEPLOY_ENV:-local}"
+            echo "Current app image:"
+            docker image inspect "$app_image" --format '{{.Id}} {{.RepoTags}} {{.Created}}' || true
+          fi
+          echo
+          echo "App logs:"
+          docker compose --project-name "$baseline_project" --env-file .env -f docker-compose.fullapp.yml logs --tail=120 app || true
+          SSM
+          } | bash infra/aws-upstream-baseline/ssm-run-step.sh
+
+      - name: Workflow summary
+        if: always()
+        run: |
+          echo "Baseline URL: ${BASELINE_URL}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Branch: ${{ inputs.branch }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deploy mode: ${{ inputs.deploy_mode }}" >> "$GITHUB_STEP_SUMMARY"
