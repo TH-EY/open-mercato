@@ -127,12 +127,21 @@ type ServiceListItem = {
   is_active?: boolean | null
   created_at?: string | Date | null
   updated_at?: string | Date | null
+  categoryId?: string | null
   category?: { id: string; name: string; slug: string | null } | null
   media?: unknown[]
   workRequirements?: unknown[]
 }
 
-async function decorateServicesAfterList(items: ServiceListItem[], ctx: CrudCtx) {
+function serviceCategoryId(item: ServiceListItem): string | null {
+  return item.category_id ?? item.categoryId ?? null
+}
+
+export async function decorateServicesAfterList(
+  payload: { items?: ServiceListItem[] },
+  ctx: CrudCtx,
+) {
+  const items = Array.isArray(payload?.items) ? payload.items : []
   if (!items.length) return
   const ids = items.map((item) => item.id).filter((id): id is string => Boolean(id))
   const em = (ctx.container.resolve('em') as EntityManager).fork()
@@ -159,7 +168,7 @@ async function decorateServicesAfterList(items: ServiceListItem[], ctx: CrudCtx)
       em,
       CatalogProductCategory,
       {
-        id: { $in: items.map((item) => item.category_id).filter((id): id is string => Boolean(id)) },
+        id: { $in: items.map(serviceCategoryId).filter((id): id is string => Boolean(id)) },
         deletedAt: null,
         ...scope,
       },
@@ -203,7 +212,8 @@ async function decorateServicesAfterList(items: ServiceListItem[], ctx: CrudCtx)
   }
   const categoriesById = new Map(categories.map((category) => [category.id, category]))
   for (const item of items) {
-    const category = item.category_id ? categoriesById.get(item.category_id) : null
+    const categoryId = serviceCategoryId(item)
+    const category = categoryId ? categoriesById.get(categoryId) : null
     item.category = category
       ? { id: category.id, name: category.name, slug: category.slug ?? null }
       : null
