@@ -623,6 +623,7 @@ export default function DealsKanbanPage(): React.ReactElement {
       `people:${filterSignature.people}`,
       `companies:${filterSignature.companies}`,
       `close:${filterSignature.closeFrom}-${filterSignature.closeTo}`,
+      `currency:${filterSignature.currency}`,
     ],
     enabled: !!selectedPipelineId,
     staleTime: 30_000,
@@ -637,6 +638,7 @@ export default function DealsKanbanPage(): React.ReactElement {
       for (const companyId of companyFilters) params.append('companyId', companyId)
       if (closeDateFilter.from) params.set('expectedCloseAtFrom', closeDateFilter.from)
       if (closeDateFilter.to) params.set('expectedCloseAtTo', closeDateFilter.to)
+      if (currencyFilter) params.set('valueCurrency', currencyFilter)
       const call = await apiCall<StageAggregateResponse>(
         `/api/customers/deals/aggregate?${params.toString()}`,
       )
@@ -745,6 +747,7 @@ export default function DealsKanbanPage(): React.ReactElement {
 
   const laneState = React.useMemo(() => {
     const dealsByStage = new Map<string, DealCardData[]>()
+    const listTotalsByStage = new Map<string, number>()
     const stageIdByDealId = new Map<string, string>()
     const allDeals: DealCardData[] = []
     let total = 0
@@ -752,6 +755,7 @@ export default function DealsKanbanPage(): React.ReactElement {
       const stage = lanes[idx]
       if (!stage) return
       const firstPage = query.data?.items ?? []
+      listTotalsByStage.set(stage.id, query.data?.total ?? firstPage.length)
       const extra = extraCardsByStage[stage.id] ?? []
       // Merge first page + appended pages, deduping by id (in case of races/optimistic moves)
       const seen = new Set<string>()
@@ -776,7 +780,7 @@ export default function DealsKanbanPage(): React.ReactElement {
       dealsByStage.set(stage.id, list)
       total += list.length
     })
-    return { dealsByStage, stageIdByDealId, allDeals, total }
+    return { dealsByStage, listTotalsByStage, stageIdByDealId, allDeals, total }
   }, [laneQueries, lanes, fallbackTitle, extraCardsByStage])
 
   const rawDeals = laneState.allDeals
@@ -2798,6 +2802,7 @@ export default function DealsKanbanPage(): React.ReactElement {
                         stage={stage}
                         deals={laneDeals}
                         aggregate={aggregateByStage.get(stage.id) ?? null}
+                        listTotal={laneState.listTotalsByStage.get(stage.id) ?? null}
                         selectedDealIds={selectedDealIds}
                         buildMenuItems={buildMenuItems}
                         activeDragDealId={activeDragDealId}
