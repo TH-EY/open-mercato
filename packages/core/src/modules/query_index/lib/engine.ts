@@ -1039,6 +1039,8 @@ export class HybridQueryEngine implements QueryEngine {
 
   private async isCustomEntity(entity: string): Promise<boolean> {
     try {
+      const baseTable = resolveEntityTableName(this.em as EntityManager, entity as EntityId)
+      if (baseTable && await this.tableExists(baseTable)) return false
       const db = this.getDb() as any
       const row = await db
         .selectFrom('custom_entities')
