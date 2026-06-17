@@ -7,7 +7,6 @@ import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { resolveTranslations } from '@open-mercato/shared/lib/i18n/server'
 import type { CrudEventsConfig, CrudIndexerConfig } from '@open-mercato/shared/lib/crud/types'
 import type { DataEngine } from '@open-mercato/shared/lib/data/engine'
-import { restoreCreatedRow } from '@open-mercato/shared/lib/commands/redo'
 import {
   CatalogProductCategory,
   CatalogService,
@@ -287,6 +286,19 @@ function applyServiceSnapshot(
   record.deletedAt = snapshot.deletedAt ? new Date(snapshot.deletedAt) : null
 }
 
+function createServiceFromSnapshot(em: EntityManager, snapshot: ServiceSnapshot): CatalogService {
+  const record = em.create(CatalogService, {
+    id: snapshot.id,
+    organizationId: snapshot.organizationId,
+    tenantId: snapshot.tenantId,
+    title: snapshot.title,
+    createdAt: new Date(snapshot.createdAt),
+    updatedAt: new Date(snapshot.updatedAt),
+  })
+  em.persist(record)
+  return record
+}
+
 async function restoreServiceChildren(
   em: EntityManager,
   record: CatalogService,
@@ -479,12 +491,7 @@ const updateServiceCommand: CommandHandler<ServiceUpdateInput, { serviceId: stri
     const em = (ctx.container.resolve('em') as EntityManager).fork()
     let record = await em.findOne(CatalogService, { id: before.id })
     if (!record) {
-      record = await restoreCreatedRow(em, CatalogService, before.id, () => ({
-        id: before.id,
-        organizationId: before.organizationId,
-        tenantId: before.tenantId,
-        title: before.title,
-      }))
+      record = createServiceFromSnapshot(em, before)
     }
     ensureTenantScope(ctx, before.tenantId)
     ensureOrganizationScope(ctx, before.organizationId)
@@ -545,12 +552,7 @@ const deleteServiceCommand: CommandHandler<{ id: string }, { serviceId: string }
     const em = (ctx.container.resolve('em') as EntityManager).fork()
     let record = await em.findOne(CatalogService, { id: before.id })
     if (!record) {
-      record = await restoreCreatedRow(em, CatalogService, before.id, () => ({
-        id: before.id,
-        organizationId: before.organizationId,
-        tenantId: before.tenantId,
-        title: before.title,
-      }))
+      record = createServiceFromSnapshot(em, before)
     }
     ensureTenantScope(ctx, before.tenantId)
     ensureOrganizationScope(ctx, before.organizationId)

@@ -5,14 +5,12 @@ import Link from 'next/link'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { DataTable } from '@open-mercato/ui/backend/DataTable'
-import { ListEmptyState } from '@open-mercato/ui/backend/filters/ListEmptyState'
 import type { FilterValues } from '@open-mercato/ui/backend/FilterBar'
 import { RowActions } from '@open-mercato/ui/backend/RowActions'
 import { Button } from '@open-mercato/ui/primitives/button'
 import { BooleanIcon } from '@open-mercato/ui/backend/ValueIcons'
-import { apiCall, readApiResultOrThrow, withScopedApiRequestHeaders } from '@open-mercato/ui/backend/utils/apiCall'
+import { apiCall, readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
 import { deleteCrud } from '@open-mercato/ui/backend/utils/crud'
-import { buildOptimisticLockHeader } from '@open-mercato/ui/backend/utils/optimisticLock'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { useConfirmDialog } from '@open-mercato/ui/backend/confirm-dialog'
 import { useOrganizationScopeVersion } from '@open-mercato/shared/lib/frontend/useOrganizationScope'
@@ -176,12 +174,9 @@ export default function ServicesDataTable() {
     })
     if (!confirmed) return
     try {
-      const headers = buildOptimisticLockHeader(typeof service.updated_at === 'string' ? service.updated_at : null)
-      await withScopedApiRequestHeaders(headers, () =>
-        deleteCrud('catalog/services', service.id, {
-          errorMessage: t('catalog.services.list.error.delete', 'Failed to delete service'),
-        }),
-      )
+      await deleteCrud('catalog/services', service.id, {
+        errorMessage: t('catalog.services.list.error.delete', 'Failed to delete service'),
+      })
       await queryClient.invalidateQueries({ queryKey: ['catalog-services'] })
       flash(t('catalog.services.flash.deleted', 'Service archived'), 'success')
     } catch (err: unknown) {
@@ -203,13 +198,6 @@ export default function ServicesDataTable() {
         ) : undefined}
         columns={columns}
         data={rows}
-        emptyState={(
-          <ListEmptyState
-            entityName={t('catalog.services.list.title', 'Services')}
-            createHref={canManage ? '/backend/catalog/services/create' : undefined}
-            createLabel={canManage ? t('catalog.services.list.actions.create', 'Create') : undefined}
-          />
-        )}
         searchValue={search}
         searchPlaceholder={t('catalog.services.list.searchPlaceholder', 'Search services')}
         onSearchChange={(value) => { setSearch(value); setPage(1) }}

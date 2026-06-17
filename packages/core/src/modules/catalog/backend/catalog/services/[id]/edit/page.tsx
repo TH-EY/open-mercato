@@ -186,7 +186,6 @@ export default function EditCatalogServicePage({ params }: { params?: { id?: str
           initialValues={values}
           isLoading={loading}
           loadingMessage={t('catalog.services.form.loading', 'Loading service...')}
-          optimisticLockUpdatedAt={values.updatedAt ?? null}
           successRedirect={`/backend/catalog/services?flash=${encodeURIComponent(t('catalog.services.flash.updated', 'Service updated'))}&type=success`}
           deleteRedirect={`/backend/catalog/services?flash=${encodeURIComponent(t('catalog.services.flash.deleted', 'Service archived'))}&type=success`}
           onSubmit={async (formValues) => {

@@ -39,7 +39,6 @@ type Props = {
   onDelete?: () => Promise<void>
   isLoading?: boolean
   loadingMessage?: string
-  optimisticLockUpdatedAt?: string | null
   successRedirect?: string
   deleteRedirect?: string
 }
@@ -191,7 +190,6 @@ export function ServiceForm({
   onDelete,
   isLoading,
   loadingMessage,
-  optimisticLockUpdatedAt,
   successRedirect,
   deleteRedirect,
 }: Props) {
@@ -312,7 +310,6 @@ export function ServiceForm({
       groups={groups}
       entityId={E.catalog.catalog_service}
       initialValues={initialValues}
-      optimisticLockUpdatedAt={optimisticLockUpdatedAt ?? initialValues.updatedAt ?? null}
       isLoading={isLoading}
       loadingMessage={loadingMessage}
       submitLabel={submitLabel}

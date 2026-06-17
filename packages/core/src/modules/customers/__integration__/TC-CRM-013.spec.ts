@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { createCompanyFixture, createDealFixture, createPipelineFixture, createPipelineStageFixture, deleteEntityIfExists, deleteEntityByBody } from '@open-mercato/core/modules/core/__integration__/helpers/crmFixtures';
-import { getAuthToken } from '@open-mercato/core/modules/core/__integration__/helpers/api';
+import { apiRequest, getAuthToken } from '@open-mercato/core/modules/core/__integration__/helpers/api';
 import { login } from '@open-mercato/core/modules/core/__integration__/helpers/auth';
 
 /**
