@@ -5,6 +5,7 @@ import type { OpenApiMethodDoc, OpenApiRouteDoc } from '@open-mercato/shared/lib
 import type { CommandBus, CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import type { AuthContext } from '@open-mercato/shared/lib/auth/server'
 import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { validatePhoneNumber } from '@open-mercato/shared/lib/phone'
 import { CustomerEntity } from '@open-mercato/core/modules/customers/data/entities'
 import type {
   AddressCreateInput,
@@ -177,6 +178,7 @@ export function buildLeadDescription(input: EpcLeadCaptureInput): string {
 
   return [
     input.message ? `Message: ${input.message}` : null,
+    input.phone ? `Phone: ${input.phone}` : null,
     `Address: ${address}`,
     `Service needed: ${serviceLabels.join(', ')}`,
     `Project type: ${projectLabels.join(', ')}`,
@@ -188,6 +190,28 @@ export function buildDealCustomFields(input: Pick<EpcLeadCaptureInput, 'serviceN
     [EPC_SERVICE_NEEDED_FIELD_KEY]: Array.from(new Set(input.serviceNeeded)),
     [EPC_PROJECT_TYPE_FIELD_KEY]: Array.from(new Set(input.projectType)),
   }
+}
+
+export function normalizeLeadCapturePhone(phone: string | undefined, country: string | undefined): string | undefined {
+  const trimmed = phone?.trim()
+  if (!trimmed) return undefined
+
+  const directValidation = validatePhoneNumber(trimmed)
+  if (directValidation.valid) return directValidation.normalized ?? undefined
+
+  const normalizedCountry = country?.trim().toUpperCase()
+  if (normalizedCountry !== 'GB' && normalizedCountry !== 'UK') return undefined
+
+  const digits = directValidation.digits
+  const candidate = digits.startsWith('0')
+    ? `+44${digits.slice(1)}`
+    : digits.startsWith('44')
+      ? `+${digits}`
+      : null
+
+  if (!candidate) return undefined
+  const candidateValidation = validatePhoneNumber(candidate)
+  return candidateValidation.valid ? candidate : undefined
 }
 
 export async function ensureEpcLeadCaptureMetadata(
@@ -363,7 +387,7 @@ async function createPerson(
     firstName,
     lastName,
     primaryEmail: input.email,
-    primaryPhone: input.phone,
+    primaryPhone: normalizeLeadCapturePhone(input.phone, input.country),
     source: EPC_LEAD_SOURCE,
     ownerUserId: scope.ownerUserId ?? undefined,
   }

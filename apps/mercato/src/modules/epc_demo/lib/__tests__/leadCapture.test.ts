@@ -3,6 +3,7 @@ import {
   buildLeadDescription,
   ensureEpcLeadCaptureMetadata,
   epcLeadCaptureSchema,
+  normalizeLeadCapturePhone,
   resolveEpcLeadCaptureCorsConfig,
   resolveEpcLeadCaptureScope,
   splitFullName,
@@ -63,8 +64,16 @@ describe('EPC lead capture', () => {
     })
 
     expect(buildLeadDescription(parsed)).toContain('Message: Please call after 5pm.')
+    expect(buildLeadDescription(parsed)).toContain('Phone: +44 1245 010101')
     expect(buildLeadDescription(parsed)).toContain('Service needed: Heat Pumps, Solar Panels')
     expect(buildLeadDescription(parsed)).toContain('Project type: Retrofit, Renovation')
+  })
+
+  it('normalizes GB local phone numbers before creating CRM people', () => {
+    expect(normalizeLeadCapturePhone('01245 000 222', 'GB')).toBe('+441245000222')
+    expect(normalizeLeadCapturePhone('+44 1245 000 222', 'GB')).toBe('+44 1245 000 222')
+    expect(normalizeLeadCapturePhone('123', 'GB')).toBeUndefined()
+    expect(normalizeLeadCapturePhone('01245 000 222', 'US')).toBeUndefined()
   })
 
   it('splits single-token names with a stable fallback last name', () => {
