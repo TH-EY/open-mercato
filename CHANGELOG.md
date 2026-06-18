@@ -14,6 +14,7 @@ The CRM **deals list is redesigned** (with a follow-up misroute fix), staff/plan
 - ✨ CRM: deals list redesign. (#2903) *(@haxiorz)*
 - ✨ Manual Dokploy Dev compose deployment workflow. (#2865) *(@MStaniaszek1998)*
 - ✨ Add the `om-help` workflow navigator skill. (#2140) *(@adeptofvoltron)*
+- Business rules: add a Call OpenMercato action for scoped internal API calls through selected endpoint and API key profile options.
 
 ## 🔒 Security
 - 🔒 Webhooks: harden unauthenticated provider webhook failures. (#2680) *(@sravan27)*

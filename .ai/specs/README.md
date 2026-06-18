@@ -102,6 +102,7 @@ Specs awaiting implementation or partially complete. Focus here for actionable w
 | [Organization Sidebar Logo](2026-06-08-organization-sidebar-logo.md) | 2026-06-08 | Organization Sidebar Logo | Organization-level backend sidebar logo branding with additive `organizations.logo_url`, branding API, Directory settings UI, and admin nav brand payload |
 | [EPC Customer Portal Document Flow v2](2026-06-16-epc-customer-portal-document-flow-v2.md) | 2026-06-16 | EPC Customer Portal Document Flow v2 | Customer portal PDFs, attachments, quote comments, order timeline, payment panel, and portal acceptance audit for sales documents |
 | [Catalog Services Management](2026-06-16-catalog-services-management.md) | 2026-06-16 | Catalog Services Management | First-class sellable services in Catalog with media, categories, default pricing, structured work requirements, and additive Sales `serviceId` line integration |
+| [Call OpenMercato Business Rule Action](2026-06-18-call-openmercato-business-rule-action.md) | 2026-06-18 | Call OpenMercato Business Rule Action | Additive business-rule action for scoped internal API calls through selected endpoint and API key profile options |
 
 ### Implemented Specifications
 
