@@ -802,6 +802,7 @@ export function SalesDocumentItemsSection({
         kind={kind}
         documentId={documentId}
         currencyCode={currencyCode}
+        existingLineCount={items.length}
         organizationId={resolvedOrganizationId}
         tenantId={resolvedTenantId}
         initialLine={lineForEdit}
