@@ -16,7 +16,7 @@ import { buildOptimisticLockHeader } from '@open-mercato/ui/backend/utils/optimi
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { useConfirmDialog } from '@open-mercato/ui/backend/confirm-dialog'
 import { useOrganizationScopeVersion } from '@open-mercato/shared/lib/frontend/useOrganizationScope'
-import { useT } from '@open-mercato/shared/lib/i18n/context'
+import { useLocale, useT } from '@open-mercato/shared/lib/i18n/context'
 
 type ServiceRow = {
   id: string
@@ -59,18 +59,32 @@ function normalizeServiceRow(row: ServiceResponseItem): ServiceRow {
   }
 }
 
-function formatPrice(row: ServiceRow): string {
+const PRICE_FORMAT_LOCALES: Record<string, string> = {
+  en: 'en-US',
+  pl: 'pl-PL',
+  de: 'de-DE',
+  es: 'es-ES',
+}
+
+function resolvePriceFormatLocale(locale?: string | null): string {
+  if (!locale) return PRICE_FORMAT_LOCALES.en
+  return PRICE_FORMAT_LOCALES[locale] ?? locale
+}
+
+function formatPrice(row: ServiceRow, locale?: string | null): string {
   if (row.defaultPriceAmount === null || row.defaultPriceAmount === undefined || row.defaultPriceAmount === '') return '—'
-  return formatServiceDefaultPrice(row.defaultPriceAmount, row.defaultPriceCurrencyCode)
+  return formatServiceDefaultPrice(row.defaultPriceAmount, row.defaultPriceCurrencyCode, '—', locale)
 }
 
 export function formatServiceDefaultPrice(
   amount: string | number | null | undefined,
   currency: string | null | undefined,
   fallback = '—',
+  locale?: string | null,
 ): string {
   if (amount === null || amount === undefined || amount === '') return fallback
   const parsed = typeof amount === 'string' ? Number(amount) : amount
+  const formatLocale = resolvePriceFormatLocale(locale)
   if (!Number.isFinite(parsed)) {
     const code = currency?.trim()
     return `${amount}${code ? ` ${code}` : ''}`.trim()
@@ -78,21 +92,25 @@ export function formatServiceDefaultPrice(
   const code = currency?.trim().toUpperCase()
   if (code) {
     try {
-      return new Intl.NumberFormat(undefined, {
+      return new Intl.NumberFormat(formatLocale, {
         style: 'currency',
         currency: code,
+        currencyDisplay: 'code',
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
-      }).format(parsed)
+      })
+        .format(parsed)
+        .replace(/[\u00a0\u202f]/g, ' ')
     } catch {
-      return `${parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${code}`
+      return `${parsed.toLocaleString(formatLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${code}`
     }
   }
-  return parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return parsed.toLocaleString(formatLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 export default function ServicesDataTable() {
   const t = useT()
+  const locale = useLocale()
   const queryClient = useQueryClient()
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
   const scopeVersion = useOrganizationScopeVersion()
@@ -178,7 +196,7 @@ export default function ServicesDataTable() {
       id: 'defaultPrice',
       header: t('catalog.services.list.columns.defaultPrice', 'Default price'),
       meta: { priority: 2 },
-      cell: ({ row }) => formatPrice(row.original),
+      cell: ({ row }) => formatPrice(row.original, locale),
     },
     {
       id: 'requirements',
