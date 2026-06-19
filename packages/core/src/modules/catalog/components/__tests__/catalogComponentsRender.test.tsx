@@ -517,6 +517,41 @@ describe('catalog module components', () => {
     ]))
   })
 
+  it('uses human labels for work requirement references from snake_case API fields', async () => {
+    const handleChange = jest.fn()
+    const memberId = 'f818c729-3cac-4e19-9655-cd605abe6079'
+    mockApiCall.mockImplementation((url: string) => Promise.resolve({
+      ok: true,
+      result: {
+        items: url.startsWith('/api/staff/team-members')
+          ? [{ id: memberId, display_name: 'Filip Kubala' }]
+          : [],
+      },
+    }))
+
+    render(
+      <ServiceWorkRequirements
+        value={[{
+          targetType: 'staff_member',
+          targetId: null,
+          labelSnapshot: '',
+          allocationMode: 'ratio',
+          allocationValue: '0.3',
+          sortOrder: 0,
+        }]}
+        onChange={handleChange}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Filip Kubala' })).toBeInTheDocument())
+    expect(screen.queryByRole('option', { name: memberId })).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Reference'), { target: { value: memberId } })
+    expect(handleChange).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ targetId: memberId, labelSnapshot: 'Filip Kubala' }),
+    ]))
+  })
+
   it('maps valid integer work requirements and rejects invalid values before submit', () => {
     const t = (_key: string, fallback?: string) => fallback ?? _key
     const valid = buildServicePayload(createServiceInitialValues({
