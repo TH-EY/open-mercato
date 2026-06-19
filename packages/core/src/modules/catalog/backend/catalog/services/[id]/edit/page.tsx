@@ -80,7 +80,7 @@ function normalizeService(record: Record<string, unknown>, serviceId: string): S
     scope: text(record.scope) ?? '',
     categoryId: text(record.categoryId) ?? text(record.category_id) ?? '',
     defaultPriceAmount: text(record.defaultPriceAmount) ?? text(record.default_price_amount) ?? '',
-    defaultPriceCurrencyCode: text(record.defaultPriceCurrencyCode) ?? text(record.default_price_currency_code) ?? 'USD',
+    defaultPriceCurrencyCode: text(record.defaultPriceCurrencyCode) ?? text(record.default_price_currency_code) ?? '',
     defaultMediaId: text(record.defaultMediaId) ?? text(record.default_media_id),
     defaultMediaUrl: text(record.defaultMediaUrl) ?? text(record.default_media_url) ?? '',
     mediaDraftId: serviceId,
