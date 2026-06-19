@@ -774,7 +774,8 @@ export function LineItemDialog({
             icon: option.thumbnailUrl ? (
               <img
                 src={option.thumbnailUrl}
-                alt={option.title}
+                alt=""
+                aria-hidden="true"
                 className="h-8 w-8 rounded object-cover"
               />
             ) : (
@@ -847,7 +848,8 @@ export function LineItemDialog({
             icon: option.defaultMediaUrl ? (
               <img
                 src={option.defaultMediaUrl}
-                alt={option.title}
+                alt=""
+                aria-hidden="true"
                 className="h-8 w-8 rounded object-cover"
               />
             ) : (
@@ -917,7 +919,8 @@ export function LineItemDialog({
             icon: thumbnail ? (
               <img
                 src={thumbnail}
-                alt={title}
+                alt=""
+                aria-hidden="true"
                 className="h-8 w-8 rounded object-cover"
               />
             ) : (
@@ -1935,7 +1938,8 @@ export function LineItemDialog({
                             icon: serviceOption.defaultMediaUrl ? (
                               <img
                                 src={serviceOption.defaultMediaUrl}
-                                alt={serviceOption.title}
+                                alt=""
+                                aria-hidden="true"
                                 className="h-8 w-8 rounded object-cover"
                               />
                             ) : (
@@ -2064,7 +2068,8 @@ export function LineItemDialog({
                             icon: productOption.thumbnailUrl ? (
                               <img
                                 src={productOption.thumbnailUrl}
-                                alt={productOption.title ?? productOption.id}
+                                alt=""
+                                aria-hidden="true"
                                 className="h-8 w-8 rounded object-cover"
                               />
                             ) : (
@@ -2240,7 +2245,8 @@ export function LineItemDialog({
                               icon: variantOption.thumbnailUrl ? (
                                 <img
                                   src={variantOption.thumbnailUrl}
-                                  alt={variantOption.title ?? variantOption.id}
+                                  alt=""
+                                  aria-hidden="true"
                                   className="h-8 w-8 rounded object-cover"
                                 />
                               ) : (
