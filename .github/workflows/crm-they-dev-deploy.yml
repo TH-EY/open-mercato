@@ -335,10 +335,13 @@ jobs:
           last_status=000
           last_time_total=0
           for attempt in $(seq 1 40); do
-            read -r status time_total < <(curl -sk -o /tmp/crm-login.html -w '%{http_code} %{time_total}' https://crm.they.dev/login || printf '000 0')
+            curl_output="$(curl -sk -o /tmp/crm-login.html -w '%{http_code} %{time_total}\n' https://crm.they.dev/login || true)"
+            read -r status time_total <<< "${curl_output:-000 0}"
+            status="${status:-000}"
+            time_total="${time_total:-0}"
             last_status="${status}"
             last_time_total="${time_total}"
-            if [ "$status" -ge 200 ] && [ "$status" -lt 400 ]; then
+            if [[ "$status" =~ ^[0-9]{3}$ ]] && [ "$status" -ge 200 ] && [ "$status" -lt 400 ]; then
               echo "status=${status}" >> "$GITHUB_OUTPUT"
               echo "time_total=${time_total}" >> "$GITHUB_OUTPUT"
               echo "crm.they.dev/login returned $status in ${time_total}s"
