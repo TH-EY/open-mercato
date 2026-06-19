@@ -4,6 +4,8 @@ import * as React from 'react'
 import { CrudForm, type CrudField, type CrudFormGroup } from '@open-mercato/ui/backend/CrudForm'
 import { createCrudFormError } from '@open-mercato/ui/backend/utils/serverErrors'
 import { collectCustomFieldValues } from '@open-mercato/ui/backend/utils/customFieldValues'
+import { Input } from '@open-mercato/ui/primitives/input'
+import { AMOUNT_CURRENCIES } from '@open-mercato/ui/primitives/amount-input'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { E } from '#generated/entities.ids.generated'
 import {
@@ -11,6 +13,8 @@ import {
   type CatalogMediaItem,
 } from '@open-mercato/core/modules/catalog/components/products/ProductMediaManager'
 import { buildAttachmentImageUrl, slugifyAttachmentFileName } from '@open-mercato/core/modules/attachments/lib/imageUrls'
+import { DictionaryEntrySelect, type DictionaryOption } from '@open-mercato/core/modules/dictionaries/components/DictionaryEntrySelect'
+import { useCurrencyDictionary } from '@open-mercato/core/modules/customers/components/detail/hooks/useCurrencyDictionary'
 import { CategorySelect } from '../categories/CategorySelect'
 import { ServiceWorkRequirements, type ServiceWorkRequirementDraft } from './ServiceWorkRequirements'
 
@@ -74,6 +78,20 @@ function toPriceAmount(value: unknown): string | null {
   return null
 }
 
+export function normalizeServiceDefaultPriceAmount(value: unknown): string {
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : ''
+  if (typeof value !== 'string') return ''
+  const raw = value.trim()
+  const match = /^(\d+)(?:\.(\d+))?$/.exec(raw)
+  if (!match) return raw
+  const [, integerPart, fractionPart = ''] = match
+  if (!fractionPart) return integerPart
+  if (fractionPart.length <= 2) return raw
+  const visibleFraction = fractionPart.slice(0, 2).padEnd(2, '0')
+  const storageFraction = fractionPart.slice(2)
+  return /^0+$/.test(storageFraction) ? `${integerPart}.${visibleFraction}` : raw
+}
+
 function mediaUrl(item: CatalogMediaItem): string {
   return item.url || buildAttachmentImageUrl(item.id, { slug: slugifyAttachmentFileName(item.fileName) })
 }
@@ -109,19 +127,27 @@ export function buildServicePayload(values: ServiceFormValues, t: ReturnType<typ
   const defaultMediaId = trimOptional(values.defaultMediaId)
   const defaultMediaEntry = defaultMediaId ? mediaItems.find((item) => item.id === defaultMediaId) : null
   const customFields = collectCustomFieldValues(values)
-  const workRequirements = Array.isArray(values.workRequirements)
-    ? values.workRequirements
-        .map((item, index) => ({
-          targetType: item.targetType,
-          targetId: trimOptional(item.targetId),
-          labelSnapshot: trimOptional(item.labelSnapshot) ?? '',
-          allocationMode: item.allocationMode,
-          allocationValue: Number(item.allocationValue),
-          sortOrder: index,
-          metadata: item.metadata && typeof item.metadata === 'object' ? item.metadata : {},
-        }))
-        .filter((item) => item.labelSnapshot.length > 0 && Number.isFinite(item.allocationValue) && item.allocationValue > 0)
-    : []
+  const workRequirements = Array.isArray(values.workRequirements) ? values.workRequirements.map((item, index) => {
+    const labelSnapshot = trimOptional(item.labelSnapshot) ?? ''
+    const allocationValue = Number(item.allocationValue)
+    if (!labelSnapshot) {
+      const message = t('catalog.services.form.errors.workRequirementLabel', 'Provide a label for every work requirement.')
+      throw createCrudFormError(message, { workRequirements: message })
+    }
+    if (!Number.isFinite(allocationValue) || allocationValue <= 0) {
+      const message = t('catalog.services.form.errors.workRequirementValue', 'Provide a positive value for every work requirement.')
+      throw createCrudFormError(message, { workRequirements: message })
+    }
+    return {
+      targetType: item.targetType,
+      targetId: trimOptional(item.targetId),
+      labelSnapshot,
+      allocationMode: item.allocationMode,
+      allocationValue,
+      sortOrder: index,
+      metadata: item.metadata && typeof item.metadata === 'object' ? item.metadata : {},
+    }
+  }) : []
 
   return {
     ...(trimOptional(values.id) ? { id: trimOptional(values.id) } : {}),
@@ -179,7 +205,99 @@ function ServiceMediaField({
         setFormValue?.('defaultMediaUrl', target ? mediaUrl(target) : '')
       }}
       translationPrefix="catalog.services.media"
+      showLabel={false}
     />
+  )
+}
+
+const FALLBACK_CURRENCY_OPTIONS: DictionaryOption[] = AMOUNT_CURRENCIES.map((currency) => ({
+  value: currency.code,
+  label: `${currency.code} — ${currency.label}`,
+  color: null,
+  icon: currency.flag ?? null,
+}))
+
+function DefaultServicePriceField({
+  id,
+  value,
+  values,
+  setValue,
+  setFormValue,
+}: {
+  id: string
+  value: unknown
+  values?: Record<string, unknown>
+  setValue: (value: unknown) => void
+  setFormValue?: (id: string, value: unknown) => void
+}) {
+  const t = useT()
+  const { data: currencyDictionary, refetch: refetchCurrencyDictionary } = useCurrencyDictionary()
+  const selectedCurrency = trimOptional(values?.defaultPriceCurrencyCode) ?? 'USD'
+
+  const currencyOptionsLoader = React.useCallback(async (): Promise<DictionaryOption[]> => {
+    const mapEntries = (entries: Array<{ value: string; label: string; color?: string | null; icon?: string | null }>) =>
+      entries.map((entry) => ({
+        value: entry.value,
+        label: entry.label && entry.label !== entry.value ? `${entry.value} — ${entry.label}` : entry.value,
+        color: entry.color ?? null,
+        icon: entry.icon ?? null,
+      }))
+    try {
+      if (currencyDictionary?.entries?.length) return mapEntries(currencyDictionary.entries)
+      const payload = await refetchCurrencyDictionary()
+      return payload.entries.length ? mapEntries(payload.entries) : FALLBACK_CURRENCY_OPTIONS
+    } catch {
+      return FALLBACK_CURRENCY_OPTIONS
+    }
+  }, [currencyDictionary, refetchCurrencyDictionary])
+
+  const currencyLabels = React.useMemo(() => ({
+    placeholder: t('catalog.services.form.field.currencyPlaceholder', 'Select currency…'),
+    addLabel: t('catalog.services.form.field.currencyAdd', 'Add currency'),
+    dialogTitle: t('catalog.services.form.field.currencyDialogTitle', 'Add currency'),
+    valueLabel: t('catalog.services.form.field.currencyValueLabel', 'Currency code'),
+    valuePlaceholder: t('catalog.services.form.field.currencyValuePlaceholder', 'e.g. USD'),
+    labelLabel: t('catalog.services.form.field.currencyLabelLabel', 'Display label'),
+    labelPlaceholder: t('catalog.services.form.field.currencyLabelPlaceholder', 'e.g. US Dollar'),
+    emptyError: t('catalog.services.form.field.currencyEmptyError', 'Please provide a currency code.'),
+    cancelLabel: t('ui.forms.actions.cancel', 'Cancel'),
+    saveLabel: t('ui.forms.actions.save', 'Save'),
+    errorLoad: t('catalog.services.form.field.currencyLoadError', 'Unable to load currencies.'),
+    errorSave: t('catalog.services.form.field.currencySaveError', 'Unable to save currency.'),
+    loadingLabel: t('catalog.services.form.field.currencyLoading', 'Loading currencies…'),
+    manageTitle: t('catalog.services.form.field.currencyManage', 'Manage currencies'),
+  }), [t])
+  const amountValue = typeof value === 'string' ? value : normalizeServiceDefaultPriceAmount(value)
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <label className="space-y-1 text-xs font-medium text-muted-foreground">
+        <span>{t('catalog.services.form.field.defaultPriceAmount', 'Default price')}</span>
+        <Input
+          id={id}
+          type="text"
+          inputMode="decimal"
+          className="h-9 tabular-nums"
+          value={amountValue}
+          onChange={(event) => setValue(event.target.value)}
+          placeholder={t('catalog.services.form.field.defaultPricePlaceholder', '0.00')}
+        />
+      </label>
+      <label className="space-y-1 text-xs font-medium text-muted-foreground">
+        <span>{t('catalog.services.form.field.defaultPriceCurrencyCode', 'Currency')}</span>
+        <DictionaryEntrySelect
+          id={`${id}-currency`}
+          value={selectedCurrency}
+          onChange={(next) => setFormValue?.('defaultPriceCurrencyCode', next ?? '')}
+          fetchOptions={currencyOptionsLoader}
+          labels={currencyLabels}
+          allowInlineCreate={false}
+          showManage={false}
+          showActiveAppearance={false}
+          selectClassName="h-9 w-full"
+        />
+      </label>
+    </div>
   )
 }
 
@@ -196,6 +314,10 @@ export function ServiceForm({
   deleteRedirect,
 }: Props) {
   const t = useT()
+  const normalizedInitialValues = React.useMemo<ServiceFormValues>(() => ({
+    ...initialValues,
+    defaultPriceAmount: normalizeServiceDefaultPriceAmount(initialValues.defaultPriceAmount),
+  }), [initialValues])
 
   const fields = React.useMemo<CrudField[]>(() => [
     {
@@ -234,20 +356,21 @@ export function ServiceForm({
     },
     {
       id: 'defaultPriceAmount',
-      label: t('catalog.services.form.field.defaultPriceAmount', 'Default price'),
-      type: 'number',
-      layout: 'half',
-    },
-    {
-      id: 'defaultPriceCurrencyCode',
-      label: t('catalog.services.form.field.defaultPriceCurrencyCode', 'Currency'),
-      type: 'text',
-      layout: 'half',
-      placeholder: 'USD',
+      label: '',
+      type: 'custom',
+      component: ({ id, value, values, setValue, setFormValue }) => (
+        <DefaultServicePriceField
+          id={id}
+          value={value}
+          values={values}
+          setValue={setValue}
+          setFormValue={setFormValue}
+        />
+      ),
     },
     {
       id: 'mediaItems',
-      label: t('catalog.services.media.label', 'Media'),
+      label: '',
       type: 'custom',
       component: ({ id, values, setValue, setFormValue }) => (
         <ServiceMediaField id={id} values={values} setValue={setValue} setFormValue={setFormValue} />
@@ -255,12 +378,13 @@ export function ServiceForm({
     },
     {
       id: 'workRequirements',
-      label: t('catalog.services.work.title', 'Work requirements'),
+      label: '',
       type: 'custom',
       component: ({ value, setValue }) => (
         <ServiceWorkRequirements
           value={Array.isArray(value) ? value as ServiceWorkRequirementDraft[] : []}
           onChange={setValue}
+          showHeader={false}
         />
       ),
     },
@@ -288,7 +412,7 @@ export function ServiceForm({
       id: 'pricing',
       title: t('catalog.services.form.group.pricing', 'Default pricing'),
       column: 2,
-      fields: ['defaultPriceAmount', 'defaultPriceCurrencyCode'],
+      fields: ['defaultPriceAmount'],
     },
     {
       id: 'media',
@@ -311,7 +435,7 @@ export function ServiceForm({
       fields={fields}
       groups={groups}
       entityId={E.catalog.catalog_service}
-      initialValues={initialValues}
+      initialValues={normalizedInitialValues}
       optimisticLockUpdatedAt={optimisticLockUpdatedAt ?? initialValues.updatedAt ?? null}
       isLoading={isLoading}
       loadingMessage={loadingMessage}
@@ -321,7 +445,7 @@ export function ServiceForm({
       onSubmit={onSubmit}
       onDelete={onDelete}
       deleteRedirect={deleteRedirect}
-      versionHistory={initialValues.id ? { resourceKind: 'catalog.service', resourceId: initialValues.id } : undefined}
+      versionHistory={normalizedInitialValues.id ? { resourceKind: 'catalog.service', resourceId: normalizedInitialValues.id } : undefined}
       injectionSpotId="crud-form:catalog.service"
     />
   )

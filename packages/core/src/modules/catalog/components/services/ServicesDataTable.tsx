@@ -61,8 +61,34 @@ function normalizeServiceRow(row: ServiceResponseItem): ServiceRow {
 
 function formatPrice(row: ServiceRow): string {
   if (row.defaultPriceAmount === null || row.defaultPriceAmount === undefined || row.defaultPriceAmount === '') return '—'
-  const currency = row.defaultPriceCurrencyCode ?? ''
-  return `${row.defaultPriceAmount} ${currency}`.trim()
+  return formatServiceDefaultPrice(row.defaultPriceAmount, row.defaultPriceCurrencyCode)
+}
+
+export function formatServiceDefaultPrice(
+  amount: string | number | null | undefined,
+  currency: string | null | undefined,
+  fallback = '—',
+): string {
+  if (amount === null || amount === undefined || amount === '') return fallback
+  const parsed = typeof amount === 'string' ? Number(amount) : amount
+  if (!Number.isFinite(parsed)) {
+    const code = currency?.trim()
+    return `${amount}${code ? ` ${code}` : ''}`.trim()
+  }
+  const code = currency?.trim().toUpperCase()
+  if (code) {
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: code,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(parsed)
+    } catch {
+      return `${parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${code}`
+    }
+  }
+  return parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 export default function ServicesDataTable() {

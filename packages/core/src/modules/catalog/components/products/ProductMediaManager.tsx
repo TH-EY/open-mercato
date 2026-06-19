@@ -26,6 +26,7 @@ type Props = {
   onItemsChange: (items: ProductMediaItem[]) => void
   onDefaultChange: (attachmentId: string | null) => void
   translationPrefix?: 'catalog.products.media' | 'catalog.services.media'
+  showLabel?: boolean
 }
 
 function humanFileSize(size: number): string {
@@ -48,6 +49,7 @@ export function ProductMediaManager({
   onItemsChange,
   onDefaultChange,
   translationPrefix = 'catalog.products.media',
+  showLabel = true,
 }: Props) {
   const t = useT()
   const fileInputRef = React.useRef<HTMLInputElement | null>(null)
@@ -163,7 +165,7 @@ export function ProductMediaManager({
 
   return (
     <div className="space-y-3">
-      <label className="text-sm font-medium">{t(`${translationPrefix}.label`, 'Media')}</label>
+      {showLabel ? <label className="text-sm font-medium">{t(`${translationPrefix}.label`, 'Media')}</label> : null}
       <div
         className={cn(
           'flex flex-col items-center justify-center rounded-lg border border-dashed p-6 text-center transition-colors',
@@ -239,7 +241,7 @@ export function ProductMediaManager({
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">
-          {t('catalog.products.media.empty', 'No media uploaded yet.')}
+          {t(`${translationPrefix}.empty`, 'No media uploaded yet.')}
         </p>
       )}
     </div>
