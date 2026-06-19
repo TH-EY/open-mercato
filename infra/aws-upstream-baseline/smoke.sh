@@ -22,5 +22,9 @@ if [[ -f "${REPO_ROOT}/scripts/smoke-auth-dashboard.mjs" ]]; then
 fi
 
 echo "[baseline-smoke] Using BASE_URL=${BASE_URL}"
-curl -k -fsS "${BASE_URL%/}/login" >/dev/null
-echo "[baseline-smoke] Login page is reachable"
+read -r status time_total < <(curl -k -fsS -o /dev/null -w '%{http_code} %{time_total}' "${BASE_URL%/}/login")
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  echo "login_status=${status}" >> "${GITHUB_OUTPUT}"
+  echo "login_time_total=${time_total}" >> "${GITHUB_OUTPUT}"
+fi
+echo "[baseline-smoke] Login page is reachable (${status}) in ${time_total}s"

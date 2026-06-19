@@ -67,6 +67,18 @@ rm -f "${REMOTE_SCRIPT}"
 echo "::group::SSM ${SSM_STEP_NAME}"
 echo "Instance: ${INSTANCE_ID}"
 echo "CloudWatch log group: ${SSM_CLOUDWATCH_LOG_GROUP}"
+step_started_seconds="${SECONDS}"
+
+append_step_summary() {
+  if [[ -z "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    return
+  fi
+
+  local elapsed_seconds=$((SECONDS - step_started_seconds))
+  {
+    echo "- SSM step **${SSM_STEP_NAME}** finished with \`${status:-Unknown}\` in \`${elapsed_seconds}s\`; command \`${COMMAND_ID:-not-created}\`; logs \`${SSM_CLOUDWATCH_LOG_GROUP}\`."
+  } >> "${GITHUB_STEP_SUMMARY}"
+}
 
 COMMAND_ID="$(aws ssm send-command \
   --region "${AWS_REGION}" \
@@ -114,6 +126,7 @@ if [[ -z "${invocation_json}" ]]; then
     cat "${invocation_error}" >&2
   fi
   rm -f "${invocation_error}"
+  append_step_summary
   echo "::endgroup::"
   exit 1
 fi
@@ -133,6 +146,7 @@ if [[ -n "${stderr}" ]]; then
 fi
 
 echo "::endgroup::"
+append_step_summary
 
 if [[ "${status}" != "Success" ]]; then
   echo "SSM command ${COMMAND_ID} finished with status ${status}." >&2

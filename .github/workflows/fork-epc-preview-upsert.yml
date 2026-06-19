@@ -70,7 +70,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.freshness.outputs.should_deploy == 'true' && (github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full')
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Resolve preview metadata
         if: steps.freshness.outputs.should_deploy == 'true'
@@ -121,7 +121,7 @@ jobs:
 
       - name: Build and push app image
         if: steps.freshness.outputs.should_deploy == 'true' && (github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full')
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -132,8 +132,12 @@ jobs:
           tags: |
             ${{ steps.ecr.outputs.image_uri }}
             ${{ steps.ecr.outputs.repository_url }}:epc-latest
-          cache-from: type=gha,scope=epc-preview-app
-          cache-to: type=gha,mode=max,scope=epc-preview-app
+          cache-from: |
+            type=gha,scope=epc-preview-app
+            type=registry,ref=${{ steps.ecr.outputs.repository_url }}:epc-buildcache
+          cache-to: |
+            type=gha,mode=max,scope=epc-preview-app
+            type=registry,ref=${{ steps.ecr.outputs.repository_url }}:epc-buildcache,mode=max,oci-mediatypes=true,image-manifest=true
 
       - name: Prepare SSM logging
         if: steps.freshness.outputs.should_deploy == 'true'
@@ -590,6 +594,7 @@ jobs:
           echo "preview_target_group_arn=${TARGET_GROUP_ARN}" >> "$GITHUB_OUTPUT"
 
       - name: Smoke test preview
+        id: smoke
         if: steps.freshness.outputs.should_deploy == 'true'
         env:
           BASE_URL: ${{ steps.preview.outputs.preview_url }}
@@ -600,7 +605,12 @@ jobs:
             /backend/projects/templates
             /backend/projects/task-templates
             /backend/projects/create
-        run: bash ./infra/aws-upstream-baseline/smoke.sh
+        run: |
+          started_seconds="${SECONDS}"
+          bash ./infra/aws-upstream-baseline/smoke.sh
+          elapsed_seconds=$((SECONDS - started_seconds))
+          echo "elapsed_seconds=${elapsed_seconds}" >> "$GITHUB_OUTPUT"
+          echo "Smoke test completed in ${elapsed_seconds}s"
 
       - name: Diagnostics
         if: always() && steps.freshness.outputs.should_deploy == 'true'
@@ -639,8 +649,17 @@ jobs:
       - name: Workflow summary
         if: always()
         run: |
-          echo "Preview URL: ${{ steps.preview.outputs.preview_url }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Branch: ${{ steps.preview.outputs.branch }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Deploy mode: ${{ steps.preview.outputs.deploy_mode }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Host: ${{ steps.preview.outputs.preview_hostname }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Port: ${{ steps.preview.outputs.preview_port }}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### EPC preview deploy"
+            echo "- Preview URL: ${{ steps.preview.outputs.preview_url }}"
+            echo "- Branch: \`${{ steps.preview.outputs.branch }}\`"
+            echo "- Deploy mode: \`${{ steps.preview.outputs.deploy_mode }}\`"
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Image: \`${{ steps.ecr.outputs.image_uri || 'unchanged config-restart image' }}\`"
+            echo "- Build cache: GitHub Actions cache \`epc-preview-app\` + ECR registry cache \`${{ steps.ecr.outputs.repository_url || 'n/a' }}:epc-buildcache\`"
+            echo "- Host: \`${{ steps.preview.outputs.preview_hostname }}\`"
+            echo "- Port: \`${{ steps.preview.outputs.preview_port }}\`"
+            echo "- Smoke test: \`${{ steps.smoke.outputs.elapsed_seconds || 'not-run' }}s\`"
+            echo "- SSM logs: \`${SSM_CLOUDWATCH_LOG_GROUP}\`"
+            echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } >> "$GITHUB_STEP_SUMMARY"
