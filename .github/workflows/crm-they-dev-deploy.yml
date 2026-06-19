@@ -25,6 +25,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   AWS_REGION: eu-west-2
   NAME_PREFIX: openmercato-crm-they-dev
   SSM_CLOUDWATCH_LOG_GROUP: /aws/ssm/openmercato-crm-they-dev/deploy
@@ -57,7 +58,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full' }}
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Resolve ECR repository
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full' }}
@@ -73,7 +74,7 @@ jobs:
 
       - name: Build and push Docker image
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full' }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -82,8 +83,12 @@ jobs:
           tags: |
             ${{ steps.ecr.outputs.image_uri }}
             ${{ steps.ecr.outputs.repository_url }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: |
+            type=gha
+            type=registry,ref=${{ steps.ecr.outputs.repository_url }}:buildcache
+          cache-to: |
+            type=gha,mode=max
+            type=registry,ref=${{ steps.ecr.outputs.repository_url }}:buildcache,mode=max,oci-mediatypes=true,image-manifest=true
 
       - name: Prepare SSM logging
         run: |
@@ -325,16 +330,25 @@ jobs:
           SSM
 
       - name: Smoke /login
+        id: public-smoke
         run: |
+          last_status=000
+          last_time_total=0
           for attempt in $(seq 1 40); do
-            status="$(curl -sk -o /tmp/crm-login.html -w '%{http_code}' https://crm.they.dev/login || true)"
+            read -r status time_total < <(curl -sk -o /tmp/crm-login.html -w '%{http_code} %{time_total}' https://crm.they.dev/login || printf '000 0')
+            last_status="${status}"
+            last_time_total="${time_total}"
             if [ "$status" -ge 200 ] && [ "$status" -lt 400 ]; then
-              echo "crm.they.dev/login returned $status"
+              echo "status=${status}" >> "$GITHUB_OUTPUT"
+              echo "time_total=${time_total}" >> "$GITHUB_OUTPUT"
+              echo "crm.they.dev/login returned $status in ${time_total}s"
               exit 0
             fi
-            echo "Attempt $attempt: got $status; waiting..."
+            echo "Attempt $attempt: got $status in ${time_total}s; waiting..."
             sleep 15
           done
+          echo "status=${last_status}" >> "$GITHUB_OUTPUT"
+          echo "time_total=${last_time_total}" >> "$GITHUB_OUTPUT"
           cat /tmp/crm-login.html || true
           exit 1
 
@@ -379,5 +393,9 @@ jobs:
             echo "- Branch: \`${{ github.event.inputs.branch || github.ref_name }}\`"
             echo "- Deploy mode: \`${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'full' }}\`"
             echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Image: \`${{ steps.ecr.outputs.image_uri || 'unchanged config-restart image' }}\`"
+            echo "- Build cache: GitHub Actions cache + ECR registry cache \`${{ steps.ecr.outputs.repository_url || 'n/a' }}:buildcache\`"
+            echo "- Public smoke: \`${{ steps.public-smoke.outputs.status || 'not-run' }}\` in \`${{ steps.public-smoke.outputs.time_total || 'n/a' }}s\`"
+            echo "- SSM logs: \`${SSM_CLOUDWATCH_LOG_GROUP}\`"
             echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           } >> "$GITHUB_STEP_SUMMARY"
