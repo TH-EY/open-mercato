@@ -63,8 +63,43 @@ function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length ? value.trim() : null
 }
 
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function compactReference(id: string): string {
+  return `#${id.slice(0, 8)}`
+}
+
+function joinedName(record: Record<string, unknown>): string | null {
+  const first = text(record.firstName) ?? text(record.first_name) ?? text(record.givenName) ?? text(record.given_name)
+  const last = text(record.lastName) ?? text(record.last_name) ?? text(record.familyName) ?? text(record.family_name)
+  return text([first, last].filter(Boolean).join(' '))
+}
+
+function readDirectLabel(record: Record<string, unknown>): string | null {
+  return text(record.name) ??
+    text(record.displayName) ??
+    text(record.display_name) ??
+    text(record.fullName) ??
+    text(record.full_name) ??
+    joinedName(record) ??
+    text(record.title) ??
+    text(record.label) ??
+    text(record.email)
+}
+
 function readLabel(record: Record<string, unknown>, fallback: string): string {
-  return text(record.name) ?? text(record.displayName) ?? text(record.title) ?? text(record.email) ?? fallback
+  const direct = readDirectLabel(record)
+  if (direct) return direct
+
+  for (const key of ['user', 'team', 'role', 'resource', 'resourceType', 'resource_type']) {
+    const nested = objectValue(record[key])
+    const nestedLabel = nested ? readDirectLabel(nested) : null
+    if (nestedLabel) return nestedLabel
+  }
+
+  return compactReference(fallback)
 }
 
 async function loadOptions(path: string): Promise<LookupOption[]> {
