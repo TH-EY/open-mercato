@@ -200,11 +200,11 @@ export function ServiceWorkRequirements({ value, onChange, showHeader = true }: 
           const targetOptions = lookups[row.targetType] ?? []
           return (
             <div key={`${row.id ?? 'new'}-${index}`} className="rounded-md border p-3">
-              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(120px,0.7fr)_minmax(120px,0.7fr)_auto]">
-                <label className="space-y-1 text-xs font-medium text-muted-foreground">
+              <div className="grid gap-3 md:grid-cols-[minmax(8rem,0.9fr)_minmax(16rem,1.8fr)_minmax(8rem,0.8fr)_minmax(6rem,0.65fr)_auto]">
+                <label className="min-w-0 space-y-1 text-xs font-medium text-muted-foreground">
                   <span>{t('catalog.services.work.field.targetType', 'Target')}</span>
                   <select
-                    className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                    className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-sm"
                     value={row.targetType}
                     onChange={(event) => {
                       const nextType = event.target.value as CatalogServiceWorkTargetType
@@ -220,19 +220,19 @@ export function ServiceWorkRequirements({ value, onChange, showHeader = true }: 
                 </label>
 
                 {row.targetType === 'generic' ? (
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                  <label className="min-w-0 space-y-1 text-xs font-medium text-muted-foreground">
                     <span>{t('catalog.services.work.field.label', 'Label')}</span>
                     <input
-                      className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                      className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-sm"
                       value={row.labelSnapshot}
                       onChange={(event) => updateRow(index, { labelSnapshot: event.target.value, targetId: null })}
                     />
                   </label>
                 ) : (
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                  <label className="min-w-0 space-y-1 text-xs font-medium text-muted-foreground">
                     <span>{t('catalog.services.work.field.reference', 'Reference')}</span>
                     <select
-                      className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                      className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-sm"
                       value={row.targetId ?? ''}
                       onChange={(event) => updateRow(index, { targetId: event.target.value || null })}
                     >
@@ -244,10 +244,10 @@ export function ServiceWorkRequirements({ value, onChange, showHeader = true }: 
                   </label>
                 )}
 
-                <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                <label className="min-w-0 space-y-1 text-xs font-medium text-muted-foreground">
                   <span>{t('catalog.services.work.field.allocationMode', 'Mode')}</span>
                   <select
-                    className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                    className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-sm"
                     value={row.allocationMode}
                     onChange={(event) => {
                       const nextMode = event.target.value as CatalogServiceWorkAllocationMode
@@ -262,10 +262,10 @@ export function ServiceWorkRequirements({ value, onChange, showHeader = true }: 
                   </select>
                 </label>
 
-                <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                <label className="min-w-0 space-y-1 text-xs font-medium text-muted-foreground">
                   <span>{t('catalog.services.work.field.value', 'Value')}</span>
                   <input
-                    className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                    className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-sm"
                     type="text"
                     inputMode="decimal"
                     value={allocationInputValue(row.allocationValue)}

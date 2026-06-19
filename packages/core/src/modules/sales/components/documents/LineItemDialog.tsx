@@ -48,7 +48,12 @@ import {
 import { E } from "#generated/entities.ids.generated";
 import { useT } from "@open-mercato/shared/lib/i18n/context";
 import { useOrganizationScopeDetail } from "@open-mercato/shared/lib/frontend/useOrganizationScope";
-import { formatMoney, normalizeNumber } from "./lineItemUtils";
+import {
+  buildServiceLookupSubtitle,
+  formatMoney,
+  normalizeCurrencyCode,
+  normalizeNumber,
+} from "./lineItemUtils";
 import type { SalesLineRecord } from "./lineItemTypes";
 import {
   normalizeCustomFieldSubmitValue,
@@ -828,10 +833,15 @@ export function LineItemDialog({
           const option = mapServiceOption(item);
           if (!option) return null;
           serviceOptionsRef.current.set(option.id, option);
+          const subtitle = buildServiceLookupSubtitle(
+            option.title,
+            option.scope,
+            option.description,
+          );
           return {
             id: option.id,
             title: option.title,
-            subtitle: option.scope ?? option.description ?? undefined,
+            subtitle,
             icon: option.defaultMediaUrl ? (
               <img
                 src={option.defaultMediaUrl}
@@ -1322,6 +1332,52 @@ export function LineItemDialog({
     }
   }, []);
 
+  const isFirstDocumentLine = React.useCallback(async (): Promise<boolean> => {
+    const resolvedDocumentId =
+      typeof documentId === "string" && documentId.trim().length
+        ? documentId.trim()
+        : null;
+    if (!resolvedDocumentId) return false;
+    try {
+      const params = new URLSearchParams({
+        [documentKey]: resolvedDocumentId,
+        page: "1",
+        pageSize: "1",
+      });
+      const response = await apiCall<{ items?: unknown[]; total?: number }>(
+        `/api/${resourcePath}?${params.toString()}`,
+        undefined,
+        { fallback: { items: [], total: 0 } },
+      );
+      const total = normalizeNumber(response.result?.total, Number.NaN);
+      if (Number.isFinite(total)) return total === 0;
+      return Array.isArray(response.result?.items) && response.result.items.length === 0;
+    } catch (err) {
+      console.error("sales.document.items.lineCount", err);
+      return false;
+    }
+  }, [documentId, documentKey, resourcePath]);
+
+  const syncDocumentCurrency = React.useCallback(
+    async (lineCurrency: string) => {
+      const normalizedLineCurrency = normalizeCurrencyCode(lineCurrency);
+      if (!normalizedLineCurrency) return;
+      const documentResourcePath =
+        kind === "order" ? "sales/orders" : "sales/quotes";
+      await updateCrud(
+        documentResourcePath,
+        { id: documentId, currencyCode: normalizedLineCurrency },
+        {
+          errorMessage: t(
+            "sales.documents.items.errorCurrencySync",
+            "Failed to align document currency with the first line.",
+          ),
+        },
+      );
+    },
+    [documentId, kind, t],
+  );
+
   const fetchLineStatusItems = React.useCallback(
     async (query?: string): Promise<LookupSelectItem[]> => {
       const options =
@@ -1488,10 +1544,9 @@ export function LineItemDialog({
           ? (priceOptions.find((price) => price.id === values.priceId) ?? null)
           : null;
       const resolvedCurrency =
-        (values.currencyCode as string | null | undefined) ??
-        selectedPrice?.currencyCode ??
-        currencyCode ??
-        null;
+        normalizeCurrencyCode(values.currencyCode) ??
+        normalizeCurrencyCode(selectedPrice?.currencyCode) ??
+        normalizeCurrencyCode(currencyCode);
       if (!resolvedCurrency) {
         throw createCrudFormError(
           t("sales.documents.items.errorCurrency", "Currency is required."),
@@ -1503,6 +1558,10 @@ export function LineItemDialog({
           },
         );
       }
+      const shouldSyncDocumentCurrency =
+        !editingId &&
+        normalizeCurrencyCode(currencyCode) !== resolvedCurrency &&
+        (await isFirstDocumentLine());
 
       const resolvedNameRaw = (values.name ?? "").toString().trim();
       const resolvedName = isCustomLine
@@ -1608,7 +1667,7 @@ export function LineItemDialog({
         serviceId: isServiceLine && values.serviceId ? String(values.serviceId) : undefined,
         quantity: qtyNumber,
         quantityUnit: resolvedQuantityUnit ?? undefined,
-        currencyCode: String(resolvedCurrency),
+        currencyCode: resolvedCurrency,
         priceId:
           isProductLine && values.priceId ? String(values.priceId) : undefined,
         priceMode: resolvedPriceMode,
@@ -1651,6 +1710,9 @@ export function LineItemDialog({
             ),
         );
         if (result.ok) {
+          if (shouldSyncDocumentCurrency) {
+            await syncDocumentCurrency(resolvedCurrency);
+          }
           if (onSaved) await onSaved();
           closeDialog();
         }
@@ -1679,6 +1741,8 @@ export function LineItemDialog({
       variantOption,
       onSaved,
       closeDialog,
+      syncDocumentCurrency,
+      isFirstDocumentLine,
       resolvedOrganizationId,
       resolvedTenantId,
     ],
@@ -1858,7 +1922,11 @@ export function LineItemDialog({
                           {
                             id: serviceOption.id,
                             title: serviceOption.title,
-                            subtitle: serviceOption.scope ?? serviceOption.description ?? undefined,
+                            subtitle: buildServiceLookupSubtitle(
+                              serviceOption.title,
+                              serviceOption.scope,
+                              serviceOption.description,
+                            ),
                             icon: serviceOption.defaultMediaUrl ? (
                               <img
                                 src={serviceOption.defaultMediaUrl}

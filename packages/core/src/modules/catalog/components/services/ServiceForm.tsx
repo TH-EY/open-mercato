@@ -105,7 +105,7 @@ export function normalizeServiceMediaItem(input: Record<string, unknown>): Catal
     id,
     url,
     fileName: label,
-    fileSize: typeof input.fileSize === 'number' ? input.fileSize : 0,
+    fileSize: typeof input.fileSize === 'number' ? input.fileSize : undefined,
     thumbnailUrl: url,
   }
 }
