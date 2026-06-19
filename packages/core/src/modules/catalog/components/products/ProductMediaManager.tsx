@@ -12,7 +12,7 @@ export type ProductMediaItem = {
   id: string
   url: string
   fileName: string
-  fileSize: number
+  fileSize?: number | null
   thumbnailUrl?: string | null
 }
 
@@ -29,8 +29,8 @@ type Props = {
   showLabel?: boolean
 }
 
-function humanFileSize(size: number): string {
-  if (!Number.isFinite(size)) return `${size}`
+function humanFileSize(size: number | null | undefined): string | null {
+  if (typeof size !== 'number' || !Number.isFinite(size)) return null
   const units = ['B', 'KB', 'MB', 'GB']
   let idx = 0
   let value = size
@@ -196,6 +196,7 @@ export function ProductMediaManager({
           {items.map((item) => {
             const isDefault = defaultMediaId === item.id
             const slug = slugifyAttachmentFileName(item.fileName)
+            const displaySize = humanFileSize(item.fileSize)
             const thumbnail =
               item.thumbnailUrl ||
               buildAttachmentImageUrl(item.id, { width: 360, height: 360, slug })
@@ -226,7 +227,7 @@ export function ProductMediaManager({
                 </div>
                 <div className="p-2">
                   <p className="line-clamp-1 text-sm font-medium">{item.fileName}</p>
-                  <p className="text-xs text-muted-foreground">{humanFileSize(item.fileSize)}</p>
+                  {displaySize ? <p className="text-xs text-muted-foreground">{displaySize}</p> : null}
                   {isDefault ? (
                     <p className="text-xs font-semibold text-primary">
                       {t(`${translationPrefix}.default`, 'Default preview')}

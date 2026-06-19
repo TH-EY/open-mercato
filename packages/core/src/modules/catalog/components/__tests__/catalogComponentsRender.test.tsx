@@ -44,7 +44,7 @@ import { ProductCategorizeSection } from '../products/ProductCategorizeSection'
 import { ProductMediaManager } from '../products/ProductMediaManager'
 import ProductsDataTable from '../products/ProductsDataTable'
 import { VariantBuilder } from '../products/VariantBuilder'
-import { ServiceForm, buildServicePayload, createServiceInitialValues, normalizeServiceDefaultPriceAmount } from '../services/ServiceForm'
+import { ServiceForm, buildServicePayload, createServiceInitialValues, normalizeServiceDefaultPriceAmount, normalizeServiceMediaItem } from '../services/ServiceForm'
 import { ServiceWorkRequirements } from '../services/ServiceWorkRequirements'
 import { formatServiceDefaultPrice } from '../services/ServicesDataTable'
 import type { VariantFormValues } from '../products/variantForm'
@@ -460,6 +460,19 @@ describe('catalog module components', () => {
     expect(formatted).toMatch(/6[\s,.]?767[,.]00/)
     expect(normalizeServiceDefaultPriceAmount('6767.1200')).toBe('6767.12')
     expect(normalizeServiceDefaultPriceAmount('6767.1234')).toBe('6767.1234')
+  })
+
+  it('does not invent a zero-byte service media size when the API omits size metadata', () => {
+    const item = normalizeServiceMediaItem({
+      id: 'att-1',
+      fileName: 'scope.png',
+      url: 'https://cdn.local/scope.png',
+    })
+    expect(item).toEqual(expect.objectContaining({
+      id: 'att-1',
+      fileName: 'scope.png',
+    }))
+    expect(item?.fileSize).toBeUndefined()
   })
 
   it('allows integer and decimal work requirement allocation values', () => {
