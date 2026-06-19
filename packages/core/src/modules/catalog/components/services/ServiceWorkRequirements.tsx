@@ -19,7 +19,7 @@ export type ServiceWorkRequirementDraft = {
   targetId?: string | null
   labelSnapshot: string
   allocationMode: CatalogServiceWorkAllocationMode
-  allocationValue: number
+  allocationValue: number | string
   sortOrder?: number
   metadata?: Record<string, unknown>
 }
@@ -34,6 +34,7 @@ type LookupState = Record<CatalogServiceWorkTargetType, LookupOption[]>
 type Props = {
   value: ServiceWorkRequirementDraft[]
   onChange: (next: ServiceWorkRequirementDraft[]) => void
+  showHeader?: boolean
 }
 
 type ApiListResponse = {
@@ -107,7 +108,13 @@ function createRequirement(sortOrder: number): ServiceWorkRequirementDraft {
   }
 }
 
-export function ServiceWorkRequirements({ value, onChange }: Props) {
+function allocationInputValue(value: ServiceWorkRequirementDraft['allocationValue']): string {
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : ''
+  if (typeof value === 'string') return value
+  return ''
+}
+
+export function ServiceWorkRequirements({ value, onChange, showHeader = true }: Props) {
   const t = useT()
   const scopeVersion = useOrganizationScopeVersion()
   const [lookups, setLookups] = React.useState<LookupState>(emptyLookupState)
@@ -169,7 +176,9 @@ export function ServiceWorkRequirements({ value, onChange }: Props) {
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h3 className="text-sm font-medium">{t('catalog.services.work.title', 'Work requirements')}</h3>
+          {showHeader ? (
+            <h3 className="text-sm font-medium">{t('catalog.services.work.title', 'Work requirements')}</h3>
+          ) : null}
           <p className="text-xs text-muted-foreground">
             {t('catalog.services.work.description', 'Store decoupled staff and resource references with label snapshots.')}
           </p>
@@ -257,11 +266,10 @@ export function ServiceWorkRequirements({ value, onChange }: Props) {
                   <span>{t('catalog.services.work.field.value', 'Value')}</span>
                   <input
                     className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-                    type="number"
-                    min="0.01"
-                    step={row.allocationMode === 'ratio' ? '0.01' : '0.25'}
-                    value={Number.isFinite(row.allocationValue) ? row.allocationValue : 1}
-                    onChange={(event) => updateRow(index, { allocationValue: Number(event.target.value) })}
+                    type="text"
+                    inputMode="decimal"
+                    value={allocationInputValue(row.allocationValue)}
+                    onChange={(event) => updateRow(index, { allocationValue: event.target.value })}
                   />
                 </label>
 
