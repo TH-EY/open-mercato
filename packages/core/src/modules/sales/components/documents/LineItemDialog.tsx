@@ -292,6 +292,7 @@ type SalesLineDialogProps = {
   documentId: string;
   currencyCode: string | null | undefined;
   documentUpdatedAt?: string | null;
+  existingLineCount?: number;
   organizationId: string | null;
   tenantId: string | null;
   initialLine?: SalesLineRecord | null;
@@ -520,6 +521,7 @@ export function LineItemDialog({
   documentId,
   currencyCode,
   documentUpdatedAt,
+  existingLineCount,
   organizationId,
   tenantId,
   initialLine,
@@ -1333,6 +1335,9 @@ export function LineItemDialog({
   }, []);
 
   const isFirstDocumentLine = React.useCallback(async (): Promise<boolean> => {
+    if (typeof existingLineCount === "number" && Number.isFinite(existingLineCount)) {
+      return existingLineCount === 0;
+    }
     const resolvedDocumentId =
       typeof documentId === "string" && documentId.trim().length
         ? documentId.trim()
@@ -1356,7 +1361,7 @@ export function LineItemDialog({
       console.error("sales.document.items.lineCount", err);
       return false;
     }
-  }, [documentId, documentKey, resourcePath]);
+  }, [documentId, documentKey, existingLineCount, resourcePath]);
 
   const syncDocumentCurrency = React.useCallback(
     async (lineCurrency: string) => {
