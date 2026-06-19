@@ -83,6 +83,7 @@ jobs:
             ${{ steps.ecr.outputs.image_uri }}
             ${{ steps.ecr.outputs.repository_url }}:latest
           cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Prepare SSM logging
         run: |
@@ -270,14 +271,37 @@ jobs:
 
       - name: Recreate app and worker
         env:
+          DEPLOY_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'full' }}
           SSM_STEP_NAME: Recreate app and worker
           SSM_TIMEOUT_SECONDS: 600
         run: |
-          bash scripts/crm/ssm-run-step.sh <<'SSM'
+          {
+            printf 'deploy_mode=%q\n' "${DEPLOY_MODE}"
+            cat <<'SSM'
           cd /opt/openmercato-crm
+          app_image="$(awk -F= '$1=="APP_IMAGE"{print substr($0, index($0, "=") + 1)}' .env.crm)"
+
+          container_matches_image() {
+            local container_name="$1"
+            local inspected
+            inspected="$(docker inspect \
+              --format '{{.State.Running}} {{.Config.Image}}' \
+              "${container_name}" 2>/dev/null || true)"
+            [[ "${inspected}" == "true ${app_image}" ]]
+          }
+
+          if [[ "${deploy_mode}" != "config-restart" ]] \
+            && container_matches_image openmercato-crm-app \
+            && container_matches_image openmercato-crm-worker; then
+            echo "App and worker already run ${app_image}; skipping recreate."
+            docker ps --filter name=openmercato-crm --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+            exit 0
+          fi
+
           docker compose --env-file .env.crm -f docker-compose.crm.yml up -d --no-build --remove-orphans --force-recreate app worker
           docker ps --filter name=openmercato-crm --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
           SSM
+          } | bash scripts/crm/ssm-run-step.sh
 
       - name: Healthcheck local login
         env:
