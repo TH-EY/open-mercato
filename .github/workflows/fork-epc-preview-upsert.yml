@@ -23,6 +23,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   AWS_REGION: eu-west-2
   NAME_PREFIX: openmercato-upstream-baseline-dokploy
+  ECR_REPOSITORY_NAME: openmercato-app
   SSM_CLOUDWATCH_LOG_GROUP: /aws/ssm/openmercato-upstream-baseline-dokploy/epc-preview-deploy
 
 jobs:
@@ -36,13 +37,43 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Check for stale push deploy
+        id: freshness
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_EVENT_NAME}" != "push" ]]; then
+            exit 0
+          fi
+
+          remote_sha="$(git ls-remote origin refs/heads/fork/EPC | awk '{print $1}')"
+          if [[ -z "${remote_sha}" ]]; then
+            echo "::warning::Unable to resolve remote fork/EPC head; continuing deploy."
+            exit 0
+          fi
+          if [[ "${remote_sha}" != "${GITHUB_SHA}" ]]; then
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping stale deploy for ${GITHUB_SHA}; fork/EPC is now ${remote_sha}."
+          fi
+
       - name: Configure AWS credentials
+        if: steps.freshness.outputs.should_deploy == 'true'
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Login to Amazon ECR
+        if: steps.freshness.outputs.should_deploy == 'true' && (github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full')
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        if: steps.freshness.outputs.should_deploy == 'true' && (github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full')
+        uses: docker/setup-buildx-action@v3
+
       - name: Resolve preview metadata
+        if: steps.freshness.outputs.should_deploy == 'true'
         id: preview
         shell: bash
         env:
@@ -74,7 +105,38 @@ jobs:
             echo "preview_workdir=${REMOTE_WORKDIR}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Resolve ECR repository
+        if: steps.freshness.outputs.should_deploy == 'true' && (github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full')
+        id: ecr
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPOSITORY_URL="$(aws ecr describe-repositories \
+            --region "${AWS_REGION}" \
+            --repository-names "${ECR_REPOSITORY_NAME}" \
+            --query 'repositories[0].repositoryUri' \
+            --output text)"
+          echo "repository_url=${REPOSITORY_URL}" >> "$GITHUB_OUTPUT"
+          echo "image_uri=${REPOSITORY_URL}:epc-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push app image
+        if: steps.freshness.outputs.should_deploy == 'true' && (github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full')
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            CONTAINER_PORT=3000
+          tags: |
+            ${{ steps.ecr.outputs.image_uri }}
+            ${{ steps.ecr.outputs.repository_url }}:epc-latest
+          cache-from: type=gha,scope=epc-preview-app
+          cache-to: type=gha,mode=max,scope=epc-preview-app
+
       - name: Prepare SSM logging
+        if: steps.freshness.outputs.should_deploy == 'true'
         run: |
           aws logs create-log-group \
             --region "${AWS_REGION}" \
@@ -85,6 +147,7 @@ jobs:
             --retention-in-days 14 2>/dev/null || true
 
       - name: Preflight disk and Docker usage
+        if: steps.freshness.outputs.should_deploy == 'true'
         env:
           SSM_STEP_NAME: EPC preview preflight disk and Docker usage
           SSM_TIMEOUT_SECONDS: 180
@@ -107,6 +170,7 @@ jobs:
           SSM
 
       - name: Safe Docker cleanup when disk is low
+        if: steps.freshness.outputs.should_deploy == 'true'
         env:
           SSM_STEP_NAME: EPC preview safe Docker cleanup
           SSM_TIMEOUT_SECONDS: 600
@@ -132,6 +196,7 @@ jobs:
           SSM
 
       - name: Prepare checkout and runtime config
+        if: steps.freshness.outputs.should_deploy == 'true'
         env:
           PREVIEW_ADMIN_EMAIL: ${{ secrets.EPC_PREVIEW_ADMIN_EMAIL || secrets.SMOKE_TEST_EMAIL }}
           PREVIEW_ADMIN_PASSWORD: ${{ secrets.EPC_PREVIEW_ADMIN_PASSWORD || secrets.SMOKE_TEST_PASSWORD }}
@@ -146,6 +211,7 @@ jobs:
             printf 'preview_port=%q\n' '${{ steps.preview.outputs.preview_port }}'
             printf 'preview_project=%q\n' '${{ steps.preview.outputs.preview_project }}'
             printf 'deploy_mode=%q\n' '${{ steps.preview.outputs.deploy_mode }}'
+            printf 'app_image=%q\n' '${{ steps.ecr.outputs.image_uri }}'
             printf 'workdir=%q\n' '${{ steps.preview.outputs.preview_workdir }}'
             printf 'remote_root=%q\n' '/opt/openmercato-previews'
             printf 'baseline_env_file=%q\n' '/etc/dokploy/compose/baseline-zjkhnl/code/.env'
@@ -170,12 +236,12 @@ jobs:
             git -C "$workdir" clean -fdx -e .env
           fi
 
-          python3 - <<'PY' "$baseline_env_file" "$workdir/.env" "$preview_env" "$preview_port" "$preview_hostname" "$preview_admin_email" "$preview_admin_password" "$deploy_mode"
+          python3 - <<'PY' "$baseline_env_file" "$workdir/.env" "$preview_env" "$preview_port" "$preview_hostname" "$preview_admin_email" "$preview_admin_password" "$deploy_mode" "$app_image"
           import secrets
           import sys
           from pathlib import Path
 
-          baseline, target, preview_env, preview_port, preview_host, preview_admin_email, preview_admin_password, deploy_mode = sys.argv[1:9]
+          baseline, target, preview_env, preview_port, preview_host, preview_admin_email, preview_admin_password, deploy_mode, app_image = sys.argv[1:10]
           values = {}
           existing = {}
           for line in Path(baseline).read_text().splitlines():
@@ -217,6 +283,7 @@ jobs:
               'AUTH_SECRET',
               'TENANT_DATA_ENCRYPTION_KEY',
               'MEILISEARCH_MASTER_KEY',
+              'APP_IMAGE',
               'EPC_LEAD_TENANT_ID',
               'EPC_LEAD_ORGANIZATION_ID',
               'EPC_LEAD_OWNER_USER_ID',
@@ -234,6 +301,8 @@ jobs:
                   'NOTIFICATIONS_EMAIL_FROM': values.get('NOTIFICATIONS_EMAIL_FROM') or values.get('EMAIL_FROM') or 'no-reply@they.dev',
                   'EPC_LEAD_CAPTURE_ALLOWED_ORIGINS': values.get('EPC_LEAD_CAPTURE_ALLOWED_ORIGINS') or f'https://{preview_host}',
               })
+          if app_image:
+              values['APP_IMAGE'] = app_image
           if preview_admin_email:
               values['OM_INIT_SUPERADMIN_EMAIL'] = preview_admin_email
               values['ADMIN_EMAIL'] = preview_admin_email
@@ -241,6 +310,7 @@ jobs:
               values['OM_INIT_SUPERADMIN_PASSWORD'] = preview_admin_password
           keys = [
               'APP_NAME','DEPLOY_ENV','APP_PORT','APP_URL','NEXT_PUBLIC_APP_URL',
+              'APP_IMAGE',
               'PLATFORM_PORTAL_BASE_URL','PLATFORM_DOMAINS','POSTGRES_USER','POSTGRES_PASSWORD','POSTGRES_DB',
               'JWT_SECRET','AUTH_SECRET','TENANT_DATA_ENCRYPTION_KEY','MEILISEARCH_MASTER_KEY',
               'SELF_SERVICE_ONBOARDING_ENABLED','DEMO_MODE','ADMIN_EMAIL','OM_INIT_SUPERADMIN_EMAIL',
@@ -305,16 +375,17 @@ jobs:
           git rev-parse HEAD
           echo "Branch: ${branch}"
           echo "Deploy mode: ${deploy_mode}"
-          echo "App image: open-mercato/app:${preview_env}"
+          echo "App image: ${APP_IMAGE:-open-mercato/app:${preview_env}}"
           echo "Port: ${APP_PORT}"
           SSM
           } | bash infra/aws-upstream-baseline/ssm-run-step.sh
 
-      - name: Build or verify app image
-        timeout-minutes: 55
+      - name: Pull or verify app image
+        if: steps.freshness.outputs.should_deploy == 'true'
+        timeout-minutes: 25
         env:
-          SSM_STEP_NAME: EPC preview build or verify app image
-          SSM_TIMEOUT_SECONDS: 3300
+          SSM_STEP_NAME: EPC preview pull or verify app image
+          SSM_TIMEOUT_SECONDS: 1500
         run: |
           {
             printf 'deploy_mode=%q\n' '${{ steps.preview.outputs.deploy_mode }}'
@@ -325,7 +396,7 @@ jobs:
           set -a
           . ./.env
           set +a
-          app_image="open-mercato/app:$preview_env"
+          app_image="${APP_IMAGE:-open-mercato/app:$preview_env}"
 
           if [[ "$deploy_mode" == "config-restart" ]]; then
             echo "Config restart requested; verifying existing app image instead of building."
@@ -333,30 +404,19 @@ jobs:
             exit 0
           fi
 
-          if ! timeout 30s docker image inspect opencode-mvp:latest >/dev/null 2>&1; then
-            echo "Building missing opencode-mvp helper image."
-            docker build -t opencode-mvp:latest docker/opencode
-          fi
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          aws ecr get-login-password --region eu-west-2 \
+            | docker login --username AWS --password-stdin "${account_id}.dkr.ecr.eu-west-2.amazonaws.com" >/dev/null
 
-          build_log="/tmp/openmercato-preview-${preview_env}-build.log"
-          rm -f "$build_log"
-          echo "Building new app image while the current app container stays online."
-          if ! DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain timeout 45m docker build --progress=plain \
-            --build-arg CONTAINER_PORT="${CONTAINER_PORT:-3000}" \
-            -t "$app_image" \
-            . 2>&1 | tee "$build_log"; then
-            tail -n 240 "$build_log" || true
-            exit 1
-          fi
-
-          echo "Last build log lines:"
-          tail -n 80 "$build_log" || true
-          echo "Built image:"
+          echo "Pulling prebuilt app image while the current app container stays online: ${app_image}"
+          timeout 900 docker pull "$app_image"
+          echo "Pulled image:"
           docker image inspect "$app_image" --format '{{.Id}} {{.RepoTags}} {{.Created}}'
           SSM
           } | bash infra/aws-upstream-baseline/ssm-run-step.sh
 
       - name: Recreate app without touching volumes
+        if: steps.freshness.outputs.should_deploy == 'true'
         env:
           SSM_STEP_NAME: EPC preview recreate app
           SSM_TIMEOUT_SECONDS: 900
@@ -406,6 +466,7 @@ jobs:
           } | bash infra/aws-upstream-baseline/ssm-run-step.sh
 
       - name: Local /login healthcheck
+        if: steps.freshness.outputs.should_deploy == 'true'
         env:
           SSM_STEP_NAME: EPC preview local login healthcheck
           SSM_TIMEOUT_SECONDS: 300
@@ -436,6 +497,7 @@ jobs:
           } | bash infra/aws-upstream-baseline/ssm-run-step.sh
 
       - name: Post-deploy Docker cleanup
+        if: steps.freshness.outputs.should_deploy == 'true'
         env:
           SSM_STEP_NAME: EPC preview post-deploy Docker cleanup
           SSM_TIMEOUT_SECONDS: 600
@@ -452,6 +514,7 @@ jobs:
           SSM
 
       - name: Upsert ALB routing
+        if: steps.freshness.outputs.should_deploy == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -510,6 +573,7 @@ jobs:
           echo "preview_target_group_arn=${TARGET_GROUP_ARN}" >> "$GITHUB_OUTPUT"
 
       - name: Smoke test preview
+        if: steps.freshness.outputs.should_deploy == 'true'
         env:
           BASE_URL: ${{ steps.preview.outputs.preview_url }}
           SMOKE_TEST_EMAIL: ${{ secrets.EPC_PREVIEW_ADMIN_EMAIL || secrets.SMOKE_TEST_EMAIL }}
@@ -522,7 +586,7 @@ jobs:
         run: bash ./infra/aws-upstream-baseline/smoke.sh
 
       - name: Diagnostics
-        if: always()
+        if: always() && steps.freshness.outputs.should_deploy == 'true'
         env:
           SSM_STEP_NAME: EPC preview diagnostics
           SSM_TIMEOUT_SECONDS: 300
@@ -545,7 +609,7 @@ jobs:
             set -a
             . ./.env
             set +a
-            app_image="open-mercato/app:${DEPLOY_ENV:-local}"
+            app_image="${APP_IMAGE:-open-mercato/app:${DEPLOY_ENV:-local}}"
             echo "Current app image:"
             docker image inspect "$app_image" --format '{{.Id}} {{.RepoTags}} {{.Created}}' || true
           fi
