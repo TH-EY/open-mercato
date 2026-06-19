@@ -6649,6 +6649,19 @@ const orderLineUpsertCommand: CommandHandler<
       .sort((a, b) => (a.lineNumber ?? 0) - (b.lineNumber ?? 0))
       .map((line, index) => ({ ...line, lineNumber: index + 1 }));
 
+    const firstLineCurrency =
+      typeof updatedSnapshot.currencyCode === "string"
+        ? updatedSnapshot.currencyCode.trim().toUpperCase()
+        : null;
+    if (
+      !parsed.id &&
+      lineSnapshots.length === 0 &&
+      firstLineCurrency &&
+      firstLineCurrency !== order.currencyCode
+    ) {
+      order.currencyCode = firstLineCurrency;
+    }
+
     const sourceInputs = nextLines.map((line, index) => ({
       ...line,
       statusEntryId: (line as any).statusEntryId ?? null,
@@ -7137,6 +7150,19 @@ const quoteLineUpsertCommand: CommandHandler<
     nextLines = nextLines
       .sort((a, b) => (a.lineNumber ?? 0) - (b.lineNumber ?? 0))
       .map((line, index) => ({ ...line, lineNumber: index + 1 }));
+
+    const firstLineCurrency =
+      typeof updatedSnapshot.currencyCode === "string"
+        ? updatedSnapshot.currencyCode.trim().toUpperCase()
+        : null;
+    if (
+      !parsed.id &&
+      lineSnapshots.length === 0 &&
+      firstLineCurrency &&
+      firstLineCurrency !== quote.currencyCode
+    ) {
+      quote.currencyCode = firstLineCurrency;
+    }
 
     const sourceInputs = nextLines.map((line, index) => ({
       ...line,
