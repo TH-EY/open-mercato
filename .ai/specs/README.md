@@ -103,6 +103,7 @@ Specs awaiting implementation or partially complete. Focus here for actionable w
 | [EPC Customer Portal Document Flow v2](2026-06-16-epc-customer-portal-document-flow-v2.md) | 2026-06-16 | EPC Customer Portal Document Flow v2 | Customer portal PDFs, attachments, quote comments, order timeline, payment panel, and portal acceptance audit for sales documents |
 | [Catalog Services Management](2026-06-16-catalog-services-management.md) | 2026-06-16 | Catalog Services Management | First-class sellable services in Catalog with media, categories, default pricing, structured work requirements, and additive Sales `serviceId` line integration |
 | [Call OpenMercato Business Rule Action](2026-06-18-call-openmercato-business-rule-action.md) | 2026-06-18 | Call OpenMercato Business Rule Action | Additive business-rule action for scoped internal API calls through selected endpoint and API key profile options |
+| [Dictionary Custom Field Multiselect](2026-06-19-dictionary-custom-field-multiselect.md) | 2026-06-19 | Dictionary Custom Field Multiselect | Dictionary-backed custom fields can opt into multi-select CRUD form rendering while reusing existing EAV array persistence |
 
 ### Implemented Specifications
 

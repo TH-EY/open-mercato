@@ -12,12 +12,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@open-mercato/ui/primitives/select'
+import { Checkbox } from '@open-mercato/ui/primitives/checkbox'
 import { DictionarySelectControl } from '../components/DictionarySelectControl'
 import { useDictionaryEntries } from '../components/hooks/useDictionaryEntries'
 
 type DictionaryFieldDefinition = {
   dictionaryId?: string
   dictionaryInlineCreate?: boolean
+  multi?: boolean
   defaultValue?: string
 }
 
@@ -85,6 +87,7 @@ function DictionaryFieldDefEditor({ def, onChange }: { def: { configJson?: Dicti
   const [error, setError] = React.useState<string | null>(null)
   const selectedId = typeof def?.configJson?.dictionaryId === 'string' ? def?.configJson?.dictionaryId : ''
   const inlineCreate = def?.configJson?.dictionaryInlineCreate !== false
+  const isMulti = def?.configJson?.multi === true
 
   React.useEffect(() => {
     let cancelled = false
@@ -173,15 +176,27 @@ function DictionaryFieldDefEditor({ def, onChange }: { def: { configJson?: Dicti
         </div>
       ) : null}
       <label className="inline-flex items-center gap-2 text-xs">
-        <input
-          type="checkbox"
-          checked={inlineCreate}
-          onChange={(event) => onChange({ dictionaryInlineCreate: event.target.checked })}
+        <Checkbox
+          checked={isMulti}
+          onCheckedChange={(checked) => {
+            const enabled = checked === true
+            onChange({ multi: enabled, defaultValue: enabled ? undefined : def?.configJson?.defaultValue })
+          }}
           disabled={!selectedId}
         />
-        {t('dictionaries.customFields.allowInlineCreate', 'Allow inline creation inside forms')}
+        {t('dictionaries.customFields.allowMultiple', 'Allow selecting multiple entries')}
       </label>
-      {selectedId ? (
+      {!isMulti ? (
+        <label className="inline-flex items-center gap-2 text-xs">
+          <Checkbox
+            checked={inlineCreate}
+            onCheckedChange={(checked) => onChange({ dictionaryInlineCreate: checked === true })}
+            disabled={!selectedId}
+          />
+          {t('dictionaries.customFields.allowInlineCreate', 'Allow inline creation inside forms')}
+        </label>
+      ) : null}
+      {selectedId && !isMulti ? (
         <DictionaryDefaultSelector
           dictionaryId={selectedId}
           defaultValue={typeof def?.configJson?.defaultValue === 'string' ? def.configJson.defaultValue : ''}
