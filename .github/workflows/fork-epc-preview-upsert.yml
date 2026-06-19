@@ -387,10 +387,20 @@ jobs:
           SSM_STEP_NAME: EPC preview pull or verify app image
           SSM_TIMEOUT_SECONDS: 1500
         run: |
+          ecr_registry=''
+          ecr_password=''
+          if [[ '${{ steps.preview.outputs.deploy_mode }}' != 'config-restart' ]]; then
+            ecr_registry='${{ steps.ecr.outputs.repository_url }}'
+            ecr_registry="${ecr_registry%%/*}"
+            ecr_password="$(aws ecr get-login-password --region "${AWS_REGION}")"
+          fi
+
           {
             printf 'deploy_mode=%q\n' '${{ steps.preview.outputs.deploy_mode }}'
             printf 'preview_env=%q\n' '${{ steps.preview.outputs.preview_runtime_env }}'
             printf 'workdir=%q\n' '${{ steps.preview.outputs.preview_workdir }}'
+            printf 'ecr_registry=%q\n' "${ecr_registry}"
+            printf 'ecr_password=%q\n' "${ecr_password}"
             cat <<'SSM'
           cd "$workdir"
           set -a
@@ -404,9 +414,16 @@ jobs:
             exit 0
           fi
 
-          account_id="$(aws sts get-caller-identity --query Account --output text)"
-          aws ecr get-login-password --region eu-west-2 \
-            | docker login --username AWS --password-stdin "${account_id}.dkr.ecr.eu-west-2.amazonaws.com" >/dev/null
+          if [[ -z "${ecr_registry}" || -z "${ecr_password}" ]]; then
+            echo "Missing ECR registry or login token for full deploy." >&2
+            exit 1
+          fi
+          printf '%s' "${ecr_password}" | docker login --username AWS --password-stdin "${ecr_registry}" >/dev/null
+          unset ecr_password
+          cleanup_ecr_login() {
+            docker logout "${ecr_registry}" >/dev/null 2>&1 || true
+          }
+          trap cleanup_ecr_login EXIT
 
           echo "Pulling prebuilt app image while the current app container stays online: ${app_image}"
           timeout 900 docker pull "$app_image"
