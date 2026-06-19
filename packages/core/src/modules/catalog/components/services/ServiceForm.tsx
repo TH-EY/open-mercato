@@ -219,12 +219,14 @@ const FALLBACK_CURRENCY_OPTIONS: DictionaryOption[] = AMOUNT_CURRENCIES.map((cur
 
 function DefaultServicePriceField({
   id,
+  initialCurrencyCode,
   value,
   values,
   setValue,
   setFormValue,
 }: {
   id: string
+  initialCurrencyCode?: string | null
   value: unknown
   values?: Record<string, unknown>
   setValue: (value: unknown) => void
@@ -232,7 +234,7 @@ function DefaultServicePriceField({
 }) {
   const t = useT()
   const { data: currencyDictionary, refetch: refetchCurrencyDictionary } = useCurrencyDictionary()
-  const selectedCurrency = trimOptional(values?.defaultPriceCurrencyCode) ?? ''
+  const selectedCurrency = trimOptional(values?.defaultPriceCurrencyCode) ?? trimOptional(initialCurrencyCode) ?? ''
 
   const currencyOptionsLoader = React.useCallback(async (): Promise<DictionaryOption[]> => {
     const ensureSelectedOption = (options: DictionaryOption[]) => {
@@ -373,12 +375,19 @@ export function ServiceForm({
       component: ({ id, value, values, setValue, setFormValue }) => (
         <DefaultServicePriceField
           id={id}
+          initialCurrencyCode={normalizedInitialValues.defaultPriceCurrencyCode}
           value={value}
           values={values}
           setValue={setValue}
           setFormValue={setFormValue}
         />
       ),
+    },
+    {
+      id: 'defaultPriceCurrencyCode',
+      label: '',
+      type: 'custom',
+      component: () => null,
     },
     {
       id: 'mediaItems',
@@ -405,7 +414,7 @@ export function ServiceForm({
       label: t('catalog.services.form.field.isActive', 'Active'),
       type: 'checkbox',
     },
-  ], [t])
+  ], [normalizedInitialValues.defaultPriceCurrencyCode, t])
 
   const groups = React.useMemo<CrudFormGroup[]>(() => [
     {
