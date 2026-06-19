@@ -54,7 +54,7 @@ export function createServiceInitialValues(overrides: Partial<ServiceFormValues>
     scope: '',
     categoryId: '',
     defaultPriceAmount: '',
-    defaultPriceCurrencyCode: 'USD',
+    defaultPriceCurrencyCode: '',
     defaultMediaId: null,
     defaultMediaUrl: '',
     mediaDraftId: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -117,7 +117,7 @@ export function buildServicePayload(values: ServiceFormValues, t: ReturnType<typ
   }
   const currency = trimOptional(values.defaultPriceCurrencyCode)
   const price = toPriceAmount(values.defaultPriceAmount)
-  if ((price && !currency) || (!price && currency && currency !== 'USD')) {
+  if (price && !currency) {
     const message = t('catalog.services.form.errors.priceCurrency', 'Provide both default price and currency, or leave both empty.')
     throw createCrudFormError(message, { defaultPriceAmount: message, defaultPriceCurrencyCode: message })
   }
@@ -231,9 +231,21 @@ function DefaultServicePriceField({
 }) {
   const t = useT()
   const { data: currencyDictionary, refetch: refetchCurrencyDictionary } = useCurrencyDictionary()
-  const selectedCurrency = trimOptional(values?.defaultPriceCurrencyCode) ?? 'USD'
+  const selectedCurrency = trimOptional(values?.defaultPriceCurrencyCode) ?? ''
 
   const currencyOptionsLoader = React.useCallback(async (): Promise<DictionaryOption[]> => {
+    const ensureSelectedOption = (options: DictionaryOption[]) => {
+      if (!selectedCurrency || options.some((option) => option.value === selectedCurrency)) return options
+      return [
+        ...options,
+        {
+          value: selectedCurrency,
+          label: selectedCurrency,
+          color: null,
+          icon: null,
+        },
+      ]
+    }
     const mapEntries = (entries: Array<{ value: string; label: string; color?: string | null; icon?: string | null }>) =>
       entries.map((entry) => ({
         value: entry.value,
@@ -242,13 +254,13 @@ function DefaultServicePriceField({
         icon: entry.icon ?? null,
       }))
     try {
-      if (currencyDictionary?.entries?.length) return mapEntries(currencyDictionary.entries)
+      if (currencyDictionary?.entries?.length) return ensureSelectedOption(mapEntries(currencyDictionary.entries))
       const payload = await refetchCurrencyDictionary()
-      return payload.entries.length ? mapEntries(payload.entries) : FALLBACK_CURRENCY_OPTIONS
+      return ensureSelectedOption(payload.entries.length ? mapEntries(payload.entries) : FALLBACK_CURRENCY_OPTIONS)
     } catch {
-      return FALLBACK_CURRENCY_OPTIONS
+      return ensureSelectedOption(FALLBACK_CURRENCY_OPTIONS)
     }
-  }, [currencyDictionary, refetchCurrencyDictionary])
+  }, [currencyDictionary, refetchCurrencyDictionary, selectedCurrency])
 
   const currencyLabels = React.useMemo(() => ({
     placeholder: t('catalog.services.form.field.currencyPlaceholder', 'Select currency…'),

@@ -194,17 +194,41 @@ jest.mock('@open-mercato/ui/backend/utils/customFieldColumns', () => ({
 }))
 
 jest.mock('@open-mercato/core/modules/dictionaries/components/DictionaryEntrySelect', () => ({
-  DictionaryEntrySelect: ({ value, onChange }: { value?: string | null; onChange?: (value: string | null) => void }) => (
+  DictionaryEntrySelect: ({
+    value,
+    onChange,
+    fetchOptions,
+  }: {
+    value?: string | null
+    onChange?: (value: string | null) => void
+    fetchOptions?: () => Promise<Array<{ value: string; label: string }>>
+  }) => {
+    const React2 = require('react') as typeof import('react')
+    const [options, setOptions] = React2.useState<Array<{ value: string; label: string }>>([])
+    React2.useEffect(() => {
+      fetchOptions?.().then(setOptions).catch(() => setOptions([]))
+    }, [fetchOptions])
+    return (
     <select value={value ?? ''} onChange={(event) => onChange?.(event.target.value || null)}>
       <option value="">Select</option>
-      <option value="USD">USD — US Dollar</option>
-      <option value="GBP">GBP — Pound Sterling</option>
+      {options.map((option) => (
+        <option key={option.value} value={option.value}>{option.label}</option>
+      ))}
     </select>
-  ),
+    )
+  },
 }))
 
 jest.mock('@open-mercato/core/modules/customers/components/detail/hooks/useCurrencyDictionary', () => ({
-  useCurrencyDictionary: () => ({ data: { entries: [] }, refetch: jest.fn().mockResolvedValue({ entries: [] }) }),
+  useCurrencyDictionary: () => ({
+    data: {
+      entries: [
+        { value: 'GBP', label: 'Pound Sterling', color: null, icon: null },
+        { value: 'PLN', label: 'Polish Zloty', color: null, icon: null },
+      ],
+    },
+    refetch: jest.fn().mockResolvedValue({ entries: [] }),
+  }),
 }))
 
 jest.mock('@open-mercato/shared/lib/i18n/context', () => {
@@ -400,7 +424,7 @@ describe('catalog module components', () => {
     expect(screen.getByRole('img', { name: /main\.jpg/i })).toBeInTheDocument()
   })
 
-  it('renders ServiceForm without duplicate media/work headings and normalizes trailing-zero price scale', () => {
+  it('renders ServiceForm without duplicate media/work headings and normalizes trailing-zero price scale', async () => {
     render(
       <ServiceForm
         title="Edit service"
@@ -417,7 +441,17 @@ describe('catalog module components', () => {
     expect(screen.getAllByText('Media')).toHaveLength(1)
     expect(screen.getAllByText('Work requirements')).toHaveLength(1)
     expect(screen.getByDisplayValue('6767.00')).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: /USD — US Dollar/ })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('option', { name: 'USD' })).toBeInTheDocument())
+  })
+
+  it('starts new services without a hidden default currency selection', () => {
+    expect(createServiceInitialValues().defaultPriceCurrencyCode).toBe('')
+    const t = (_key: string, fallback?: string) => fallback ?? _key
+    expect(() => buildServicePayload(createServiceInitialValues({
+      title: 'Needs currency',
+      defaultPriceAmount: '10',
+      defaultPriceCurrencyCode: '',
+    }), t)).toThrow(/price and currency/)
   })
 
   it('formats service default prices as money labels instead of raw storage scale', () => {
