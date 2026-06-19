@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { Button } from '@open-mercato/ui/primitives/button'
+import { IconButton } from '@open-mercato/ui/primitives/icon-button'
 import { apiCall } from '@open-mercato/ui/backend/utils/apiCall'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { useOrganizationScopeVersion } from '@open-mercato/shared/lib/frontend/useOrganizationScope'
@@ -200,7 +201,7 @@ export function ServiceWorkRequirements({ value, onChange, showHeader = true }: 
           const targetOptions = lookups[row.targetType] ?? []
           return (
             <div key={`${row.id ?? 'new'}-${index}`} className="rounded-md border p-3">
-              <div className="grid gap-3 md:grid-cols-[minmax(8rem,0.9fr)_minmax(16rem,1.8fr)_minmax(8rem,0.8fr)_minmax(6rem,0.65fr)_auto]">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-[minmax(7rem,0.8fr)_minmax(14rem,1.5fr)_minmax(7rem,0.8fr)_minmax(5.5rem,0.6fr)_2rem]">
                 <label className="min-w-0 space-y-1 text-xs font-medium text-muted-foreground">
                   <span>{t('catalog.services.work.field.targetType', 'Target')}</span>
                   <select
@@ -273,10 +274,10 @@ export function ServiceWorkRequirements({ value, onChange, showHeader = true }: 
                   />
                 </label>
 
-                <div className="flex items-end">
-                  <Button type="button" variant="ghost" size="icon" onClick={() => removeRow(index)} aria-label={t('catalog.services.work.actions.remove', 'Remove')}>
+                <div className="flex min-w-0 items-end justify-end sm:col-span-2 2xl:col-span-1">
+                  <IconButton variant="ghost" size="default" onClick={() => removeRow(index)} aria-label={t('catalog.services.work.actions.remove', 'Remove')}>
                     <Trash2 className="h-4 w-4" />
-                  </Button>
+                  </IconButton>
                 </div>
               </div>
             </div>
