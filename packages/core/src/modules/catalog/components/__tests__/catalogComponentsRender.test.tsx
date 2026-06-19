@@ -457,7 +457,8 @@ describe('catalog module components', () => {
   it('formats service default prices as money labels instead of raw storage scale', () => {
     const formatted = formatServiceDefaultPrice('6767.0000', 'USD')
     expect(formatted).not.toContain('0000')
-    expect(formatted).toMatch(/6[\s,.]?767[,.]00/)
+    expect(formatted).toBe('USD 6,767.00')
+    expect(formatServiceDefaultPrice('495.0000', 'GBP', '—', 'en')).toBe('GBP 495.00')
     expect(normalizeServiceDefaultPriceAmount('6767.1200')).toBe('6767.12')
     expect(normalizeServiceDefaultPriceAmount('6767.1234')).toBe('6767.1234')
   })
