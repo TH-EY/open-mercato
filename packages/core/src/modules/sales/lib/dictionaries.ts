@@ -78,6 +78,8 @@ export function getSalesDictionaryDefinition(kind: SalesDictionaryKind): SalesDi
   return DEFINITIONS[kind]
 }
 
+const SALES_DICTIONARY_MANAGER_VISIBILITY = 'default'
+
 export async function ensureSalesDictionary(params: {
   em: EntityManager
   tenantId: string
@@ -101,10 +103,15 @@ export async function ensureSalesDictionary(params: {
       description: def.description,
       isSystem: true,
       isActive: true,
-      managerVisibility: 'hidden',
+      managerVisibility: SALES_DICTIONARY_MANAGER_VISIBILITY,
       createdAt: new Date(),
       updatedAt: new Date(),
     })
+    em.persist(dictionary)
+    await em.flush()
+  } else if (dictionary.managerVisibility !== SALES_DICTIONARY_MANAGER_VISIBILITY) {
+    dictionary.managerVisibility = SALES_DICTIONARY_MANAGER_VISIBILITY
+    dictionary.updatedAt = new Date()
     em.persist(dictionary)
     await em.flush()
   }

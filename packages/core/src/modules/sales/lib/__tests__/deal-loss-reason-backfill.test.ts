@@ -1,5 +1,5 @@
 /** @jest-environment node */
-import { backfillDealLossReasonDictionary } from '../dictionaries'
+import { backfillDealLossReasonDictionary, ensureSalesDictionary } from '../dictionaries'
 
 jest.mock('@open-mercato/core/modules/dictionaries/data/entities', () => ({
   Dictionary: 'Dictionary',
@@ -256,5 +256,46 @@ describe('backfillDealLossReasonDictionary', () => {
 
     expect(result.copiedLegacyEntries).toBe(1)
     expect(entries.filter((entry) => entry.dictionary === targetDictionary).map((entry) => entry.value)).toEqual(['Price'])
+  })
+})
+
+describe('ensureSalesDictionary', () => {
+  it('creates sales dictionaries as visible in the dictionary manager', async () => {
+    const { em, dictionaries } = createFakeEntityManager({})
+
+    const dictionary = await ensureSalesDictionary({
+      em,
+      tenantId: TENANT_ID,
+      organizationId: ORGANIZATION_ID,
+      kind: 'order-status',
+    })
+
+    expect(dictionary.managerVisibility).toBe('default')
+    expect(dictionaries.find((item) => item.key === 'sales.order_status')?.managerVisibility).toBe('default')
+  })
+
+  it('makes existing hidden sales dictionaries visible in the dictionary manager', async () => {
+    const existingDictionary: DictionaryRow = {
+      id: 'order-status-dictionary',
+      tenantId: TENANT_ID,
+      organizationId: ORGANIZATION_ID,
+      key: 'sales.order_status',
+      name: 'Sales order statuses',
+      managerVisibility: 'hidden',
+      deletedAt: null,
+    }
+    const { em } = createFakeEntityManager({
+      dictionaries: [existingDictionary],
+    })
+
+    const dictionary = await ensureSalesDictionary({
+      em,
+      tenantId: TENANT_ID,
+      organizationId: ORGANIZATION_ID,
+      kind: 'order-status',
+    })
+
+    expect(dictionary.managerVisibility).toBe('default')
+    expect(existingDictionary.managerVisibility).toBe('default')
   })
 })
