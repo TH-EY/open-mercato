@@ -208,9 +208,9 @@ export default function OrganizationBrandingPage() {
                 </label>
                 <Input
                   ref={fileInputRef}
-                   id="organization-logo-file"
-                   type="file"
-                  accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                  id="organization-logo-file"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
                   onChange={(event) => {
                     const file = event.currentTarget.files?.[0]
                     if (!file) return
@@ -218,7 +218,7 @@ export default function OrganizationBrandingPage() {
                   }}
                 />
                 <p className="text-xs text-muted-foreground">
-                  {t('directory.branding.file.hint', 'PNG, JPG, WebP, or SVG works best. Uploaded files are stored as organization attachments.')}
+                  {t('directory.branding.file.hint', 'PNG, JPG, or WebP works best. Uploaded files are stored as organization attachments.')}
                 </p>
               </div>
 
