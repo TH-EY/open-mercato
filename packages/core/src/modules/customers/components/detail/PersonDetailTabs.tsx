@@ -9,6 +9,7 @@ import {
   Mail,
   Briefcase,
   Building2,
+  MapPin,
   Check,
   History,
   Paperclip,
@@ -21,6 +22,7 @@ export type PersonTabId =
   | 'emails'
   | 'deals'
   | 'companies'
+  | 'addresses'
   | 'tasks'
   | 'changelog'
   | 'files'
@@ -46,7 +48,7 @@ type PersonDetailTabsProps = {
   children: React.ReactNode
 }
 
-const SUPPORTED_TAB_IDS = new Set<PersonTabId>(['activities', 'emails', 'deals', 'companies', 'tasks', 'changelog', 'files'])
+const SUPPORTED_TAB_IDS = new Set<PersonTabId>(['activities', 'emails', 'deals', 'companies', 'addresses', 'tasks', 'changelog', 'files'])
 
 export function resolveLegacyTab(tab: string | null | undefined): PersonTabId {
   if (!tab) return 'activities'
@@ -108,6 +110,11 @@ export function PersonDetailTabs({
         label: t('customers.people.detail.tabs.companies', 'Companies'),
         icon: <Building2 className="size-4" />,
         badge: <CountBadge count={companiesCount} />,
+      },
+      {
+        id: 'addresses',
+        label: t('customers.people.detail.tabs.addresses', 'Addresses'),
+        icon: <MapPin className="size-4" />,
       },
       {
         id: 'tasks',

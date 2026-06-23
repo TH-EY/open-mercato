@@ -27,6 +27,7 @@ import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuarde
 import { createTranslatorWithFallback } from '@open-mercato/shared/lib/i18n/translate'
 
 import { ActivitiesSection } from '../../../../components/detail/ActivitiesSection'
+import { AddressesSection } from '../../../../components/detail/AddressesSection'
 import { PersonEmailThreadsTab } from '../../../../components/detail/PersonEmailThreadsTab'
 import { ActivitiesCard } from '../../../../components/detail/ActivitiesCard'
 import type { ActivityKind } from '../../../../components/detail/ActivitiesAddNewMenu'
@@ -615,6 +616,22 @@ export default function PersonDetailV2Page({ params }: { params?: { id?: string 
                         initialLinkedCompanies={data?.companies ?? []}
                         onChanged={loadData}
                         runGuardedMutation={runMutationWithContext}
+                      />
+                    )
+                  }
+
+                  if (activeTab === 'addresses') {
+                    return (
+                      <AddressesSection
+                        entityId={personId}
+                        emptyLabel={t('customers.people.detail.empty.addresses')}
+                        addActionLabel={t('customers.people.detail.addresses.add')}
+                        emptyState={{
+                          title: t('customers.people.detail.emptyState.addresses.title'),
+                          actionLabel: t('customers.people.detail.emptyState.addresses.action'),
+                        }}
+                        onActionChange={handleSectionActionChange}
+                        translator={detailTranslator}
                       />
                     )
                   }

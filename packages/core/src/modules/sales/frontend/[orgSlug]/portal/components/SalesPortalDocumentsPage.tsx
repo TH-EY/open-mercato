@@ -53,7 +53,12 @@ type PortalQuotesResponse = {
   pageSize: number
 }
 
-type PortalDocumentsResponse = PortalOrdersResponse | PortalQuotesResponse
+type PortalDocumentsErrorResponse = {
+  ok: false
+  error?: string
+}
+
+type PortalDocumentsResponse = PortalOrdersResponse | PortalQuotesResponse | PortalDocumentsErrorResponse
 
 type SalesPortalDocumentsPageProps = {
   kind: DocumentKind
@@ -99,6 +104,23 @@ function readRows(kind: DocumentKind, data: PortalDocumentsResponse | undefined)
   if (kind === 'orders' && 'orders' in data) return data.orders
   if (kind === 'quotes' && 'quotes' in data) return data.quotes
   return []
+}
+
+function readLoadError(
+  status: number,
+  data: PortalDocumentsResponse | null,
+  t: ReturnType<typeof useT>,
+): string {
+  if (data && !data.ok && data.error === 'No company association') {
+    return t(
+      'sales.portal.documents.error.companyAssociation',
+      'This portal account is not linked to a company yet. Ask your administrator to link it to the customer company before viewing orders and quotes.',
+    )
+  }
+  if (status === 403) {
+    return t('sales.portal.documents.error.forbidden', 'You do not have access to these documents.')
+  }
+  return t('sales.portal.documents.error.load', 'Failed to load documents.')
 }
 
 function readRouteParam(value: string | string[] | undefined): string {
@@ -152,7 +174,7 @@ export function SalesPortalDocumentsPage({ kind }: SalesPortalDocumentsPageProps
       if (search.trim()) params.set('search', search.trim())
 
       try {
-        const { ok, result } = await apiCall<PortalDocumentsResponse>(
+        const { ok, status, result } = await apiCall<PortalDocumentsResponse>(
           `/api/sales/portal/${kind}?${params.toString()}`,
         )
         if (cancelled) return
@@ -160,7 +182,7 @@ export function SalesPortalDocumentsPage({ kind }: SalesPortalDocumentsPageProps
           setRows([])
           setTotal(0)
           setTotalPages(1)
-          setError(t('sales.portal.documents.error.load', 'Failed to load documents.'))
+          setError(readLoadError(status, result, t))
           return
         }
         setRows(readRows(kind, result))

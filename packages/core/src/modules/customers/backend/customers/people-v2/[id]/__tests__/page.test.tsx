@@ -109,12 +109,24 @@ jest.mock('../../../../../components/detail/PersonDetailHeader', () => ({
 
 jest.mock('../../../../../components/detail/PersonDetailTabs', () => ({
   resolveLegacyTab: (tab?: string | null) => {
-    if (tab === 'activities' || tab === 'companies' || tab === 'tasks' || tab === 'deals' || tab === 'files' || tab === 'changelog') {
+    if (
+      tab === 'activities' ||
+      tab === 'companies' ||
+      tab === 'addresses' ||
+      tab === 'tasks' ||
+      tab === 'deals' ||
+      tab === 'files' ||
+      tab === 'changelog'
+    ) {
       return tab
     }
     return 'activities'
   },
   PersonDetailTabs: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}))
+
+jest.mock('../../../../../components/detail/AddressesSection', () => ({
+  AddressesSection: () => <div>addresses</div>,
 }))
 
 jest.mock('../../../../../components/detail/ActivitiesSection', () => ({
@@ -175,6 +187,16 @@ describe('PersonDetailV2Page', () => {
 
     await waitFor(() => {
       expect(screen.getByText('changelog')).toBeInTheDocument()
+    })
+  })
+
+  it('renders the shared addresses tab on the person v2 page', async () => {
+    activeTabParam = 'addresses'
+
+    renderWithProviders(<PersonDetailV2Page params={{ id: 'person-123' }} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('addresses')).toBeInTheDocument()
     })
   })
 

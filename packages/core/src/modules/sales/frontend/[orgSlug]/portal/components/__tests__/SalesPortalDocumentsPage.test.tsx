@@ -152,4 +152,37 @@ describe('SalesPortalDocumentsPage', () => {
       expect(mockApiCall).toHaveBeenCalledWith('/api/sales/portal/quotes?page=1&pageSize=25')
     })
   })
+
+  it('shows a company-link message when portal document loading fails without company association', async () => {
+    mockApiCall.mockResolvedValue({
+      ok: false,
+      status: 403,
+      result: { ok: false, error: 'No company association' },
+    })
+
+    render(<SalesPortalDocumentsPage kind="orders" />)
+
+    expect(await screen.findByText('Unable to load documents')).toBeInTheDocument()
+    expect(screen.getByText(/not linked to a company yet/i)).toBeInTheDocument()
+    expect(screen.queryByText('Failed to load documents.')).not.toBeInTheDocument()
+  })
+
+  it('keeps successful empty order lists on the empty state', async () => {
+    mockApiCall.mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        orders: [],
+        total: 0,
+        totalPages: 1,
+        page: 1,
+        pageSize: 25,
+      },
+    })
+
+    render(<SalesPortalDocumentsPage kind="orders" />)
+
+    expect(await screen.findByText('No orders yet')).toBeInTheDocument()
+    expect(screen.queryByText('Unable to load documents')).not.toBeInTheDocument()
+  })
 })
