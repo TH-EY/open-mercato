@@ -1,6 +1,9 @@
 
 # Unreleased
 
+## 🐛 Fixes
+- 🐛 Directory: preserve uploaded organization logo aspect ratios in the backend sidebar.
+
 ## ✨ Features
 - ✨ Entities: dictionary custom fields can now opt into multi-value CRUD form rendering backed by existing dictionary entries and custom-field array persistence.
 
