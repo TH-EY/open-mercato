@@ -119,7 +119,6 @@ export const enabledModules: ModuleEntry[] = [
   { id: 'webhooks', from: '@open-mercato/webhooks' },
   { id: 'customer_accounts', from: '@open-mercato/core' },
   { id: 'portal', from: '@open-mercato/core' },
-  { id: 'epc_demo', from: '@app' },
   {
     id: 'example',
     from: '@app',
@@ -140,6 +139,10 @@ export const enabledModules: ModuleEntry[] = [
   },
   { id: 'ratelimit_probe', from: '@app' },
 ]
+
+if (parseBooleanWithDefault(process.env.OM_ENABLE_EPC_DEMO, false)) {
+  enabledModules.push({ id: 'epc_demo', from: '@app' })
+}
 
 // Official modules activated via official-modules.json / official-modules.local.json
 // (managed by `yarn official-modules`; backed by the external/official-modules submodule).

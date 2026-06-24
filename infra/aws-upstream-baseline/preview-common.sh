@@ -29,6 +29,7 @@ PREVIEW_PORT_MAX="${PREVIEW_PORT_MAX:-4899}"
 PREVIEW_RULE_PRIORITY_MIN="${PREVIEW_RULE_PRIORITY_MIN:-1000}"
 PREVIEW_RULE_PRIORITY_MAX="${PREVIEW_RULE_PRIORITY_MAX:-49999}"
 PREVIEW_REMOTE_ROOT="${PREVIEW_REMOTE_ROOT:-/opt/openmercato-previews}"
+DEMO_REMOTE_ROOT="${DEMO_REMOTE_ROOT:-/opt/openmercato-demos}"
 PREVIEW_REPO_URL="${PREVIEW_REPO_URL:-https://github.com/TH-EY/open-mercato.git}"
 BASELINE_ENV_FILE_REMOTE="${BASELINE_ENV_FILE_REMOTE:-/etc/dokploy/compose/baseline-zjkhnl/code/.env}"
 
@@ -49,6 +50,9 @@ if base.startswith("refs/heads/"):
 if base == "fork/EPC":
     print("epc")
     raise SystemExit(0)
+if base == "fork/manoj":
+    print("manoj")
+    raise SystemExit(0)
 if base.startswith("contrib/"):
     base = base[len("contrib/"):]
 base = base.lower()
@@ -60,10 +64,18 @@ PY
 }
 
 preview_hostname_for_slug() {
+  if [[ "$1" == "manoj" ]]; then
+    printf 'manoj.%s\n' "${PREVIEW_HOST_SUFFIX}"
+    return 0
+  fi
   printf 'preview-%s.%s\n' "$1" "${PREVIEW_HOST_SUFFIX}"
 }
 
 preview_runtime_env_for_slug() {
+  if [[ "$1" == "manoj" ]]; then
+    printf 'manoj\n'
+    return 0
+  fi
   python3 - <<'PY' "$1"
 import hashlib, sys
 slug = sys.argv[1]
@@ -72,6 +84,10 @@ PY
 }
 
 target_group_name_for_slug() {
+  if [[ "$1" == "manoj" ]]; then
+    printf 'om-demo-manoj\n'
+    return 0
+  fi
   python3 - <<'PY' "$1"
 import hashlib, sys
 slug = sys.argv[1]
@@ -82,8 +98,8 @@ PY
 used_preview_ports() {
   aws elbv2 describe-target-groups \
     --region "${AWS_REGION}" \
-    --query 'TargetGroups[?starts_with(TargetGroupName, `om-prv-`)].Port' \
-    --output text | tr '\t' '\n' | grep -E '^[0-9]+$' || true
+    --query 'TargetGroups[].Port' \
+    --output text | tr '\t' '\n' | grep -E '^[0-9]+$' | awk -v min="${PREVIEW_PORT_MIN}" -v max="${PREVIEW_PORT_MAX}" '$1 >= min && $1 <= max' || true
 }
 
 choose_preview_port() {
@@ -93,6 +109,26 @@ choose_preview_port() {
   existing_port="$(aws elbv2 describe-target-groups --region "${AWS_REGION}" --names "${tg_name}" --query 'TargetGroups[0].Port' --output text 2>/dev/null || true)"
   if [[ -n "${existing_port}" && "${existing_port}" != "None" ]]; then
     echo "${existing_port}"
+    return 0
+  fi
+
+  if [[ "${slug}" == "manoj" ]]; then
+    local preferred_port="${MANOJ_PORT:-4785}"
+    python3 - <<'PY' "${preferred_port}" "${PREVIEW_PORT_MIN}" "${PREVIEW_PORT_MAX}" "$(used_preview_ports | tr '\n' ' ')"
+import sys
+preferred = int(sys.argv[1])
+port_min = int(sys.argv[2])
+port_max = int(sys.argv[3])
+used = {int(x) for x in sys.argv[4].split() if x.strip()}
+if port_min <= preferred <= port_max and preferred not in used:
+    print(preferred)
+    raise SystemExit(0)
+for candidate in range(port_min, port_max + 1):
+    if candidate not in used:
+        print(candidate)
+        raise SystemExit(0)
+raise SystemExit("No free demo port available")
+PY
     return 0
   fi
 
@@ -133,18 +169,23 @@ PY
 }
 
 choose_rule_priority() {
+  local preferred_priority="${1:-}"
   local rules_json
   rules_json="$(aws elbv2 describe-rules --region "${AWS_REGION}" --listener-arn "${LISTENER_ARN}" --output json)"
-  python3 - <<'PY' "${PREVIEW_RULE_PRIORITY_MIN}" "${PREVIEW_RULE_PRIORITY_MAX}" "$rules_json"
+  python3 - <<'PY' "${PREVIEW_RULE_PRIORITY_MIN}" "${PREVIEW_RULE_PRIORITY_MAX}" "$rules_json" "${preferred_priority}"
 import json, sys
 low = int(sys.argv[1])
 high = int(sys.argv[2])
 data = json.loads(sys.argv[3])
+preferred = int(sys.argv[4]) if sys.argv[4] else None
 used = set()
 for rule in data.get("Rules", []):
     priority = rule.get("Priority")
     if priority and priority != 'default':
         used.add(int(priority))
+if preferred is not None and low <= preferred <= high and preferred not in used:
+    print(preferred)
+    raise SystemExit(0)
 for candidate in range(low, high + 1):
     if candidate not in used:
         print(candidate)

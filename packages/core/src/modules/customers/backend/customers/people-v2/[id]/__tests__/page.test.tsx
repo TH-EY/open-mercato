@@ -109,15 +109,7 @@ jest.mock('../../../../../components/detail/PersonDetailHeader', () => ({
 
 jest.mock('../../../../../components/detail/PersonDetailTabs', () => ({
   resolveLegacyTab: (tab?: string | null) => {
-    if (
-      tab === 'activities' ||
-      tab === 'companies' ||
-      tab === 'addresses' ||
-      tab === 'tasks' ||
-      tab === 'deals' ||
-      tab === 'files' ||
-      tab === 'changelog'
-    ) {
+    if (tab === 'activities' || tab === 'companies' || tab === 'tasks' || tab === 'deals' || tab === 'files' || tab === 'changelog' || tab === 'addresses') {
       return tab
     }
     return 'activities'
@@ -126,7 +118,7 @@ jest.mock('../../../../../components/detail/PersonDetailTabs', () => ({
 }))
 
 jest.mock('../../../../../components/detail/AddressesSection', () => ({
-  AddressesSection: () => <div>addresses</div>,
+  AddressesSection: () => <div>addresses-section</div>,
 }))
 
 jest.mock('../../../../../components/detail/ActivitiesSection', () => ({
@@ -236,5 +228,12 @@ describe('PersonDetailV2Page', () => {
     expect(scopedDeleteHeaderCalls).toContainEqual({
       [OPTIMISTIC_LOCK_HEADER_NAME]: '2026-05-28T09:45:00.000Z',
     })
+  })
+
+  it('renders the AddressesSection when the addresses tab is active', async () => {
+    activeTabParam = 'addresses'
+    renderWithProviders(<PersonDetailV2Page params={{ id: 'person-123' }} />)
+
+    await waitFor(() => expect(screen.getByText('addresses-section')).toBeInTheDocument())
   })
 })

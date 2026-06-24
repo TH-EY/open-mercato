@@ -542,6 +542,7 @@ export default function PersonDetailV2Page({ params }: { params?: { id?: string 
                 activitiesCount={interactionCount}
                 dealsCount={dealCount}
                 companiesCount={companyCount}
+                addressesCount={data?.counts?.addresses ?? 0}
                 tasksCount={todoCount}
                 sectionAction={sectionAction}
               >
@@ -624,11 +625,11 @@ export default function PersonDetailV2Page({ params }: { params?: { id?: string 
                     return (
                       <AddressesSection
                         entityId={personId}
-                        emptyLabel={t('customers.people.detail.empty.addresses')}
-                        addActionLabel={t('customers.people.detail.addresses.add')}
+                        emptyLabel={t('customers.people.detail.empty.addresses', 'No addresses linked to this person.')}
+                        addActionLabel={t('customers.people.detail.addresses.add', 'Add address')}
                         emptyState={{
-                          title: t('customers.people.detail.emptyState.addresses.title'),
-                          actionLabel: t('customers.people.detail.emptyState.addresses.action'),
+                          title: t('customers.people.detail.emptyState.addresses.title', 'No addresses yet'),
+                          actionLabel: t('customers.people.detail.emptyState.addresses.action', 'Add address'),
                         }}
                         onActionChange={handleSectionActionChange}
                         translator={detailTranslator}

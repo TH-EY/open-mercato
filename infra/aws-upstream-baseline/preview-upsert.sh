@@ -7,11 +7,11 @@ source "${SCRIPT_DIR}/preview-common.sh"
 
 BRANCH="${1:-${BRANCH:-${GITHUB_REF_NAME:-}}}"
 if [[ -z "${BRANCH}" ]]; then
-  echo "Usage: $0 <contrib/branch-name|fork/EPC>" >&2
+  echo "Usage: $0 <contrib/branch-name|fork/EPC|fork/manoj>" >&2
   exit 1
 fi
-if [[ "${BRANCH}" != contrib/* && "${BRANCH}" != "fork/EPC" ]]; then
-  echo "Preview deployments are only supported for contrib/* branches and fork/EPC" >&2
+if [[ "${BRANCH}" != contrib/* && "${BRANCH}" != "fork/EPC" && "${BRANCH}" != "fork/manoj" ]]; then
+  echo "Deployments are only supported for contrib/* branches, fork/EPC, and fork/manoj" >&2
   exit 1
 fi
 DEPLOY_MODE="${DEPLOY_MODE:-full}"
@@ -24,15 +24,45 @@ PREVIEW_SLUG="$(branch_to_preview_slug "${BRANCH}")"
 PREVIEW_HOSTNAME="$(preview_hostname_for_slug "${PREVIEW_SLUG}")"
 PREVIEW_RUNTIME_ENV="$(preview_runtime_env_for_slug "${PREVIEW_SLUG}")"
 TARGET_GROUP_NAME="$(target_group_name_for_slug "${PREVIEW_SLUG}")"
-echo "Preparing preview ${PREVIEW_SLUG} for ${BRANCH}"
+echo "Preparing deployment ${PREVIEW_SLUG} for ${BRANCH}"
 echo "Deploy mode: ${DEPLOY_MODE}"
-echo "Resolving preview port for ${PREVIEW_HOSTNAME}"
+echo "Resolving port for ${PREVIEW_HOSTNAME}"
 PREVIEW_PORT="$(choose_preview_port "${PREVIEW_SLUG}" "${TARGET_GROUP_NAME}")"
 PREVIEW_ENV="${PREVIEW_RUNTIME_ENV}"
 PREVIEW_PROJECT="preview-${PREVIEW_SLUG}"
+REMOTE_ROOT="${PREVIEW_REMOTE_ROOT}"
+if [[ "${PREVIEW_SLUG}" == "manoj" ]]; then
+  PREVIEW_PROJECT="demo-manoj"
+  REMOTE_ROOT="${DEMO_REMOTE_ROOT}"
+fi
 PREVIEW_URL="https://${PREVIEW_HOSTNAME}"
-REMOTE_WORKDIR="${PREVIEW_REMOTE_ROOT}/${PREVIEW_SLUG}"
-echo "Preview port resolved: ${PREVIEW_PORT}"
+REMOTE_WORKDIR="${REMOTE_ROOT}/${PREVIEW_SLUG}"
+echo "Port resolved: ${PREVIEW_PORT}"
+
+DEPLOY_SUPERADMIN_EMAIL="${PREVIEW_ADMIN_EMAIL:-${SMOKE_TEST_EMAIL:-}}"
+DEPLOY_SUPERADMIN_PASSWORD="${PREVIEW_ADMIN_PASSWORD:-${SMOKE_TEST_PASSWORD:-}}"
+DEPLOY_ADMIN_EMAIL=""
+DEPLOY_ADMIN_PASSWORD=""
+DEPLOY_EMPLOYEE_EMAIL=""
+DEPLOY_EMPLOYEE_PASSWORD=""
+DEPLOY_APP_IMAGE="${DEPLOY_APP_IMAGE:-${APP_IMAGE:-}}"
+DEPLOY_ECR_REGISTRY="${DEPLOY_ECR_REGISTRY:-${ECR_REGISTRY:-}}"
+DEPLOY_ECR_PASSWORD="${DEPLOY_ECR_PASSWORD:-${ECR_PASSWORD:-}}"
+if [[ "${PREVIEW_SLUG}" == "manoj" ]]; then
+  DEPLOY_SUPERADMIN_EMAIL="${MANOJ_SUPERADMIN_EMAIL:-superadmin@manoj.om.they.dev}"
+  DEPLOY_ADMIN_EMAIL="${MANOJ_ADMIN_EMAIL:-admin@manoj.om.they.dev}"
+  DEPLOY_EMPLOYEE_EMAIL="${MANOJ_EMPLOYEE_EMAIL:-employee@manoj.om.they.dev}"
+  DEPLOY_SUPERADMIN_PASSWORD="${MANOJ_SUPERADMIN_PASSWORD:-}"
+  DEPLOY_ADMIN_PASSWORD="${MANOJ_ADMIN_PASSWORD:-}"
+  DEPLOY_EMPLOYEE_PASSWORD="${MANOJ_EMPLOYEE_PASSWORD:-}"
+  for required_var in DEPLOY_SUPERADMIN_PASSWORD DEPLOY_ADMIN_PASSWORD DEPLOY_EMPLOYEE_PASSWORD; do
+    if [[ -z "${!required_var}" ]]; then
+      echo "Missing required Manoj credential value for ${required_var}" >&2
+      echo "Set MANOJ_SUPERADMIN_PASSWORD, MANOJ_ADMIN_PASSWORD, and MANOJ_EMPLOYEE_PASSWORD before deploying fork/manoj." >&2
+      exit 1
+    fi
+  done
+fi
 
 REMOTE_SCRIPT="$(mktemp)"
 {
@@ -46,13 +76,25 @@ REMOTE_SCRIPT="$(mktemp)"
   printf 'preview_port=%q\n' "${PREVIEW_PORT}"
   printf 'deploy_mode=%q\n' "${DEPLOY_MODE}"
   printf 'workdir=%q\n' "${REMOTE_WORKDIR}"
-  printf 'remote_root=%q\n' "${PREVIEW_REMOTE_ROOT}"
+  printf 'remote_root=%q\n' "${REMOTE_ROOT}"
   printf 'baseline_env_file=%q\n' "${BASELINE_ENV_FILE_REMOTE}"
-  printf 'preview_admin_email=%q\n' "${PREVIEW_ADMIN_EMAIL:-${SMOKE_TEST_EMAIL:-}}"
-  printf 'preview_admin_password=%q\n' "${PREVIEW_ADMIN_PASSWORD:-${SMOKE_TEST_PASSWORD:-}}"
+  printf 'deploy_superadmin_email=%q\n' "${DEPLOY_SUPERADMIN_EMAIL}"
+  printf 'deploy_superadmin_password=%q\n' "${DEPLOY_SUPERADMIN_PASSWORD}"
+  printf 'deploy_admin_email=%q\n' "${DEPLOY_ADMIN_EMAIL}"
+  printf 'deploy_admin_password=%q\n' "${DEPLOY_ADMIN_PASSWORD}"
+  printf 'deploy_employee_email=%q\n' "${DEPLOY_EMPLOYEE_EMAIL}"
+  printf 'deploy_employee_password=%q\n' "${DEPLOY_EMPLOYEE_PASSWORD}"
+  printf 'deploy_app_image=%q\n' "${DEPLOY_APP_IMAGE}"
+  printf 'deploy_ecr_registry=%q\n' "${DEPLOY_ECR_REGISTRY}"
+  printf 'deploy_ecr_password=%q\n' "${DEPLOY_ECR_PASSWORD}"
   cat <<'EOF'
 command -v git >/dev/null 2>&1 || { echo "Missing git on preview host" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo "Missing docker on preview host" >&2; exit 1; }
+
+persistent_demo=false
+if [[ "$branch" == "fork/EPC" || "$branch" == "fork/manoj" ]]; then
+  persistent_demo=true
+fi
 
 mkdir -p "$remote_root"
 if [[ ! -d "$workdir/.git" ]]; then
@@ -67,7 +109,7 @@ else
     git -C "$workdir" fetch origin "$branch" --prune
     git -C "$workdir" checkout -B "$branch" "origin/$branch"
     git -C "$workdir" reset --hard "origin/$branch"
-    if [[ "$branch" == "fork/EPC" ]]; then
+    if [[ "$persistent_demo" == "true" ]]; then
       git -C "$workdir" clean -fdx -e .env
     else
       git -C "$workdir" clean -fdx
@@ -75,10 +117,29 @@ else
   fi
 fi
 
-python3 - <<'PY' "$baseline_env_file" "$workdir/.env" "$preview_env" "$preview_port" "$preview_hostname" "$preview_admin_email" "$preview_admin_password" "$deploy_mode"
+python3 - <<'PY' "$baseline_env_file" "$workdir/.env" "$preview_env" "$preview_port" "$preview_hostname" "$deploy_superadmin_email" "$deploy_superadmin_password" "$deploy_mode" "$preview_project" "$deploy_admin_email" "$deploy_admin_password" "$deploy_employee_email" "$deploy_employee_password" "$branch" "$deploy_app_image"
 import secrets, sys
 from pathlib import Path
-baseline, target, preview_env, preview_port, preview_host, preview_admin_email, preview_admin_password, deploy_mode = sys.argv[1:9]
+(
+    baseline,
+    target,
+    preview_env,
+    preview_port,
+    preview_host,
+    deploy_superadmin_email,
+    deploy_superadmin_password,
+    deploy_mode,
+    preview_project,
+    deploy_admin_email,
+    deploy_admin_password,
+    deploy_employee_email,
+    deploy_employee_password,
+    branch,
+    deploy_app_image,
+) = sys.argv[1:16]
+is_epc = branch == 'fork/EPC' or preview_host == 'preview-epc.om.they.dev'
+is_manoj = branch == 'fork/manoj' or preview_host == 'manoj.om.they.dev'
+preserve_existing = is_epc or is_manoj or deploy_mode == 'config-restart'
 values = {}
 existing = {}
 for line in Path(baseline).read_text().splitlines():
@@ -94,7 +155,7 @@ if target_path.exists():
         key, value = line.split('=', 1)
         existing[key] = value
 values.update({
-    'APP_NAME': f'preview-{preview_env}',
+    'APP_NAME': preview_project,
     'DEPLOY_ENV': preview_env,
     'APP_PORT': preview_port,
     'APP_URL': f'https://{preview_host}',
@@ -105,7 +166,15 @@ values.update({
     'AUTH_SECRET': secrets.token_urlsafe(48),
     'TENANT_DATA_ENCRYPTION_KEY': secrets.token_urlsafe(48),
     'MEILISEARCH_MASTER_KEY': secrets.token_urlsafe(32),
+    'OM_ENABLE_EPC_DEMO': 'true' if is_epc else 'false',
 })
+if is_manoj:
+    values.update({
+        'SELF_SERVICE_ONBOARDING_ENABLED': 'false',
+        'DEMO_MODE': 'false',
+        'MERCATO_INIT_ARGS': '--no-examples',
+        'OM_INIT_REDACT_CREDENTIAL_OUTPUT': 'true',
+    })
 platform_domains = [
     domain.strip()
     for domain in (values.get('PLATFORM_DOMAINS') or 'localhost,openmercato.com').split(',')
@@ -120,15 +189,24 @@ for key in [
     'AUTH_SECRET',
     'TENANT_DATA_ENCRYPTION_KEY',
     'MEILISEARCH_MASTER_KEY',
+    'OM_INIT_SUPERADMIN_EMAIL',
+    'OM_INIT_SUPERADMIN_PASSWORD',
+    'OM_INIT_ADMIN_EMAIL',
+    'OM_INIT_ADMIN_PASSWORD',
+    'OM_INIT_EMPLOYEE_EMAIL',
+    'OM_INIT_EMPLOYEE_PASSWORD',
+    'MERCATO_INIT_ARGS',
+    'OM_INIT_REDACT_CREDENTIAL_OUTPUT',
+    'APP_IMAGE',
     'EPC_LEAD_TENANT_ID',
     'EPC_LEAD_ORGANIZATION_ID',
     'EPC_LEAD_OWNER_USER_ID',
     'EPC_LEAD_PIPELINE_STAGE_ID',
     'EPC_LEAD_CAPTURE_ALLOWED_ORIGINS',
 ]:
-    if (preview_env == 'epc' or deploy_mode == 'config-restart') and existing.get(key):
+    if preserve_existing and existing.get(key):
         values[key] = existing[key]
-if preview_host == 'preview-epc.om.they.dev':
+if is_epc:
     values.update({
         'SELF_SERVICE_ONBOARDING_ENABLED': 'false',
         'SYSTEM_EMAIL_PROVIDER': 'ses',
@@ -137,17 +215,46 @@ if preview_host == 'preview-epc.om.they.dev':
         'NOTIFICATIONS_EMAIL_FROM': values.get('NOTIFICATIONS_EMAIL_FROM') or values.get('EMAIL_FROM') or 'no-reply@they.dev',
         'EPC_LEAD_CAPTURE_ALLOWED_ORIGINS': values.get('EPC_LEAD_CAPTURE_ALLOWED_ORIGINS') or f'https://{preview_host}',
     })
-if preview_admin_email:
-    values['OM_INIT_SUPERADMIN_EMAIL'] = preview_admin_email
-    values['ADMIN_EMAIL'] = preview_admin_email
-if preview_admin_password:
-    values['OM_INIT_SUPERADMIN_PASSWORD'] = preview_admin_password
+if is_manoj:
+    values.update({
+        'SELF_SERVICE_ONBOARDING_ENABLED': 'false',
+        'DEMO_MODE': 'false',
+        'MERCATO_INIT_ARGS': '--no-examples',
+        'OM_ENABLE_EPC_DEMO': 'false',
+        'OM_INIT_REDACT_CREDENTIAL_OUTPUT': 'true',
+    })
+    for key in [
+        'EPC_LEAD_TENANT_ID',
+        'EPC_LEAD_ORGANIZATION_ID',
+        'EPC_LEAD_OWNER_USER_ID',
+        'EPC_LEAD_PIPELINE_STAGE_ID',
+        'EPC_LEAD_CAPTURE_ALLOWED_ORIGINS',
+    ]:
+        values.pop(key, None)
+if deploy_superadmin_email:
+    values['OM_INIT_SUPERADMIN_EMAIL'] = deploy_superadmin_email
+    values['ADMIN_EMAIL'] = deploy_superadmin_email
+if deploy_superadmin_password:
+    values['OM_INIT_SUPERADMIN_PASSWORD'] = deploy_superadmin_password
+if deploy_admin_email:
+    values['OM_INIT_ADMIN_EMAIL'] = deploy_admin_email
+if deploy_admin_password:
+    values['OM_INIT_ADMIN_PASSWORD'] = deploy_admin_password
+if deploy_employee_email:
+    values['OM_INIT_EMPLOYEE_EMAIL'] = deploy_employee_email
+if deploy_employee_password:
+    values['OM_INIT_EMPLOYEE_PASSWORD'] = deploy_employee_password
+if deploy_app_image:
+    values['APP_IMAGE'] = deploy_app_image
 keys = [
     'APP_NAME','DEPLOY_ENV','APP_PORT','APP_URL','NEXT_PUBLIC_APP_URL',
-    'PLATFORM_PORTAL_BASE_URL','PLATFORM_DOMAINS','POSTGRES_USER','POSTGRES_PASSWORD','POSTGRES_DB',
+    'APP_IMAGE','PLATFORM_PORTAL_BASE_URL','PLATFORM_DOMAINS','POSTGRES_USER','POSTGRES_PASSWORD','POSTGRES_DB',
     'JWT_SECRET','AUTH_SECRET','TENANT_DATA_ENCRYPTION_KEY','MEILISEARCH_MASTER_KEY',
-    'SELF_SERVICE_ONBOARDING_ENABLED','DEMO_MODE','ADMIN_EMAIL','OM_INIT_SUPERADMIN_EMAIL',
-    'OM_INIT_SUPERADMIN_PASSWORD','OPENAI_API_KEY','SYSTEM_EMAIL_PROVIDER','AWS_SES_REGION',
+    'SELF_SERVICE_ONBOARDING_ENABLED','DEMO_MODE','MERCATO_INIT_ARGS','OM_ENABLE_EPC_DEMO',
+    'OM_INIT_REDACT_CREDENTIAL_OUTPUT',
+    'ADMIN_EMAIL','OM_INIT_SUPERADMIN_EMAIL','OM_INIT_SUPERADMIN_PASSWORD',
+    'OM_INIT_ADMIN_EMAIL','OM_INIT_ADMIN_PASSWORD','OM_INIT_EMPLOYEE_EMAIL','OM_INIT_EMPLOYEE_PASSWORD',
+    'OPENAI_API_KEY','SYSTEM_EMAIL_PROVIDER','AWS_SES_REGION',
     'AWS_SES_CONFIGURATION_SET','RESEND_API_KEY','EMAIL_FROM','NOTIFICATIONS_EMAIL_FROM',
     'EPC_LEAD_TENANT_ID','EPC_LEAD_ORGANIZATION_ID','EPC_LEAD_OWNER_USER_ID',
     'EPC_LEAD_PIPELINE_STAGE_ID','EPC_LEAD_CAPTURE_ALLOWED_ORIGINS'
@@ -163,6 +270,11 @@ set +a
 compose() {
   COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml "$@"
 }
+
+persistent_stack_exists=false
+if [[ "$persistent_demo" == "true" ]] && [[ -n "$(compose ps -q postgres 2>/dev/null || true)" ]]; then
+  persistent_stack_exists=true
+fi
 
 if [[ "$preview_hostname" == "preview-epc.om.they.dev" && ( -z "${EPC_LEAD_TENANT_ID:-}" || -z "${EPC_LEAD_ORGANIZATION_ID:-}" ) ]]; then
   postgres_container="$(compose ps -q postgres 2>/dev/null || true)"
@@ -222,12 +334,12 @@ wait_for_local_login() {
   return 1
 }
 
-sync_epc_postgres_password() {
-  if [[ "$branch" != "fork/EPC" || -z "${POSTGRES_PASSWORD:-}" ]]; then
+sync_persistent_postgres_password() {
+  if [[ "$persistent_demo" != "true" || -z "${POSTGRES_PASSWORD:-}" ]]; then
     return 0
   fi
-  existing_epc_postgres="$(compose ps -q postgres 2>/dev/null || true)"
-  if [[ -z "$existing_epc_postgres" ]]; then
+  existing_persistent_postgres="$(compose ps -q postgres 2>/dev/null || true)"
+  if [[ -z "$existing_persistent_postgres" ]]; then
     return 0
   fi
   pg_password_sql="/tmp/openmercato-preview-${preview_env}-postgres-password.sql"
@@ -239,10 +351,10 @@ escaped = password.replace("'", "''")
 print("set password_encryption = 'scram-sha-256';")
 print(f"alter role postgres login password '{escaped}';")
 PY
-  docker cp "$pg_password_sql" "$existing_epc_postgres:/tmp/openmercato-preview-postgres-password.sql"
+  docker cp "$pg_password_sql" "$existing_persistent_postgres:/tmp/openmercato-preview-postgres-password.sql"
   rm -f "$pg_password_sql"
   for attempt in 1 2 3 4 5; do
-    if docker exec "$existing_epc_postgres" psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -v ON_ERROR_STOP=1 -f /tmp/openmercato-preview-postgres-password.sql >/dev/null; then
+    if docker exec "$existing_persistent_postgres" psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -v ON_ERROR_STOP=1 -f /tmp/openmercato-preview-postgres-password.sql >/dev/null; then
       break
     fi
     if [[ "$attempt" == "5" ]]; then
@@ -251,7 +363,7 @@ PY
     echo "Postgres password sync attempt ${attempt} failed; retrying"
     sleep "$((attempt * 2))"
   done
-  docker exec "$existing_epc_postgres" rm -f /tmp/openmercato-preview-postgres-password.sql
+  docker exec "$existing_persistent_postgres" rm -f /tmp/openmercato-preview-postgres-password.sql
 }
 
 post_deploy_cleanup() {
@@ -267,31 +379,49 @@ post_deploy_cleanup() {
 
 if [[ "$deploy_mode" == "config-restart" ]]; then
   echo "Config-only deploy: skipping image build and restarting app with existing image."
-  if ! timeout 30s docker image inspect "open-mercato/app:$preview_env" >/dev/null 2>&1; then
-    echo "Missing existing image open-mercato/app:$preview_env; run a full deploy first." >&2
+  app_image="${APP_IMAGE:-open-mercato/app:$preview_env}"
+  if ! timeout 30s docker image inspect "$app_image" >/dev/null 2>&1; then
+    echo "Missing existing image ${app_image}; run a full deploy first." >&2
     exit 1
   fi
-  sync_epc_postgres_password
+  sync_persistent_postgres_password
   compose up -d --no-deps --no-build --force-recreate app
 else
   if ! timeout 30s docker image inspect opencode-mvp:latest >/dev/null 2>&1; then
     docker build -t opencode-mvp:latest docker/opencode
   fi
-  build_log="/tmp/openmercato-preview-${preview_env}-build.log"
-  rm -f "$build_log"
-  echo "Building new app image while the current app container stays online."
-  if ! DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain timeout 45m docker build --progress=plain \
-    --build-arg CONTAINER_PORT="${CONTAINER_PORT:-3000}" \
-    -t "open-mercato/app:$preview_env" \
-    . >"$build_log" 2>&1; then
-    tail -n 240 "$build_log" || true
-    exit 1
+  if [[ -n "${APP_IMAGE:-}" ]]; then
+    if [[ -n "${deploy_ecr_registry:-}" && -n "${deploy_ecr_password:-}" ]]; then
+      printf '%s' "${deploy_ecr_password}" | docker login --username AWS --password-stdin "${deploy_ecr_registry}" >/dev/null
+      unset deploy_ecr_password
+      cleanup_ecr_login() {
+        docker logout "${deploy_ecr_registry}" >/dev/null 2>&1 || true
+      }
+      trap cleanup_ecr_login EXIT
+    fi
+    echo "Pulling prebuilt app image while the current app container stays online: ${APP_IMAGE}"
+    timeout 900 docker pull "${APP_IMAGE}"
+    docker image inspect "${APP_IMAGE}" --format '{{.Id}} {{.RepoTags}} {{.Created}}'
+  else
+    build_log="/tmp/openmercato-preview-${preview_env}-build.log"
+    rm -f "$build_log"
+    echo "Building new app image while the current app container stays online."
+    if ! DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain timeout 45m docker build --progress=plain \
+      --build-arg CONTAINER_PORT="${CONTAINER_PORT:-3000}" \
+      -t "open-mercato/app:$preview_env" \
+      . >"$build_log" 2>&1; then
+      tail -n 240 "$build_log" || true
+      exit 1
+    fi
+    tail -n 80 "$build_log" || true
   fi
-  tail -n 80 "$build_log" || true
-  if [[ "$branch" == "fork/EPC" ]]; then
-    echo "EPC preview keeps Docker volumes intact; preserving demo database state."
-    sync_epc_postgres_password
+  if [[ "$persistent_demo" == "true" && "$persistent_stack_exists" == "true" ]]; then
+    echo "Persistent demo keeps Docker volumes intact; recreating app only."
+    sync_persistent_postgres_password
     compose up -d --no-deps --no-build --force-recreate app
+  elif [[ "$persistent_demo" == "true" ]]; then
+    echo "Starting persistent demo stack with fresh isolated volumes."
+    compose up -d --no-build --remove-orphans
   else
     echo "Recreating non-EPC preview after successful image build."
     compose down --remove-orphans --volumes >/dev/null 2>&1 || true
@@ -309,11 +439,24 @@ path = sys.argv[1]
 print(json.dumps({'commands': [open(path, 'r', encoding='utf-8').read()]}))
 PY
 )"
+SSM_CLOUDWATCH_ARGS=()
+if [[ "${PREVIEW_SLUG}" == "manoj" ]]; then
+  MANOJ_SSM_LOG_GROUP="${MANOJ_SSM_LOG_GROUP:-/aws/ssm/openmercato-upstream-baseline-dokploy/manoj-demo-deploy}"
+  aws logs create-log-group \
+    --region "${AWS_REGION}" \
+    --log-group-name "${MANOJ_SSM_LOG_GROUP}" 2>/dev/null || true
+  aws logs put-retention-policy \
+    --region "${AWS_REGION}" \
+    --log-group-name "${MANOJ_SSM_LOG_GROUP}" \
+    --retention-in-days 14 2>/dev/null || true
+  SSM_CLOUDWATCH_ARGS=(--cloud-watch-output-config "CloudWatchOutputEnabled=true,CloudWatchLogGroupName=${MANOJ_SSM_LOG_GROUP}")
+fi
 COMMAND_ID="$(aws ssm send-command \
   --region "${AWS_REGION}" \
   --instance-ids "${PREVIEW_INSTANCE_ID}" \
   --document-name AWS-RunShellScript \
   --parameters "${COMMANDS_JSON}" \
+  "${SSM_CLOUDWATCH_ARGS[@]}" \
   --query 'Command.CommandId' \
   --output text)"
 echo "SSM deploy command sent: ${COMMAND_ID}"
@@ -342,12 +485,24 @@ if [[ -z "${TARGET_GROUP_ARN}" || "${TARGET_GROUP_ARN}" == "None" ]]; then
     --output text)"
 fi
 
+aws elbv2 modify-target-group \
+  --region "${AWS_REGION}" \
+  --target-group-arn "${TARGET_GROUP_ARN}" \
+  --health-check-protocol HTTP \
+  --health-check-port "${PREVIEW_PORT}" \
+  --health-check-path /login \
+  --health-check-interval-seconds 15 \
+  --health-check-timeout-seconds 10 \
+  --healthy-threshold-count 2 \
+  --unhealthy-threshold-count 2 \
+  --matcher HttpCode=200-399 >/dev/null
+
 aws elbv2 register-targets --region "${AWS_REGION}" --target-group-arn "${TARGET_GROUP_ARN}" --targets "Id=${PREVIEW_INSTANCE_ID},Port=${PREVIEW_PORT}" >/dev/null
 echo "Registered preview target on port ${PREVIEW_PORT}"
 
 RULE_ARN="$(existing_rule_arn_for_host "${PREVIEW_HOSTNAME}")"
 if [[ -z "${RULE_ARN}" ]]; then
-  PRIORITY="$(choose_rule_priority)"
+  PRIORITY="$(choose_rule_priority "$([[ "${PREVIEW_SLUG}" == "manoj" ]] && printf '1005' || true)")"
   RULE_ARN="$(aws elbv2 create-rule \
     --region "${AWS_REGION}" \
     --listener-arn "${LISTENER_ARN}" \

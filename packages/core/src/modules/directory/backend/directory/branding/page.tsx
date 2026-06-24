@@ -86,7 +86,7 @@ export default function OrganizationBrandingPage() {
       },
       { errorMessage: t('directory.branding.errors.upload', 'Failed to upload logo') },
     )
-    return upload?.item.url ?? upload?.item.thumbnailUrl ?? null
+    return upload?.item.thumbnailUrl ?? upload?.item.url ?? null
   }, [selectedFile, t])
 
   const saveBranding = React.useCallback(async (nextLogoUrl?: string, options?: { skipUpload?: boolean }) => {
@@ -192,7 +192,7 @@ export default function OrganizationBrandingPage() {
                   ref={fileInputRef}
                   id="organization-logo-file"
                   type="file"
-                  accept="image/png,image/jpeg,image/webp"
+                  accept="image/png,image/jpeg,image/webp,image/svg+xml"
                   onChange={(event) => {
                     const file = event.currentTarget.files?.[0]
                     if (!file) return
@@ -200,7 +200,7 @@ export default function OrganizationBrandingPage() {
                   }}
                 />
                 <p className="text-xs text-muted-foreground">
-                  {t('directory.branding.file.hint', 'PNG, JPG, or WebP works best. Uploaded files are stored as organization attachments.')}
+                  {t('directory.branding.file.hint', 'PNG, JPG, WebP, or SVG works best. Uploaded files are stored as organization attachments.')}
                 </p>
               </div>
 

@@ -7,14 +7,14 @@ source "${SCRIPT_DIR}/preview-common.sh"
 
 BRANCH="${1:-${BRANCH:-${GITHUB_REF_NAME:-${GITHUB_EVENT_REF:-}}}}"
 if [[ -z "${BRANCH}" ]]; then
-  echo "Usage: $0 <contrib/branch-name|fork/EPC>" >&2
+  echo "Usage: $0 <contrib/branch-name|fork/EPC|fork/manoj>" >&2
   exit 1
 fi
 if [[ "${BRANCH}" == refs/heads/* ]]; then
   BRANCH="${BRANCH#refs/heads/}"
 fi
-if [[ "${BRANCH}" != contrib/* && "${BRANCH}" != "fork/EPC" ]]; then
-  echo "Preview cleanup is only supported for contrib/* branches and fork/EPC" >&2
+if [[ "${BRANCH}" != contrib/* && "${BRANCH}" != "fork/EPC" && "${BRANCH}" != "fork/manoj" ]]; then
+  echo "Cleanup is only supported for contrib/* branches, fork/EPC, and fork/manoj" >&2
   exit 1
 fi
 if [[ "${BRANCH}" == "fork/EPC" && "${EPC_ALLOW_DESTRUCTIVE_DESTROY:-}" != "1" ]]; then
@@ -22,12 +22,22 @@ if [[ "${BRANCH}" == "fork/EPC" && "${EPC_ALLOW_DESTRUCTIVE_DESTROY:-}" != "1" ]
   echo "Set EPC_ALLOW_DESTRUCTIVE_DESTROY=1 only for an intentional destructive reset." >&2
   exit 1
 fi
+if [[ "${BRANCH}" == "fork/manoj" && "${MANOJ_ALLOW_DESTRUCTIVE_DESTROY:-}" != "1" ]]; then
+  echo "Refusing to destroy fork/manoj because it contains persistent demo data." >&2
+  echo "Set MANOJ_ALLOW_DESTRUCTIVE_DESTROY=1 only for an intentional destructive reset." >&2
+  exit 1
+fi
 
 PREVIEW_SLUG="$(branch_to_preview_slug "${BRANCH}")"
 PREVIEW_HOSTNAME="$(preview_hostname_for_slug "${PREVIEW_SLUG}")"
 TARGET_GROUP_NAME="$(target_group_name_for_slug "${PREVIEW_SLUG}")"
 PREVIEW_PROJECT="preview-${PREVIEW_SLUG}"
-REMOTE_WORKDIR="${PREVIEW_REMOTE_ROOT}/${PREVIEW_SLUG}"
+REMOTE_ROOT="${PREVIEW_REMOTE_ROOT}"
+if [[ "${PREVIEW_SLUG}" == "manoj" ]]; then
+  PREVIEW_PROJECT="demo-manoj"
+  REMOTE_ROOT="${DEMO_REMOTE_ROOT}"
+fi
+REMOTE_WORKDIR="${REMOTE_ROOT}/${PREVIEW_SLUG}"
 
 REMOTE_SCRIPT="$(mktemp)"
 {

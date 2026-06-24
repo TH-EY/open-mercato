@@ -1,0 +1,149 @@
+name: Upsert Manoj demo
+
+on:
+  push:
+    branches:
+      - 'fork/manoj'
+  workflow_dispatch:
+    inputs:
+      deploy_mode:
+        description: Deployment mode
+        required: true
+        type: choice
+        default: full
+        options:
+          - full
+          - config-restart
+
+concurrency:
+  group: om-dokploy-host-deploy
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  AWS_REGION: eu-west-2
+  ECR_REPOSITORY_NAME: openmercato-app
+  SSM_CLOUDWATCH_LOG_GROUP: /aws/ssm/openmercato-upstream-baseline-dokploy/manoj-demo-deploy
+
+jobs:
+  deploy-demo:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        if: github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        if: github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Resolve ECR repository
+        if: github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full'
+        id: ecr
+        shell: bash
+        run: |
+          set -euo pipefail
+          repository_url="$(aws ecr describe-repositories \
+            --region "${AWS_REGION}" \
+            --repository-names "${ECR_REPOSITORY_NAME}" \
+            --query 'repositories[0].repositoryUri' \
+            --output text)"
+          echo "repository_url=${repository_url}" >> "$GITHUB_OUTPUT"
+          echo "image_uri=${repository_url}:manoj-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push app image
+        if: github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            CONTAINER_PORT=3000
+          tags: |
+            ${{ steps.ecr.outputs.image_uri }}
+            ${{ steps.ecr.outputs.repository_url }}:manoj-latest
+          cache-from: |
+            type=gha,scope=manoj-demo-app
+            type=registry,ref=${{ steps.ecr.outputs.repository_url }}:manoj-buildcache
+          cache-to: |
+            type=gha,mode=max,scope=manoj-demo-app
+            type=registry,ref=${{ steps.ecr.outputs.repository_url }}:manoj-buildcache,mode=max,oci-mediatypes=true,image-manifest=true
+
+      - name: Deploy Manoj demo through SSM and ALB
+        id: deploy
+        shell: bash
+        env:
+          BRANCH: fork/manoj
+          DEPLOY_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'full' }}
+          MANOJ_SUPERADMIN_EMAIL: ${{ secrets.MANOJ_DEMO_SUPERADMIN_EMAIL || 'superadmin@manoj.om.they.dev' }}
+          MANOJ_SUPERADMIN_PASSWORD: ${{ secrets.MANOJ_DEMO_SUPERADMIN_PASSWORD }}
+          MANOJ_ADMIN_EMAIL: ${{ secrets.MANOJ_DEMO_ADMIN_EMAIL || 'admin@manoj.om.they.dev' }}
+          MANOJ_ADMIN_PASSWORD: ${{ secrets.MANOJ_DEMO_ADMIN_PASSWORD }}
+          MANOJ_EMPLOYEE_EMAIL: ${{ secrets.MANOJ_DEMO_EMPLOYEE_EMAIL || 'employee@manoj.om.they.dev' }}
+          MANOJ_EMPLOYEE_PASSWORD: ${{ secrets.MANOJ_DEMO_EMPLOYEE_PASSWORD }}
+          DEPLOY_APP_IMAGE: ${{ steps.ecr.outputs.image_uri }}
+          DEPLOY_ECR_REGISTRY: ${{ steps.ecr.outputs.repository_url }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${DEPLOY_ECR_REGISTRY}" ]]; then
+            DEPLOY_ECR_REGISTRY="${DEPLOY_ECR_REGISTRY%%/*}"
+            export DEPLOY_ECR_REGISTRY
+            DEPLOY_ECR_PASSWORD="$(aws ecr get-login-password --region "${AWS_REGION}")"
+            export DEPLOY_ECR_PASSWORD
+          fi
+          bash infra/aws-upstream-baseline/preview-upsert.sh fork/manoj | tee deploy.log
+          {
+            grep -E '^preview_(branch|slug|hostname|url|port|target_group_arn)=' deploy.log || true
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test Manoj demo
+        id: smoke
+        shell: bash
+        env:
+          BASE_URL: https://manoj.om.they.dev
+          SMOKE_TEST_EMAIL: ${{ secrets.MANOJ_DEMO_SUPERADMIN_EMAIL || 'superadmin@manoj.om.they.dev' }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.MANOJ_DEMO_SUPERADMIN_PASSWORD }}
+          SMOKE_TEST_PATHS: >-
+            /backend/projects
+            /backend/customers
+            /backend/catalog/products
+            /backend/sales/orders
+            /backend/configs
+        run: |
+          set -euo pipefail
+          started_seconds="${SECONDS}"
+          bash ./infra/aws-upstream-baseline/smoke.sh
+          elapsed_seconds=$((SECONDS - started_seconds))
+          echo "elapsed_seconds=${elapsed_seconds}" >> "$GITHUB_OUTPUT"
+
+      - name: Workflow summary
+        if: always()
+        run: |
+          {
+            echo "### Manoj demo deploy"
+            echo "- URL: https://manoj.om.they.dev"
+            echo "- Branch: \`fork/manoj\`"
+            echo "- Deploy mode: \`${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'full' }}\`"
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Image: \`${{ steps.ecr.outputs.image_uri || 'unchanged config-restart image' }}\`"
+            echo "- Build cache: GitHub Actions cache \`manoj-demo-app\` + ECR registry cache \`${{ steps.ecr.outputs.repository_url || 'n/a' }}:manoj-buildcache\`"
+            echo "- Port: \`${{ steps.deploy.outputs.preview_port || 'n/a' }}\`"
+            echo "- Smoke test: \`${{ steps.smoke.outputs.elapsed_seconds || 'not-run' }}s\`"
+            echo "- SSM logs: \`${SSM_CLOUDWATCH_LOG_GROUP}\`"
+            echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } >> "$GITHUB_STEP_SUMMARY"

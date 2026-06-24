@@ -42,7 +42,7 @@ services:
           echo "ERROR: init-or-migrate.sh not found. Please rebuild the container: docker compose build --no-cache app"
           exit 1
         fi
-        INIT_COMMAND='yarn mercato init' sh /app/docker/scripts/init-or-migrate.sh
+        INIT_COMMAND="yarn mercato init${MERCATO_INIT_ARGS:+ ${MERCATO_INIT_ARGS}}" sh /app/docker/scripts/init-or-migrate.sh
         yarn start
     volumes:
       - init_marker:/tmp/init-marker
@@ -84,6 +84,8 @@ services:
       UPGRADE_ACTIONS_ENABLED: ${UPGRADE_ACTIONS_ENABLED:-true}
       SELF_SERVICE_ONBOARDING_ENABLED: ${SELF_SERVICE_ONBOARDING_ENABLED:-true}
       DEMO_MODE: ${DEMO_MODE:-true}
+      MERCATO_INIT_ARGS: ${MERCATO_INIT_ARGS:-}
+      OM_ENABLE_EPC_DEMO: ${OM_ENABLE_EPC_DEMO:-false}
       SYSTEM_EMAIL_PROVIDER: ${SYSTEM_EMAIL_PROVIDER:-}
       AWS_SES_REGION: ${AWS_SES_REGION:-}
       AWS_SES_CONFIGURATION_SET: ${AWS_SES_CONFIGURATION_SET:-}
@@ -101,6 +103,11 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
       OM_INIT_SUPERADMIN_EMAIL: ${OM_INIT_SUPERADMIN_EMAIL:-}
       OM_INIT_SUPERADMIN_PASSWORD: ${OM_INIT_SUPERADMIN_PASSWORD:-password}
+      OM_INIT_ADMIN_EMAIL: ${OM_INIT_ADMIN_EMAIL:-}
+      OM_INIT_ADMIN_PASSWORD: ${OM_INIT_ADMIN_PASSWORD:-}
+      OM_INIT_EMPLOYEE_EMAIL: ${OM_INIT_EMPLOYEE_EMAIL:-}
+      OM_INIT_EMPLOYEE_PASSWORD: ${OM_INIT_EMPLOYEE_PASSWORD:-}
+      OM_INIT_REDACT_CREDENTIAL_OUTPUT: ${OM_INIT_REDACT_CREDENTIAL_OUTPUT:-false}
       SSO_FORCE_ROLE_ON_LOGIN: employee
       # Custom-domain routing (Phase 1–3 of portal-custom-domain spec).
       DOMAIN_CHECK_SECRET: ${DOMAIN_CHECK_SECRET:-}
