@@ -120,10 +120,10 @@ jobs:
           SMOKE_TEST_PASSWORD: ${{ secrets.MANOJ_DEMO_SUPERADMIN_PASSWORD }}
           SMOKE_TEST_PATHS: >-
             /backend/projects
-            /backend/customers
+            /backend/customers/companies
             /backend/catalog/products
             /backend/sales/orders
-            /backend/configs
+            /backend/config/system-status
         run: |
           set -euo pipefail
           started_seconds="${SECONDS}"
