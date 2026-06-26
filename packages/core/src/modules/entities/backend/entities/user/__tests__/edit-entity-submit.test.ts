@@ -2,7 +2,11 @@ jest.mock('@open-mercato/ui/backend/CrudForm', () => ({
   CrudForm: () => null,
 }))
 
-import { buildEntityMetadataPayload } from '../[entityId]/page'
+import {
+  buildDefinitionsBatchPayload,
+  buildEntityMetadataPayload,
+  shouldPersistEntityMetadata,
+} from '../[entityId]/page'
 
 describe('buildEntityMetadataPayload', () => {
   describe('code-sourced (system) entities', () => {
@@ -75,5 +79,64 @@ describe('buildEntityMetadataPayload', () => {
   it('returns null when label is empty', () => {
     const result = buildEntityMetadataPayload('custom', { label: '' })
     expect(result).toBeNull()
+  })
+})
+
+describe('shouldPersistEntityMetadata', () => {
+  it('does not persist metadata for code-sourced system entities', () => {
+    expect(shouldPersistEntityMetadata('code')).toBe(false)
+  })
+
+  it('persists metadata for user-defined custom entities', () => {
+    expect(shouldPersistEntityMetadata('custom')).toBe(true)
+  })
+})
+
+describe('buildDefinitionsBatchPayload', () => {
+  it('preserves inactive definitions in the batch payload', () => {
+    const result = buildDefinitionsBatchPayload({
+      entityId: 'customers:customer_deal',
+      defs: [
+        {
+          key: 'hidden_field',
+          kind: 'text',
+          configJson: { label: 'Hidden field' },
+          isActive: false,
+        },
+        {
+          key: 'visible_field',
+          kind: 'integer',
+          configJson: { label: 'Visible field' },
+          isActive: true,
+        },
+      ],
+      fieldsets: [],
+      singleFieldsetPerRecord: true,
+    })
+
+    expect(result).toMatchObject({
+      entityId: 'customers:customer_deal',
+      definitions: [
+        { key: 'hidden_field', kind: 'text', isActive: false },
+        { key: 'visible_field', kind: 'integer', isActive: true },
+      ],
+      singleFieldsetPerRecord: true,
+    })
+  })
+
+  it('omits definitions without keys', () => {
+    const result = buildDefinitionsBatchPayload({
+      entityId: 'customers:customer_deal',
+      defs: [
+        { key: '', kind: 'text', configJson: {}, isActive: true },
+        { key: 'visible_field', kind: 'text', configJson: {}, isActive: true },
+      ],
+      fieldsets: [],
+      singleFieldsetPerRecord: true,
+    })
+
+    expect(result.definitions).toEqual([
+      { key: 'visible_field', kind: 'text', configJson: {}, isActive: true },
+    ])
   })
 })
