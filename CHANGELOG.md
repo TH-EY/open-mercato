@@ -61,6 +61,7 @@
 - 🔒 Complete report-high.md tracker (16 HIGH findings) + dev-DX password amendment. (#2635) *(@pat-lewczuk)*
 
 ## 🐛 Fixes
+- 🐛 Directory: add an optional keep-aspect-ratio mode for organization sidebar logos.
 - 🐛 Render workflow user task forms from visual-editor field schemas and enforce required completion data. *(@pmadajthey)*
 - 🐛 Preserve workflow visual-editor user task assignment and form configuration across save/read-back. *(@pmadajthey)*
 - 🐛 Register feature toggle command handlers during module bootstrap. *(@pmadajthey)*

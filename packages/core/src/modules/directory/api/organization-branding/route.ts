@@ -30,10 +30,12 @@ const brandingResponseSchema = z.object({
   tenantId: z.string().uuid(),
   logoUrl: z.string().nullable(),
   updatedAt: z.string().nullable(),
+  logoPreserveAspectRatio: z.boolean(),
 })
 
 const brandingUpdateSchema = z.object({
   logoUrl: organizationUpdateSchema.shape.logoUrl,
+  logoPreserveAspectRatio: organizationUpdateSchema.shape.logoPreserveAspectRatio,
 })
 
 const errorSchema = z.object({
@@ -130,6 +132,7 @@ function toResponsePayload(organization: Organization, tenantId: string) {
     tenantId,
     logoUrl: organization.logoUrl ?? null,
     updatedAt: toIsoOrNull(organization.updatedAt),
+    logoPreserveAspectRatio: !!organization.logoPreserveAspectRatio,
   }
 }
 
@@ -229,6 +232,9 @@ export async function PUT(req: Request) {
           id: resolved.organizationId,
           tenantId: resolved.tenantId,
           logoUrl: parsed.data.logoUrl ?? null,
+          ...(parsed.data.logoPreserveAspectRatio !== undefined
+            ? { logoPreserveAspectRatio: parsed.data.logoPreserveAspectRatio }
+            : {}),
         },
         ctx,
       },
