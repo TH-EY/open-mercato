@@ -212,11 +212,14 @@ jobs:
             printf 'repo_url=%q\n' 'https://github.com/TH-EY/open-mercato.git'
             printf 'preview_env=%q\n' '${{ steps.preview.outputs.preview_runtime_env }}'
             printf 'preview_hostname=%q\n' '${{ steps.preview.outputs.preview_hostname }}'
+            printf 'preview_slug=%q\n' '${{ steps.preview.outputs.preview_slug }}'
             printf 'preview_port=%q\n' '${{ steps.preview.outputs.preview_port }}'
             printf 'preview_project=%q\n' '${{ steps.preview.outputs.preview_project }}'
             printf 'deploy_mode=%q\n' '${{ steps.preview.outputs.deploy_mode }}'
             printf 'app_image=%q\n' '${{ steps.ecr.outputs.image_uri }}'
             printf 'workdir=%q\n' '${{ steps.preview.outputs.preview_workdir }}'
+            printf 'aws_region=%q\n' '${{ env.AWS_REGION }}'
+            printf 'name_prefix=%q\n' '${{ env.NAME_PREFIX }}'
             printf 'remote_root=%q\n' '/opt/openmercato-previews'
             printf 'baseline_env_file=%q\n' '/etc/dokploy/compose/baseline-zjkhnl/code/.env'
             printf 'preview_admin_email=%q\n' "${PREVIEW_ADMIN_EMAIL}"
@@ -224,6 +227,7 @@ jobs:
             cat <<'SSM'
           command -v git >/dev/null 2>&1 || { echo "Missing git on preview host" >&2; exit 1; }
           command -v docker >/dev/null 2>&1 || { echo "Missing docker on preview host" >&2; exit 1; }
+          command -v aws >/dev/null 2>&1 || { echo "Missing aws CLI on preview host" >&2; exit 1; }
 
           mkdir -p "$remote_root"
           if [[ ! -d "$workdir/.git" ]]; then
@@ -240,12 +244,25 @@ jobs:
             git -C "$workdir" clean -fdx -e .env
           fi
 
-          python3 - <<'PY' "$baseline_env_file" "$workdir/.env" "$preview_env" "$preview_port" "$preview_hostname" "$preview_admin_email" "$preview_admin_password" "$deploy_mode" "$app_image"
+          secret_value() {
+            aws secretsmanager get-secret-value \
+              --region "$aws_region" \
+              --secret-id "$1" \
+              --query SecretString \
+              --output text
+          }
+
+          openrouter_api_key=""
+          if [[ "$preview_hostname" == "preview-epc.om.they.dev" ]]; then
+            openrouter_api_key="$(secret_value "${name_prefix}/preview-${preview_slug}/openrouter-api-key")"
+          fi
+
+          python3 - <<'PY' "$baseline_env_file" "$workdir/.env" "$preview_env" "$preview_port" "$preview_hostname" "$preview_admin_email" "$preview_admin_password" "$deploy_mode" "$app_image" "$openrouter_api_key"
           import secrets
           import sys
           from pathlib import Path
 
-          baseline, target, preview_env, preview_port, preview_host, preview_admin_email, preview_admin_password, deploy_mode, app_image = sys.argv[1:10]
+          baseline, target, preview_env, preview_port, preview_host, preview_admin_email, preview_admin_password, deploy_mode, app_image, openrouter_api_key = sys.argv[1:11]
           values = {}
           existing = {}
           for line in Path(baseline).read_text().splitlines():
@@ -293,6 +310,12 @@ jobs:
               'EPC_LEAD_OWNER_USER_ID',
               'EPC_LEAD_PIPELINE_STAGE_ID',
               'EPC_LEAD_CAPTURE_ALLOWED_ORIGINS',
+              'OPENROUTER_API_KEY',
+              'OPENROUTER_BASE_URL',
+              'OM_AI_CUSTOMERS_PROVIDER',
+              'OM_AI_CUSTOMERS_MODEL',
+              'OM_AI_CATALOG_PROVIDER',
+              'OM_AI_CATALOG_MODEL',
           ]:
               if existing.get(key):
                   values[key] = existing[key]
@@ -304,7 +327,13 @@ jobs:
                   'EMAIL_FROM': values.get('EMAIL_FROM') or 'no-reply@they.dev',
                   'NOTIFICATIONS_EMAIL_FROM': values.get('NOTIFICATIONS_EMAIL_FROM') or values.get('EMAIL_FROM') or 'no-reply@they.dev',
                   'EPC_LEAD_CAPTURE_ALLOWED_ORIGINS': values.get('EPC_LEAD_CAPTURE_ALLOWED_ORIGINS') or f'https://{preview_host}',
+                  'OM_AI_CUSTOMERS_PROVIDER': 'openrouter',
+                  'OM_AI_CUSTOMERS_MODEL': 'meta-llama/llama-3.3-70b-instruct',
+                  'OM_AI_CATALOG_PROVIDER': 'openrouter',
+                  'OM_AI_CATALOG_MODEL': 'meta-llama/llama-3.3-70b-instruct',
               })
+              if openrouter_api_key:
+                  values['OPENROUTER_API_KEY'] = openrouter_api_key
           if app_image:
               values['APP_IMAGE'] = app_image
           if preview_admin_email:
@@ -320,6 +349,9 @@ jobs:
               'SELF_SERVICE_ONBOARDING_ENABLED','DEMO_MODE','ADMIN_EMAIL','OM_INIT_SUPERADMIN_EMAIL',
               'OM_INIT_SUPERADMIN_PASSWORD','OPENAI_API_KEY','SYSTEM_EMAIL_PROVIDER','AWS_SES_REGION',
               'AWS_SES_CONFIGURATION_SET','RESEND_API_KEY','EMAIL_FROM','NOTIFICATIONS_EMAIL_FROM',
+              'OPENROUTER_API_KEY','OPENROUTER_BASE_URL',
+              'OM_AI_CUSTOMERS_PROVIDER','OM_AI_CUSTOMERS_MODEL',
+              'OM_AI_CATALOG_PROVIDER','OM_AI_CATALOG_MODEL',
               'EPC_LEAD_TENANT_ID','EPC_LEAD_ORGANIZATION_ID','EPC_LEAD_OWNER_USER_ID',
               'EPC_LEAD_PIPELINE_STAGE_ID','EPC_LEAD_CAPTURE_ALLOWED_ORIGINS'
           ]
