@@ -106,6 +106,7 @@ tenant_key="$(secret_value "${name_prefix}/tenant-data-encryption-key")"
 meili_key="$(secret_value "${name_prefix}/meilisearch-master-key")"
 admin_password="$(secret_value "${name_prefix}/initial-admin-password")"
 admin_email="$(param_value "/${name_prefix}/runtime/admin-email")"
+openrouter_api_key="$(secret_value "${name_prefix}/openrouter-api-key")"
 
 cat > "$workdir/.env.crm" <<ENV_CRM
 APP_IMAGE=$app_image
@@ -125,6 +126,11 @@ WORKER_DB_POOL_MAX=4
 DB_POOL_IDLE_TIMEOUT=30000
 DB_POOL_ACQUIRE_TIMEOUT=60000
 DATA_SYNC_QUEUE_CONCURRENCY=1
+OPENROUTER_API_KEY=$openrouter_api_key
+OM_AI_CUSTOMERS_PROVIDER=openrouter
+OM_AI_CUSTOMERS_MODEL=meta-llama/llama-3.3-70b-instruct
+OM_AI_CATALOG_PROVIDER=openrouter
+OM_AI_CATALOG_MODEL=meta-llama/llama-3.3-70b-instruct
 ENV_CRM
 
 cd "$workdir"
