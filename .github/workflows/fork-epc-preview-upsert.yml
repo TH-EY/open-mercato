@@ -207,6 +207,16 @@ jobs:
           SSM_STEP_NAME: EPC preview prepare checkout and runtime config
           SSM_TIMEOUT_SECONDS: 420
         run: |
+          openrouter_api_key=""
+          if [[ '${{ steps.preview.outputs.preview_hostname }}' == 'preview-epc.om.they.dev' ]]; then
+            openrouter_api_key="$(aws secretsmanager get-secret-value \
+              --region "${AWS_REGION}" \
+              --secret-id "${NAME_PREFIX}/preview-${{ steps.preview.outputs.preview_slug }}/openrouter-api-key" \
+              --query SecretString \
+              --output text)"
+            echo "::add-mask::${openrouter_api_key}"
+          fi
+
           {
             printf 'branch=%q\n' '${{ steps.preview.outputs.branch }}'
             printf 'repo_url=%q\n' 'https://github.com/TH-EY/open-mercato.git'
@@ -218,8 +228,7 @@ jobs:
             printf 'deploy_mode=%q\n' '${{ steps.preview.outputs.deploy_mode }}'
             printf 'app_image=%q\n' '${{ steps.ecr.outputs.image_uri }}'
             printf 'workdir=%q\n' '${{ steps.preview.outputs.preview_workdir }}'
-            printf 'aws_region=%q\n' '${{ env.AWS_REGION }}'
-            printf 'name_prefix=%q\n' '${{ env.NAME_PREFIX }}'
+            printf 'openrouter_api_key=%q\n' "${openrouter_api_key}"
             printf 'remote_root=%q\n' '/opt/openmercato-previews'
             printf 'baseline_env_file=%q\n' '/etc/dokploy/compose/baseline-zjkhnl/code/.env'
             printf 'preview_admin_email=%q\n' "${PREVIEW_ADMIN_EMAIL}"
@@ -227,7 +236,6 @@ jobs:
             cat <<'SSM'
           command -v git >/dev/null 2>&1 || { echo "Missing git on preview host" >&2; exit 1; }
           command -v docker >/dev/null 2>&1 || { echo "Missing docker on preview host" >&2; exit 1; }
-          command -v aws >/dev/null 2>&1 || { echo "Missing aws CLI on preview host" >&2; exit 1; }
 
           mkdir -p "$remote_root"
           if [[ ! -d "$workdir/.git" ]]; then
@@ -242,19 +250,6 @@ jobs:
             git -C "$workdir" checkout -B "$branch" "origin/$branch"
             git -C "$workdir" reset --hard "origin/$branch"
             git -C "$workdir" clean -fdx -e .env
-          fi
-
-          secret_value() {
-            aws secretsmanager get-secret-value \
-              --region "$aws_region" \
-              --secret-id "$1" \
-              --query SecretString \
-              --output text
-          }
-
-          openrouter_api_key=""
-          if [[ "$preview_hostname" == "preview-epc.om.they.dev" ]]; then
-            openrouter_api_key="$(secret_value "${name_prefix}/preview-${preview_slug}/openrouter-api-key")"
           fi
 
           python3 - <<'PY' "$baseline_env_file" "$workdir/.env" "$preview_env" "$preview_port" "$preview_hostname" "$preview_admin_email" "$preview_admin_password" "$deploy_mode" "$app_image" "$openrouter_api_key"
