@@ -20,6 +20,14 @@ import { installCustomEntitiesFromModules } from '../lib/install-from-ce'
 import { normalizeCustomFieldOptions } from '@open-mercato/shared/modules/entities/options'
 import { CURRENCY_OPTIONS_URL } from '@open-mercato/shared/modules/entities/kinds'
 import type { EntityManager } from '@mikro-orm/postgresql'
+import {
+  createExactDefinitionWhere,
+  createScopedDefinitionTombstone,
+  createVisibleDefinitionWhere,
+  markDefinitionTombstoned,
+  resolveDefinitionMutationScope,
+  selectVisibleDefinitionWinner,
+} from '../lib/definition-scope'
 
 /**
  * Validate defaultValue against the field kind. Returns an error message string
@@ -464,6 +472,7 @@ export async function POST(req: Request) {
   }
 
   const container = await createRequestContainer()
+  const scope = await resolveDefinitionMutationScope({ auth, container, request: req })
   const { resolve } = container
   const em = resolve('em') as any
   let cache: CacheStrategy | undefined
@@ -471,7 +480,7 @@ export async function POST(req: Request) {
     cache = resolve('cache') as CacheStrategy
   } catch {}
 
-  const where: any = { entityId: input.entityId, key: input.key, organizationId: auth.orgId ?? null, tenantId: auth.tenantId ?? null }
+  const where: any = createExactDefinitionWhere(input.entityId, input.key, scope)
   let def = await em.findOne(CustomFieldDef, where)
   if (!def) def = em.create(CustomFieldDef, { ...where, createdAt: new Date() })
   def.kind = input.kind
@@ -496,7 +505,7 @@ export async function POST(req: Request) {
   if (cfg.defaultValue !== undefined && cfg.defaultValue !== null) {
     const validationError = await validateDefaultValueByKind(
       cfg.defaultValue, input.kind, cfg, em,
-      { tenantId: auth.tenantId ?? null, organizationId: auth.orgId ?? null },
+      { tenantId: scope.tenantId, organizationId: scope.organizationId },
     )
     if (validationError) {
       return NextResponse.json({ error: validationError }, { status: 400 })
@@ -505,12 +514,13 @@ export async function POST(req: Request) {
   }
   def.configJson = cfg
   def.isActive = input.isActive ?? true
+  def.deletedAt = def.isActive === false ? (def.deletedAt ?? new Date()) : null
   def.updatedAt = new Date()
   em.persist(def)
   await em.flush()
   await invalidateDefinitionsCache(cache, {
-    tenantId: auth.tenantId ?? null,
-    organizationId: auth.orgId ?? null,
+    tenantId: scope.tenantId,
+    organizationId: scope.organizationId,
     entityIds: [input.entityId],
   })
   // Changing field definitions may impact forms but not sidebar items; no nav cache touch
@@ -526,23 +536,32 @@ export async function DELETE(req: Request) {
   if (!entityId || !key) return NextResponse.json({ error: 'entityId and key are required' }, { status: 400 })
 
   const container = await createRequestContainer()
+  const scope = await resolveDefinitionMutationScope({ auth, container, request: req })
   const { resolve } = container
   const em = resolve('em') as any
   let cache: CacheStrategy | undefined
   try {
     cache = resolve('cache') as CacheStrategy
   } catch {}
-  const where: any = { entityId, key, organizationId: auth.orgId ?? null, tenantId: auth.tenantId ?? null }
-  const def = await em.findOne(CustomFieldDef, where)
-  if (!def) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  def.isActive = false
-  def.updatedAt = new Date()
-  def.deletedAt = def.deletedAt ?? new Date()
+  const where: any = createExactDefinitionWhere(entityId, key, scope)
+  let def = await em.findOne(CustomFieldDef, where)
+  if (!def) {
+    const inherited = selectVisibleDefinitionWinner(await em.find(CustomFieldDef, createVisibleDefinitionWhere(
+      entityId,
+      key,
+      scope,
+      { deletedAt: null, isActive: true },
+    )))
+    if (!inherited) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    def = createScopedDefinitionTombstone(em, inherited, scope)
+  } else {
+    markDefinitionTombstoned(def)
+  }
   em.persist(def)
   await em.flush()
   await invalidateDefinitionsCache(cache, {
-    tenantId: auth.tenantId ?? null,
-    organizationId: auth.orgId ?? null,
+    tenantId: scope.tenantId,
+    organizationId: scope.organizationId,
     entityIds: [entityId],
   })
   // Changing field definitions may impact forms but not sidebar items; no nav cache touch
