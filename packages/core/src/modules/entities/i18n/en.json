@@ -210,6 +210,7 @@
   "entities.userEntities.edit.groups.definitions": "Field Definitions",
   "entities.userEntities.edit.groups.settings": "Entity Settings",
   "entities.userEntities.edit.orderNotice": "Reordered - will auto-save on blur",
+  "entities.userEntities.edit.pageTitle": "Edit definitions",
   "entities.userEntities.edit.showRecords": "Show Records",
   "entities.userEntities.edit.title": "Edit Entity: {{entityId}}",
   "entities.userEntities.errors.entityIdExists": "Entity ID already exists",

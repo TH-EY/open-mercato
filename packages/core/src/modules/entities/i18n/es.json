@@ -210,6 +210,7 @@
   "entities.userEntities.edit.groups.definitions": "Definiciones de campos",
   "entities.userEntities.edit.groups.settings": "Configuración de la entidad",
   "entities.userEntities.edit.orderNotice": "Reordenado - se guardará al salir del campo",
+  "entities.userEntities.edit.pageTitle": "Editar definiciones",
   "entities.userEntities.edit.showRecords": "Mostrar registros",
   "entities.userEntities.edit.title": "Editar entidad: {{entityId}}",
   "entities.userEntities.errors.entityIdExists": "El ID de la entidad ya existe",

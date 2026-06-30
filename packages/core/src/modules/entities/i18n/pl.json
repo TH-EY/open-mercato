@@ -210,6 +210,7 @@
   "entities.userEntities.edit.groups.definitions": "Definicje pól",
   "entities.userEntities.edit.groups.settings": "Ustawienia encji",
   "entities.userEntities.edit.orderNotice": "Zmieniono kolejność - zapisze się po opuszczeniu pola",
+  "entities.userEntities.edit.pageTitle": "Edytuj definicje",
   "entities.userEntities.edit.showRecords": "Pokaż rekordy",
   "entities.userEntities.edit.title": "Edytuj encję: {{entityId}}",
   "entities.userEntities.errors.entityIdExists": "Identyfikator encji już istnieje",
