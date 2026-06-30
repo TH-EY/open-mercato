@@ -5,6 +5,7 @@ import type { CrudCustomFieldRenderProps } from '@open-mercato/ui/backend/CrudFo
 import { FieldRegistry } from '@open-mercato/ui/backend/fields/registry'
 import { apiCall } from '@open-mercato/ui/backend/utils/apiCall'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
+import { Checkbox } from '@open-mercato/ui/primitives/checkbox'
 import {
   Select,
   SelectContent,
@@ -12,7 +13,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@open-mercato/ui/primitives/select'
-import { Checkbox } from '@open-mercato/ui/primitives/checkbox'
 import { DictionarySelectControl } from '../components/DictionarySelectControl'
 import { useDictionaryEntries } from '../components/hooks/useDictionaryEntries'
 
@@ -72,7 +72,7 @@ function DictionaryDefaultSelector({
         </p>
       ) : null}
       {isStale ? (
-        <p className="text-xs text-amber-600">
+        <p className="text-xs text-status-warning-text">
           {t('dictionaries.customFields.defaultValueStale', 'Default entry not found — it may have been deleted or renamed.')}
         </p>
       ) : null}
@@ -85,9 +85,12 @@ function DictionaryFieldDefEditor({ def, onChange }: { def: { configJson?: Dicti
   const [items, setItems] = React.useState<DictionarySummary[]>([])
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const multiId = React.useId()
+  const inlineCreateId = React.useId()
   const selectedId = typeof def?.configJson?.dictionaryId === 'string' ? def?.configJson?.dictionaryId : ''
   const inlineCreate = def?.configJson?.dictionaryInlineCreate !== false
   const isMulti = def?.configJson?.multi === true
+  const errorLoadLabel = t('dictionaries.customFields.errorLoad', 'Failed to load dictionaries.')
 
   React.useEffect(() => {
     let cancelled = false
@@ -117,7 +120,7 @@ function DictionaryFieldDefEditor({ def, onChange }: { def: { configJson?: Dicti
       } catch (err) {
         if (!cancelled) {
           console.error('Failed to load dictionaries list', err)
-          setError(t('dictionaries.customFields.errorLoad', 'Failed to load dictionaries.'))
+          setError(errorLoadLabel)
         }
       } finally {
         if (!cancelled) {
@@ -129,7 +132,7 @@ function DictionaryFieldDefEditor({ def, onChange }: { def: { configJson?: Dicti
     return () => {
       cancelled = true
     }
-  }, [t])
+  }, [errorLoadLabel])
 
   const manageHref = '/backend/config/dictionaries'
 
@@ -160,7 +163,7 @@ function DictionaryFieldDefEditor({ def, onChange }: { def: { configJson?: Dicti
             {t('dictionaries.customFields.loading', 'Loading dictionaries…')}
           </p>
         ) : null}
-        {error ? <p className="text-xs text-red-600">{error}</p> : null}
+        {error ? <p className="text-xs text-status-error-text">{error}</p> : null}
         {!loading && !error && items.length === 0 ? (
           <p className="text-xs text-muted-foreground">
             {t('dictionaries.customFields.empty', 'No dictionaries available yet. Create one first.')}
@@ -175,8 +178,9 @@ function DictionaryFieldDefEditor({ def, onChange }: { def: { configJson?: Dicti
           </a>
         </div>
       ) : null}
-      <label className="inline-flex items-center gap-2 text-xs">
+      <div className="inline-flex items-center gap-2 text-xs">
         <Checkbox
+          id={multiId}
           checked={isMulti}
           onCheckedChange={(checked) => {
             const enabled = checked === true
@@ -184,17 +188,28 @@ function DictionaryFieldDefEditor({ def, onChange }: { def: { configJson?: Dicti
           }}
           disabled={!selectedId}
         />
-        {t('dictionaries.customFields.allowMultiple', 'Allow selecting multiple entries')}
-      </label>
+        <label
+          htmlFor={multiId}
+          className={selectedId ? 'cursor-pointer select-none' : 'cursor-not-allowed opacity-60'}
+        >
+          {t('dictionaries.customFields.allowMultiple', 'Allow selecting multiple entries')}
+        </label>
+      </div>
       {!isMulti ? (
-        <label className="inline-flex items-center gap-2 text-xs">
+        <div className="inline-flex items-center gap-2 text-xs">
           <Checkbox
+            id={inlineCreateId}
             checked={inlineCreate}
             onCheckedChange={(checked) => onChange({ dictionaryInlineCreate: checked === true })}
             disabled={!selectedId}
           />
-          {t('dictionaries.customFields.allowInlineCreate', 'Allow inline creation inside forms')}
-        </label>
+          <label
+            htmlFor={inlineCreateId}
+            className={selectedId ? 'cursor-pointer select-none' : 'cursor-not-allowed opacity-60'}
+          >
+            {t('dictionaries.customFields.allowInlineCreate', 'Allow inline creation inside forms')}
+          </label>
+        </div>
       ) : null}
       {selectedId && !isMulti ? (
         <DictionaryDefaultSelector

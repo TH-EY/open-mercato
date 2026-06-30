@@ -61,6 +61,7 @@ const brandingPayload = {
   organizationName: 'Acme',
   tenantId: '11111111-1111-4111-8111-111111111111',
   logoUrl: '/api/attachments/image/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/acme.png?width=320',
+  updatedAt: '2026-06-18T10:00:00.000Z',
 }
 
 beforeEach(() => {
@@ -133,6 +134,7 @@ describe('OrganizationBrandingPage', () => {
     ['png', 'image/png'],
     ['jpg', 'image/jpeg'],
     ['webp', 'image/webp'],
+    ['svg', 'image/svg+xml'],
   ])('uploads a selected %s logo file without storing the square thumbnail', async (extension, mimeType) => {
     const attachmentId = `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb${extension === 'png' ? 'c' : extension === 'jpg' ? 'd' : 'e'}`
     const fileUrl = `/api/attachments/file/${attachmentId}`

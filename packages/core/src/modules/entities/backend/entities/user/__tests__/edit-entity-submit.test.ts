@@ -2,11 +2,17 @@ jest.mock('@open-mercato/ui/backend/CrudForm', () => ({
   CrudForm: () => null,
 }))
 
-import {
-  buildDefinitionsBatchPayload,
-  buildEntityMetadataPayload,
-  shouldPersistEntityMetadata,
-} from '../[entityId]/page'
+import { buildDefinitionsBatchPayload, buildEntityMetadataPayload, shouldRegisterEntityMetadata } from '../[entityId]/page'
+
+describe('shouldRegisterEntityMetadata', () => {
+  it('registers metadata for custom (user-defined) entities', () => {
+    expect(shouldRegisterEntityMetadata('custom')).toBe(true)
+  })
+
+  it('does not register metadata for code-declared system entities (#3115)', () => {
+    expect(shouldRegisterEntityMetadata('code')).toBe(false)
+  })
+})
 
 describe('buildEntityMetadataPayload', () => {
   describe('code-sourced (system) entities', () => {
@@ -82,61 +88,65 @@ describe('buildEntityMetadataPayload', () => {
   })
 })
 
-describe('shouldPersistEntityMetadata', () => {
-  it('does not persist metadata for code-sourced system entities', () => {
-    expect(shouldPersistEntityMetadata('code')).toBe(false)
-  })
-
-  it('persists metadata for user-defined custom entities', () => {
-    expect(shouldPersistEntityMetadata('custom')).toBe(true)
-  })
-})
-
 describe('buildDefinitionsBatchPayload', () => {
-  it('preserves inactive definitions in the batch payload', () => {
+  it('preserves inactive definitions so inherited fields can be hidden', () => {
     const result = buildDefinitionsBatchPayload({
       entityId: 'customers:customer_deal',
       defs: [
         {
-          key: 'hidden_field',
+          key: 'hide_me',
           kind: 'text',
-          configJson: { label: 'Hidden field' },
+          configJson: { label: 'Hide me' },
           isActive: false,
         },
         {
-          key: 'visible_field',
-          kind: 'integer',
-          configJson: { label: 'Visible field' },
+          key: 'keep_me',
+          kind: 'text',
+          configJson: { label: 'Keep me' },
+          isActive: true,
+        },
+      ],
+      fieldsets: [{ code: 'main', label: 'Main' }],
+      singleFieldsetPerRecord: true,
+    })
+
+    expect(result).toEqual({
+      entityId: 'customers:customer_deal',
+      definitions: [
+        {
+          key: 'hide_me',
+          kind: 'text',
+          configJson: { label: 'Hide me' },
+          isActive: false,
+        },
+        {
+          key: 'keep_me',
+          kind: 'text',
+          configJson: { label: 'Keep me' },
+          isActive: true,
+        },
+      ],
+      fieldsets: [{ code: 'main', label: 'Main' }],
+      singleFieldsetPerRecord: true,
+    })
+  })
+
+  it('omits incomplete definitions without keys', () => {
+    const result = buildDefinitionsBatchPayload({
+      entityId: 'customers:customer_deal',
+      defs: [
+        {
+          key: '',
+          kind: 'text',
+          configJson: {},
           isActive: true,
         },
       ],
       fieldsets: [],
-      singleFieldsetPerRecord: true,
+      singleFieldsetPerRecord: false,
     })
 
-    expect(result).toMatchObject({
-      entityId: 'customers:customer_deal',
-      definitions: [
-        { key: 'hidden_field', kind: 'text', isActive: false },
-        { key: 'visible_field', kind: 'integer', isActive: true },
-      ],
-      singleFieldsetPerRecord: true,
-    })
-  })
-
-  it('omits definitions without keys', () => {
-    const result = buildDefinitionsBatchPayload({
-      entityId: 'customers:customer_deal',
-      defs: [
-        { key: '', kind: 'text', configJson: {}, isActive: true },
-        { key: 'visible_field', kind: 'text', configJson: {}, isActive: true },
-      ],
-      fieldsets: [],
-      singleFieldsetPerRecord: true,
-    })
-
-    expect(result.definitions).toEqual([
-      { key: 'visible_field', kind: 'text', configJson: {}, isActive: true },
-    ])
+    expect(result.definitions).toEqual([])
+    expect(result.singleFieldsetPerRecord).toBe(false)
   })
 })

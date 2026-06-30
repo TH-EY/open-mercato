@@ -21,6 +21,10 @@ import { normalizeCustomFieldOptions } from '@open-mercato/shared/modules/entiti
 import { CURRENCY_OPTIONS_URL } from '@open-mercato/shared/modules/entities/kinds'
 import type { EntityManager } from '@mikro-orm/postgresql'
 import {
+  beginEntitiesMutationGuard,
+  FIELD_DEFINITION_RESOURCE_KIND,
+} from './definitions.mutation-guard'
+import {
   createExactDefinitionWhere,
   createScopedDefinitionTombstone,
   createVisibleDefinitionWhere,
@@ -504,6 +508,18 @@ export async function POST(req: Request) {
 
   const where: any = createExactDefinitionWhere(input.entityId, input.key, scope)
   let def = await em.findOne(CustomFieldDef, where)
+
+  const guard = await beginEntitiesMutationGuard({
+    container,
+    auth,
+    req,
+    resourceKind: FIELD_DEFINITION_RESOURCE_KIND,
+    resourceId: def ? def.id : `${input.entityId}:${input.key}`,
+    operation: def ? 'update' : 'create',
+    mutationPayload: input as unknown as Record<string, unknown>,
+  })
+  if (guard.blockedResponse) return guard.blockedResponse
+
   if (!def) def = em.create(CustomFieldDef, { ...where, createdAt: new Date() })
   def.kind = input.kind
   const inCfg = (input as any).configJson ?? {}
@@ -540,6 +556,7 @@ export async function POST(req: Request) {
   def.updatedAt = new Date()
   em.persist(def)
   await em.flush()
+  await guard.runAfterSuccess()
   await invalidateDefinitionsCache(cache, {
     tenantId: scope.tenantId,
     organizationId: scope.organizationId,
@@ -567,20 +584,36 @@ export async function DELETE(req: Request) {
   } catch {}
   const where: any = createExactDefinitionWhere(entityId, key, scope)
   let def = await em.findOne(CustomFieldDef, where)
+  let inherited: any | null = null
   if (!def) {
-    const inherited = selectVisibleDefinitionWinner(await em.find(CustomFieldDef, createVisibleDefinitionWhere(
+    inherited = selectVisibleDefinitionWinner(await em.find(CustomFieldDef, createVisibleDefinitionWhere(
       entityId,
       key,
       scope,
       { deletedAt: null, isActive: true },
     )))
     if (!inherited) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
+
+  const guard = await beginEntitiesMutationGuard({
+    container,
+    auth,
+    req,
+    resourceKind: FIELD_DEFINITION_RESOURCE_KIND,
+    resourceId: def?.id ?? inherited?.id ?? `${entityId}:${key}`,
+    operation: 'delete',
+    mutationPayload: { entityId, key },
+  })
+  if (guard.blockedResponse) return guard.blockedResponse
+
+  if (!def) {
     def = createScopedDefinitionTombstone(em, inherited, scope)
   } else {
     markDefinitionTombstoned(def)
   }
   em.persist(def)
   await em.flush()
+  await guard.runAfterSuccess()
   await invalidateDefinitionsCache(cache, {
     tenantId: scope.tenantId,
     organizationId: scope.organizationId,

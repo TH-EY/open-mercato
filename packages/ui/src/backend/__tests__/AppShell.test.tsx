@@ -217,13 +217,13 @@ describe('AppShell', () => {
     const previousOriginalFetch = (window as Window & { __omOriginalFetch?: typeof fetch }).__omOriginalFetch
     const fetchMock = jest.fn().mockResolvedValue(
       new Response(JSON.stringify({
-        brand: {
-          name: 'Acme',
-          logo: {
-            src: logoSrc,
-            alt: 'Acme logo',
+          brand: {
+            name: 'Acme',
+            logo: {
+              src: logoSrc,
+              alt: 'Acme logo',
+            },
           },
-        },
         groups,
         settingsSections: [],
         settingsPathPrefixes: [],
@@ -239,11 +239,11 @@ describe('AppShell', () => {
 
     try {
       renderWithProviders(
-        <AppShell
-          email="demo@example.com"
-          groups={[]}
-          adminNavApi={`/api/auth/admin/nav-brand-logo-${variant}`}
-        >
+          <AppShell
+            email="demo@example.com"
+            groups={[]}
+            adminNavApi={`/api/auth/admin/nav-brand-logo-${variant}`}
+          >
           <div>Child content</div>
         </AppShell>,
         { dict },

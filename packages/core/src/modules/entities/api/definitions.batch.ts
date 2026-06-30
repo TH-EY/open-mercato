@@ -9,6 +9,10 @@ import { invalidateDefinitionsCache } from './definitions.cache'
 import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import { mergeEntityFieldsetConfig, normalizeEntityFieldsetConfig } from '../lib/fieldsets'
 import {
+  beginEntitiesMutationGuard,
+  FIELD_DEFINITION_RESOURCE_KIND,
+} from './definitions.mutation-guard'
+import {
   createExactDefinitionWhere,
   createScopedDefinitionTombstone,
   createVisibleDefinitionWhere,
@@ -21,16 +25,20 @@ export const metadata = {
   POST: { requireAuth: true, requireFeatures: ['entities.definitions.manage'] },
 }
 
+const MAX_DEFINITIONS_PER_BATCH = 1000
+
 const batchSchema = z
   .object({
     entityId: z.string().regex(/^[a-z0-9_]+:[a-z0-9_]+$/),
-    definitions: z.array(
-      upsertCustomFieldDefSchema
-        .omit({ entityId: true })
-        .extend({
-          configJson: z.any().optional(),
-        })
-    ),
+    definitions: z
+      .array(
+        upsertCustomFieldDefSchema
+          .omit({ entityId: true })
+          .extend({
+            configJson: z.any().optional(),
+          })
+      )
+      .max(MAX_DEFINITIONS_PER_BATCH),
   })
   .extend(customFieldEntityConfigSchema.shape)
 
@@ -71,6 +79,17 @@ export async function POST(req: Request) {
   try {
     cache = resolve('cache') as CacheStrategy
   } catch {}
+
+  const guard = await beginEntitiesMutationGuard({
+    container,
+    auth,
+    req,
+    resourceKind: FIELD_DEFINITION_RESOURCE_KIND,
+    resourceId: entityId,
+    operation: 'custom',
+    mutationPayload: { entityId, definitionCount: definitions.length },
+  })
+  if (guard.blockedResponse) return guard.blockedResponse
 
   await em.begin()
   try {
@@ -178,6 +197,8 @@ export async function POST(req: Request) {
     try { await em.rollback() } catch {}
     return NextResponse.json({ error: 'Failed to save definitions batch' }, { status: 500 })
   }
+
+  await guard.runAfterSuccess()
 
   await invalidateDefinitionsCache(cache, {
     tenantId: scope.tenantId,

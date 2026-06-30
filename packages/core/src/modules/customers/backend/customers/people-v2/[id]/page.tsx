@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { User, Hash, Users, Building2 } from 'lucide-react'
 import { Page, PageBody } from '@open-mercato/ui/backend/Page'
 import { CrudForm } from '@open-mercato/ui/backend/CrudForm'
@@ -24,10 +24,10 @@ import { AttachmentsSection, ErrorMessage, LoadingMessage, RecordNotFoundState, 
 import { useConfirmDialog } from '@open-mercato/ui/backend/confirm-dialog'
 import { InjectionSpot, useInjectionWidgets } from '@open-mercato/ui/backend/injection/InjectionSpot'
 import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
+import { buildRecordInjectionContext, useSetCurrentRecordInjectionContext } from '@open-mercato/ui/backend/injection/recordContext'
 import { createTranslatorWithFallback } from '@open-mercato/shared/lib/i18n/translate'
 
 import { ActivitiesSection } from '../../../../components/detail/ActivitiesSection'
-import { AddressesSection } from '../../../../components/detail/AddressesSection'
 import { PersonEmailThreadsTab } from '../../../../components/detail/PersonEmailThreadsTab'
 import { ActivitiesCard } from '../../../../components/detail/ActivitiesCard'
 import type { ActivityKind } from '../../../../components/detail/ActivitiesAddNewMenu'
@@ -38,6 +38,7 @@ import { ScheduleActivityDialog, type ScheduleActivityEditData } from '../../../
 import { PersonDetailHeader } from '../../../../components/detail/PersonDetailHeader'
 import { ChangelogTab } from '../../../../components/detail/ChangelogTab'
 import { PersonDetailTabs, resolveLegacyTab, type PersonTabId } from '../../../../components/detail/PersonDetailTabs'
+import { AddressesSection } from '../../../../components/detail/AddressesSection'
 import { PersonCompaniesSection } from '../../../../components/detail/PersonCompaniesSection'
 import { MobilePersonDetail } from '../../../../components/detail/MobilePersonDetail'
 import type { TagsSectionController } from '@open-mercato/ui/backend/detail'
@@ -57,6 +58,7 @@ export default function PersonDetailV2Page({ params }: { params?: { id?: string 
   const t = useT()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const pathname = usePathname()
   const { organizationId } = useOrganizationScopeDetail()
   const isMobile = useIsMobile()
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
@@ -217,6 +219,20 @@ export default function PersonDetailV2Page({ params }: { params?: { id?: string 
       })
     },
     [injectionContext, runMutation],
+  )
+
+  // Publish page-load record context to the AppShell-owned `backend:record:current`
+  // mount so the enterprise record_locks widget resolves `customers.person` + id
+  // explicitly (the hardcoded path allowlist misses the `people-v2` route).
+  // Presence/acquire/heartbeat run on load; the hook clears on unmount/record switch.
+  useSetCurrentRecordInjectionContext(
+    buildRecordInjectionContext({
+      resourceKind: 'customers.person',
+      resourceId: currentPersonId,
+      updatedAt: data?.person?.updatedAt ?? data?.person?.updated_at ?? null,
+      data: data as Record<string, unknown> | null,
+      path: pathname,
+    }),
   )
 
   const handleAddActivity = React.useCallback((kind: ActivityKind) => {
@@ -518,7 +534,7 @@ export default function PersonDetailV2Page({ params }: { params?: { id?: string 
                 <CrudForm<PersonEditFormValues>
                   embedded
                   trackDirtyWhenEmbedded
-                  injectionSpotId="customers.person"
+                  injectionSpotId="crud-form:customers.person"
                   entityIds={[E.customers.customer_entity, E.customers.customer_person_profile]}
                   schema={formSchema}
                   fields={fields}
@@ -542,6 +558,7 @@ export default function PersonDetailV2Page({ params }: { params?: { id?: string 
                 activitiesCount={interactionCount}
                 dealsCount={dealCount}
                 companiesCount={companyCount}
+                addressesCount={data?.counts?.addresses ?? 0}
                 tasksCount={todoCount}
                 sectionAction={sectionAction}
               >
@@ -624,11 +641,11 @@ export default function PersonDetailV2Page({ params }: { params?: { id?: string 
                     return (
                       <AddressesSection
                         entityId={personId}
-                        emptyLabel={t('customers.people.detail.empty.addresses')}
-                        addActionLabel={t('customers.people.detail.addresses.add')}
+                        emptyLabel={t('customers.people.detail.empty.addresses', 'No addresses linked to this person.')}
+                        addActionLabel={t('customers.people.detail.addresses.add', 'Add address')}
                         emptyState={{
-                          title: t('customers.people.detail.emptyState.addresses.title'),
-                          actionLabel: t('customers.people.detail.emptyState.addresses.action'),
+                          title: t('customers.people.detail.emptyState.addresses.title', 'No addresses yet'),
+                          actionLabel: t('customers.people.detail.emptyState.addresses.action', 'Add address'),
                         }}
                         onActionChange={handleSectionActionChange}
                         translator={detailTranslator}
