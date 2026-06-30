@@ -809,7 +809,7 @@ const FieldDefinitionCard = React.memo(function FieldDefinitionCard({
             <SelectContent>
               {kindOptions.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
-                  {option.label}
+                  {t(`entities.customFields.editor.kinds.${option.value}`, option.label)}
                 </SelectItem>
               ))}
             </SelectContent>
