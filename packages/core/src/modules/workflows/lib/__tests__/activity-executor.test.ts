@@ -4,6 +4,10 @@
 
 import { EntityManager } from '@mikro-orm/core'
 import type { AwilixContainer } from 'awilix'
+import {
+  clearRegisteredEmailTransportForTests,
+  registerEmailTransport,
+} from '@open-mercato/shared/lib/email/transport'
 import { WorkflowInstance } from '../../data/entities'
 import * as activityExecutor from '../activity-executor'
 import type { ActivityDefinition, ActivityContext } from '../activity-executor'
@@ -20,8 +24,20 @@ describe('Activity Executor (Unit Tests)', () => {
   const testInstanceId = 'test-instance-id'
   const testTenantId = 'test-tenant-id'
   const testOrgId = 'test-org-id'
+  const originalEmailFrom = process.env.EMAIL_FROM
+  const originalNotificationsEmailFrom = process.env.NOTIFICATIONS_EMAIL_FROM
+  const originalAdminEmail = process.env.ADMIN_EMAIL
+  const originalDisableEmailDelivery = process.env.OM_DISABLE_EMAIL_DELIVERY
+  const originalTestMode = process.env.OM_TEST_MODE
 
   beforeEach(() => {
+    process.env.EMAIL_FROM = 'workflow@example.com'
+    delete process.env.NOTIFICATIONS_EMAIL_FROM
+    delete process.env.ADMIN_EMAIL
+    delete process.env.OM_DISABLE_EMAIL_DELIVERY
+    delete process.env.OM_TEST_MODE
+    clearRegisteredEmailTransportForTests()
+
     // Create mock EntityManager
     mockEm = {
       findOne: jest.fn(),
@@ -70,12 +86,30 @@ describe('Activity Executor (Unit Tests)', () => {
     ;(global.fetch as jest.Mock).mockClear()
   })
 
+  afterEach(() => {
+    clearRegisteredEmailTransportForTests()
+
+    if (originalEmailFrom === undefined) delete process.env.EMAIL_FROM
+    else process.env.EMAIL_FROM = originalEmailFrom
+    if (originalNotificationsEmailFrom === undefined) delete process.env.NOTIFICATIONS_EMAIL_FROM
+    else process.env.NOTIFICATIONS_EMAIL_FROM = originalNotificationsEmailFrom
+    if (originalAdminEmail === undefined) delete process.env.ADMIN_EMAIL
+    else process.env.ADMIN_EMAIL = originalAdminEmail
+    if (originalDisableEmailDelivery === undefined) delete process.env.OM_DISABLE_EMAIL_DELIVERY
+    else process.env.OM_DISABLE_EMAIL_DELIVERY = originalDisableEmailDelivery
+    if (originalTestMode === undefined) delete process.env.OM_TEST_MODE
+    else process.env.OM_TEST_MODE = originalTestMode
+  })
+
   // ============================================================================
   // SEND_EMAIL Activity Tests
   // ============================================================================
 
   describe('SEND_EMAIL activity', () => {
-    test('should execute SEND_EMAIL activity successfully (console mode)', async () => {
+    test('should execute SEND_EMAIL activity successfully via registered system email transport', async () => {
+      const sendMock = jest.fn().mockResolvedValue(undefined)
+      registerEmailTransport({ id: 'test-system-email', send: sendMock })
+
       const activity: ActivityDefinition = {
         activityId: 'activity-1',
         activityName: 'Welcome Email',
@@ -87,13 +121,6 @@ describe('Activity Executor (Unit Tests)', () => {
         },
       }
 
-      // No email service available
-      mockContainer.resolve.mockImplementation(() => {
-        throw new Error('emailService not registered')
-      })
-
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation()
-
       const result = await activityExecutor.executeActivity(
         mockEm,
         mockContainer,
@@ -104,23 +131,52 @@ describe('Activity Executor (Unit Tests)', () => {
       expect(result.success).toBe(true)
       expect(result.output.sent).toBe(true)
       expect(result.output.to).toBe('user@example.com')
-      expect(result.output.via).toBe('console')
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Send email to user@example.com')
-      )
-
-      consoleSpy.mockRestore()
+      expect(result.output.via).toBe('systemEmail')
+      expect(sendMock).toHaveBeenCalledWith({
+        to: 'user@example.com',
+        subject: 'Welcome!',
+        from: 'workflow@example.com',
+        text: 'Welcome to our service',
+        html: undefined,
+        react: undefined,
+        replyTo: undefined,
+        attachments: undefined,
+        tenantId: testTenantId,
+        organizationId: testOrgId,
+      })
     })
 
-    test('should execute SEND_EMAIL with email service if available', async () => {
-      const mockEmailService = {
-        send: jest.fn().mockResolvedValue({ messageId: 'msg-123' }),
-      }
-
-      mockContainer.resolve.mockReturnValue(mockEmailService)
+    test('should fail SEND_EMAIL when system email transport is not configured', async () => {
+      clearRegisteredEmailTransportForTests()
 
       const activity: ActivityDefinition = {
         activityId: 'activity-2',
+        activityName: 'Welcome Email',
+        activityType: 'SEND_EMAIL',
+        config: {
+          to: 'user@example.com',
+          subject: 'Welcome!',
+          body: 'Welcome to our service',
+        },
+      }
+
+      const result = await activityExecutor.executeActivity(
+        mockEm,
+        mockContainer,
+        activity,
+        mockContext
+      )
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('EMAIL_TRANSPORT_NOT_CONFIGURED')
+    })
+
+    test('should send a deterministic text fallback for template-only SEND_EMAIL configs', async () => {
+      const sendMock = jest.fn().mockResolvedValue(undefined)
+      registerEmailTransport({ id: 'test-system-email', send: sendMock })
+
+      const activity: ActivityDefinition = {
+        activityId: 'activity-2b',
         activityName: 'Welcome Email',
         activityType: 'SEND_EMAIL',
         config: {
@@ -139,14 +195,20 @@ describe('Activity Executor (Unit Tests)', () => {
       )
 
       expect(result.success).toBe(true)
-      expect(result.output.via).toBe('emailService')
-      expect(mockEmailService.send).toHaveBeenCalledWith({
-        to: 'user@example.com',
-        subject: 'Welcome!',
-        template: 'welcome',
-        templateData: { name: 'John' },
-        body: undefined,
-      })
+      expect(result.output.via).toBe('systemEmail')
+      expect(result.output.template).toBe('welcome')
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'user@example.com',
+          subject: 'Welcome!',
+          text: expect.stringContaining('Template: welcome'),
+        })
+      )
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining('"name": "John"'),
+        })
+      )
     })
 
     test('should fail SEND_EMAIL if missing required fields', async () => {
@@ -176,6 +238,9 @@ describe('Activity Executor (Unit Tests)', () => {
     })
 
     test('should interpolate variables in SEND_EMAIL config', async () => {
+      const sendMock = jest.fn().mockResolvedValue(undefined)
+      registerEmailTransport({ id: 'test-system-email', send: sendMock })
+
       const activity: ActivityDefinition = {
         activityId: 'activity-4',
         activityName: 'Dynamic Email',
@@ -187,12 +252,6 @@ describe('Activity Executor (Unit Tests)', () => {
         },
       }
 
-      mockContainer.resolve.mockImplementation(() => {
-        throw new Error('emailService not registered')
-      })
-
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation()
-
       const result = await activityExecutor.executeActivity(
         mockEm,
         mockContainer,
@@ -203,11 +262,13 @@ describe('Activity Executor (Unit Tests)', () => {
       expect(result.success).toBe(true)
       expect(result.output.to).toBe('user@example.com')
       expect(result.output.subject).toBe('Hello John Doe')
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('user@example.com: Hello John Doe')
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'user@example.com',
+          subject: 'Hello John Doe',
+          text: 'Your order order-123 is ready',
+        })
       )
-
-      consoleSpy.mockRestore()
     })
   })
 

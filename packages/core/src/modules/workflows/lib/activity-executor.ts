@@ -22,6 +22,7 @@ import {
   type HostLookup,
 } from '@open-mercato/shared/lib/url-safety'
 import { parseBooleanWithDefault } from '@open-mercato/shared/lib/boolean'
+import { sendEmail } from '@open-mercato/shared/lib/email/send'
 import { callWebhookConfigSchema } from '../data/validators'
 import { WorkflowActivityJob, WORKFLOW_ACTIVITIES_QUEUE_NAME } from './activity-queue-types'
 import { logWorkflowEvent } from './event-logger'
@@ -437,41 +438,50 @@ async function executeActivityByType(
 
 /**
  * SEND_EMAIL activity handler
- *
- * For MVP, this logs the email (actual email sending can be added later)
  */
 export async function executeSendEmail(
   config: any,
   context: ActivityContext,
-  container: AwilixContainer
+  _container: AwilixContainer
 ): Promise<any> {
-  const { to, subject, template, templateData, body } = config
+  const { to, subject, template, templateData, data, body, html, text, replyTo, attachments } = config
 
   if (!to || !subject) {
     throw new Error('SEND_EMAIL requires "to" and "subject" fields')
   }
 
-  // For MVP: Log the email (actual email service integration can be added later)
-  console.log(`[Workflow Activity] Send email to ${to}: ${subject}`)
+  const htmlBody = typeof html === 'string' && html.trim().length > 0 ? html : undefined
+  const textBody = typeof text === 'string' && text.trim().length > 0
+    ? text
+    : typeof body === 'string' && body.trim().length > 0
+      ? body
+      : undefined
+  const templateText = !htmlBody && !textBody && template
+    ? renderTemplateFallbackText(template, templateData ?? data)
+    : undefined
 
-  // Check if email service is available in container
-  try {
-    const emailService = container.resolve<{ send: (input: unknown) => Promise<unknown> | unknown }>('emailService')
-    if (emailService && typeof emailService.send === 'function') {
-      await emailService.send({
-        to,
-        subject,
-        template,
-        templateData,
-        body,
-      })
-      return { sent: true, to, subject, via: 'emailService' }
-    }
-  } catch (error) {
-    // Email service not available, just log
+  await sendEmail({
+    to,
+    subject,
+    html: htmlBody,
+    text: textBody ?? templateText,
+    replyTo,
+    attachments,
+    tenantId: context.workflowInstance.tenantId,
+    organizationId: context.workflowInstance.organizationId,
+  })
+
+  return { sent: true, to, subject, via: 'systemEmail', ...(template ? { template } : {}) }
+}
+
+function renderTemplateFallbackText(template: string, data: unknown): string {
+  const lines = [`Template: ${template}`]
+
+  if (data !== undefined) {
+    lines.push('', JSON.stringify(data, null, 2))
   }
 
-  return { sent: true, to, subject, via: 'console' }
+  return lines.join('\n')
 }
 
 /**
