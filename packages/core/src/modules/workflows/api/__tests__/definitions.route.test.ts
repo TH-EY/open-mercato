@@ -302,6 +302,8 @@ describe('Workflow Definitions API', () => {
           version: 1,
           tenantId: testTenantId,
           organizationId: testOrgId,
+          createdBy: testUserId,
+          updatedBy: testUserId,
         })
       )
       expect(mockEm.flush).toHaveBeenCalled()
@@ -588,6 +590,8 @@ describe('Workflow Definitions API', () => {
       expect(response.status).toBe(200)
       expect(data.message).toBe('Workflow definition updated successfully')
       expect(mockDefinition.enabled).toBe(false)
+      expect(mockDefinition.createdBy).toBe(testUserId)
+      expect(mockDefinition.updatedBy).toBe(testUserId)
       expect(mockEm.flush).toHaveBeenCalled()
     })
 

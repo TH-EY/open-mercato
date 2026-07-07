@@ -249,6 +249,8 @@ export async function POST(request: NextRequest) {
       enabled: input.enabled ?? true,
       tenantId,
       organizationId,
+      createdBy: auth.sub,
+      updatedBy: auth.sub,
       createdAt: new Date(),
       updatedAt: new Date(),
     })

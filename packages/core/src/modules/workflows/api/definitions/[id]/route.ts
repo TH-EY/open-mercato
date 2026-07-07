@@ -349,6 +349,10 @@ export async function PUT(
       definition.effectiveTo = input.effectiveTo
     }
 
+    if (!definition.createdBy) {
+      definition.createdBy = auth.sub
+    }
+    definition.updatedBy = auth.sub
     definition.updatedAt = new Date()
 
     await em.flush()

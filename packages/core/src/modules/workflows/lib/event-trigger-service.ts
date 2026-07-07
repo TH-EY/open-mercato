@@ -657,10 +657,7 @@ export async function processEventTriggers(
         instanceId: instance.id,
       })
 
-      // Execute workflow asynchronously (don't wait)
-      executeWorkflow(em.fork(), container, instance.id).catch(err => {
-        console.error(`[workflow-trigger] Error executing workflow ${instance.id}:`, err)
-      })
+      await executeWorkflow(em, container, instance.id)
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
