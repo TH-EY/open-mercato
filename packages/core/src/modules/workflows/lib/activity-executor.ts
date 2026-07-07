@@ -922,8 +922,9 @@ export async function executeCallApi(
   //        current active roles are used — we never fall back to the author
   //        when the initiator is known, because that would escalate the
   //        initiator's privileges.
-  //     2. Fall back to the workflow definition's `createdBy` (author) only
-  //        when the instance was started by an event trigger with no user.
+  //     2. Fall back to the workflow definition's `createdBy` (author), then
+  //        `updatedBy` (last editor), only when the instance was started by
+  //        an event trigger with no user.
   //     3. If no traceable principal exists, the activity refuses to run —
   //        there is no "system" fallback that bypasses RBAC.
   const resolvedRoleIds = await resolveCallApiRoleIds(apiKeyEm, context.workflowInstance)
@@ -932,7 +933,7 @@ export async function executeCallApi(
     throw new Error(
       `[CALL_API] Refusing to execute CALL_API for workflow instance ${context.workflowInstance.id}: ` +
       `no traceable user roles could be resolved from the workflow instance or definition. ` +
-      `CALL_API activities must run under the identity of the user who triggered them.`
+      `CALL_API activities must run under the identity of the user who triggered them or a user who saved the workflow definition.`
     )
   }
 
@@ -1087,17 +1088,30 @@ export async function resolveCallApiRoleIds(
     return resolveActiveRoleIdsForUser(em, initiatorUserId, scope)
   }
 
-  // 2. Event-triggered instance with no human initiator: fall back to the
-  //    definition author. Soft-deleted definitions must not mint keys.
+  // 2. Event-triggered instance with no human initiator: fall back to a
+  //    traceable definition editor. Prefer the original author, then the last
+  //    editor as a repair path for imported/legacy definitions whose author is
+  //    missing or no longer has scoped roles. Soft-deleted definitions must
+  //    not mint keys.
   const definition = await findOneWithDecryption(em, WorkflowDefinition, {
     id: instance.definitionId,
     tenantId: instance.tenantId,
     deletedAt: null,
   }, {}, scope)
-  const authorUserId = definition?.createdBy
-  if (!authorUserId) return []
 
-  return resolveActiveRoleIdsForUser(em, authorUserId, scope)
+  const candidateUserIds = [definition?.createdBy, definition?.updatedBy]
+  const seen = new Set<string>()
+  for (const candidateUserId of candidateUserIds) {
+    if (!candidateUserId || seen.has(candidateUserId)) continue
+    seen.add(candidateUserId)
+
+    const roleIds = await resolveActiveRoleIdsForUser(em, candidateUserId, scope)
+    if (roleIds.length > 0) {
+      return roleIds
+    }
+  }
+
+  return []
 }
 
 /**
