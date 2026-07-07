@@ -10,6 +10,7 @@ import type { Node, Edge, Connection } from '@xyflow/react'
 import { useState, useCallback, useEffect } from 'react'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { graphToDefinition, definitionToGraph, validateWorkflowGraph, generateStepId, generateTransitionId, appendWorkflowEdge, ValidationError } from '../../../lib/graph-utils'
+import { mergeVisualEditorEdges } from '../../../lib/visual-editor-edge-state'
 import { performDeleteEdgeFlow, performDeleteNodeFlow } from '../../../lib/visual-editor-delete-flow'
 import { workflowDefinitionDataSchema } from '../../../data/validators'
 import { Page } from '@open-mercato/ui/backend/Page'
@@ -182,7 +183,7 @@ export default function VisualEditorPage() {
   // Handle edge changes from ReactFlow (resolved edges from the lazy graph).
   const handleEdgesChange = useCallback((nextEdges: Edge[]) => {
     if (isCodeOnly) return
-    setEdges(nextEdges)
+    setEdges((previousEdges) => mergeVisualEditorEdges(previousEdges, nextEdges))
   }, [isCodeOnly])
 
   // Handle adding new node from palette
