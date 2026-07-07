@@ -143,6 +143,34 @@ describe('executeCallApi', () => {
     expect(mockEm.flush).toHaveBeenCalled()
   })
 
+  it('should create the one-time API key through an isolated entity manager fork', async () => {
+    const forkedEm = { ...mockEm } as EntityManager
+    ;(mockEm as any).fork = jest.fn(() => forkedEm)
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Map([['content-type', 'application/json']]),
+      json: async () => ({ ok: true }),
+    } as any)
+
+    await executeCallApi(
+      mockEm,
+      { endpoint: '/api/customers/deals', method: 'GET' },
+      mockContext,
+      mockContainer,
+    )
+
+    expect((mockEm as any).fork).toHaveBeenCalledWith({
+      clear: true,
+      freshEventManager: true,
+      useContext: false,
+    })
+    expect(createdApiKeys).toHaveLength(1)
+    expect(createdApiKeys[0].deletedAt).toBeInstanceOf(Date)
+  })
+
   it('should interpolate workflow variables in request body', async () => {
     // Arrange
     mockFetch.mockResolvedValue({

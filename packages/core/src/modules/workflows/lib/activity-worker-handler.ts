@@ -19,6 +19,22 @@ import {
   executeFunction,
 } from './activity-executor'
 
+const RESUME_RETRY_DELAYS_MS = [100, 250, 500, 1000, 2000]
+
+function isResumeRetryableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('Activities still pending') || message.includes('Workflow instance not waiting for activities')
+}
+
+function shouldLogResumeFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return !message.includes('Activities still pending')
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 /**
  * Create activity worker handler for queue processing
  *
@@ -202,13 +218,21 @@ async function checkAndResumeWorkflow(
   // Import here to avoid circular dependency
   const { resumeWorkflowAfterActivities } = await import('./workflow-executor')
 
+  for (let attempt = 0; attempt <= RESUME_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      await resumeWorkflowAfterActivities(em, container, workflowInstanceId)
+      return
+    } catch (error: any) {
+      const canRetry = isResumeRetryableError(error) && attempt < RESUME_RETRY_DELAYS_MS.length
+      if (canRetry) {
+        await delay(RESUME_RETRY_DELAYS_MS[attempt])
+        continue
+      }
 
-  try {
-    await resumeWorkflowAfterActivities(em, container, workflowInstanceId)
-  } catch (error: any) {
-    // Ignore error if workflow not ready to resume yet
-    if (!error.message?.includes('Activities still pending')) {
-      console.error(`[ActivityWorker] Failed to resume workflow ${workflowInstanceId}:`, error)
+      if (shouldLogResumeFailure(error)) {
+        console.error(`[ActivityWorker] Failed to resume workflow ${workflowInstanceId}:`, error)
+      }
+      return
     }
   }
 }

@@ -113,6 +113,18 @@ export class ActivityExecutionError extends Error {
   }
 }
 
+function createCallApiKeyEntityManager(container: AwilixContainer): PostgreSqlEntityManager {
+  const requestEm = container.resolve<PostgreSqlEntityManager>('em')
+  if (requestEm && typeof requestEm.fork === 'function') {
+    return requestEm.fork({
+      clear: true,
+      freshEventManager: true,
+      useContext: false,
+    }) as PostgreSqlEntityManager
+  }
+  return requestEm
+}
+
 // ============================================================================
 // Queue Integration for Async Activities
 // ============================================================================
@@ -889,8 +901,10 @@ export async function executeCallApi(
   // 3. Import the one-time API key helper
   const { withOnetimeApiKey } = await import('../../api_keys/services/apiKeyService')
 
-  // 4. Get EntityManager from container (for correct type)
-  const apiKeyEm = container.resolve<PostgreSqlEntityManager>('em')
+  // 4. Use an isolated EntityManager for the short-lived API key. Synchronous
+  // CALL_API activities run inside the workflow transaction; the nested HTTP
+  // request can only authenticate against a committed key.
+  const apiKeyEm = createCallApiKeyEntityManager(container)
 
   // 5. Resolve the roles that the one-time API key will inherit.
   //

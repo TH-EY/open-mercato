@@ -41,6 +41,22 @@ export const metadata: WorkerMeta = {
 
 type HandlerContext = { resolve: <T = unknown>(name: string) => T }
 
+const RESUME_RETRY_DELAYS_MS = [100, 250, 500, 1000, 2000]
+
+function isResumeRetryableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('Activities still pending') || message.includes('Workflow instance not waiting for activities')
+}
+
+function shouldLogResumeFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return !message.includes('Activities still pending')
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 /**
  * Process a workflow activity job.
  *
@@ -269,15 +285,24 @@ async function checkAndResumeWorkflow(
   // Cast ctx to AwilixContainer for the resume function
   const container = ctx as unknown as AwilixContainer
 
-  try {
-    await resumeWorkflowAfterActivities(em, container, workflowInstanceId, branchInstanceId)
-  } catch (error: any) {
-    // Ignore error if workflow not ready to resume yet (activities still pending)
-    if (!error.message?.includes('Activities still pending')) {
-      console.error(
-        `[workflows:activity-worker] Failed to resume workflow instance ${workflowInstanceId}:`,
-        error.message
-      )
+  for (let attempt = 0; attempt <= RESUME_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      await resumeWorkflowAfterActivities(em, container, workflowInstanceId, branchInstanceId)
+      return
+    } catch (error: any) {
+      const canRetry = isResumeRetryableError(error) && attempt < RESUME_RETRY_DELAYS_MS.length
+      if (canRetry) {
+        await delay(RESUME_RETRY_DELAYS_MS[attempt])
+        continue
+      }
+
+      if (shouldLogResumeFailure(error)) {
+        console.error(
+          `[workflows:activity-worker] Failed to resume workflow instance ${workflowInstanceId}:`,
+          error.message
+        )
+      }
+      return
     }
   }
 }
