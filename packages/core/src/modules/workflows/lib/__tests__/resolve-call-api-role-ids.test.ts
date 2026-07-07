@@ -36,8 +36,8 @@ const mockFindMany = findWithDecryption as jest.Mock
 const TENANT_ID = 'tenant-1'
 const ORG_ID = 'org-1'
 const DEFINITION_ID = 'def-1'
-const AUTHOR_ID = 'author-admin'
-const INITIATOR_ID = 'initiator-low-priv'
+const AUTHOR_ID = '11111111-1111-4111-8111-111111111111'
+const INITIATOR_ID = '22222222-2222-4222-8222-222222222222'
 
 type FindOneCall = { entity: string; filter: Record<string, unknown> }
 
@@ -197,6 +197,25 @@ describe('resolveCallApiRoleIds', () => {
     })
 
     expect(result).toEqual(['role-admin'])
+  })
+
+  test('falls back to the author when initiatedBy is an event-trigger audit marker', async () => {
+    setupCommonStubs({ authorRoleIds: ['role-admin'] })
+
+    const result = await resolveCallApiRoleIds({}, {
+      id: 'inst-trigger',
+      tenantId: TENANT_ID,
+      organizationId: ORG_ID,
+      definitionId: DEFINITION_ID,
+      metadata: { initiatedBy: 'trigger:definition-id:deal_created_trigger' },
+    })
+
+    expect(result).toEqual(['role-admin'])
+
+    const calls = findOneCalls()
+    expect(calls.some((c) => c.entity === 'WorkflowDefinition')).toBe(true)
+    expect(calls.some((c) => c.entity === 'User' && c.filter.id === 'trigger:definition-id:deal_created_trigger')).toBe(false)
+    expect(calls.some((c) => c.entity === 'User' && c.filter.id === AUTHOR_ID)).toBe(true)
   })
 
   test('filters soft-deleted workflow definitions (deletedAt: null)', async () => {

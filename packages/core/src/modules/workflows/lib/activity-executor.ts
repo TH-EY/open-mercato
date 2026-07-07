@@ -1006,6 +1006,12 @@ export type CallApiInstanceLike = {
   metadata?: { initiatedBy?: string | null } | null
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function isUuidLike(value: string): boolean {
+  return UUID_PATTERN.test(value)
+}
+
 async function resolveActiveRoleIdsForUser(
   em: any,
   userId: string,
@@ -1059,8 +1065,11 @@ export async function resolveCallApiRoleIds(
   //    CALL_API never exceeds the initiator's permissions. Refuse if the
   //    initiator has no active scoped roles — do not fall back to the
   //    definition author, which would escalate the initiator's privileges.
+  //    Event-triggered instances may store a non-user audit marker such as
+  //    "trigger:<id>" in initiatedBy; treat that as no human initiator and use
+  //    the definition author path below.
   const initiatorUserId = instance.metadata?.initiatedBy ?? null
-  if (initiatorUserId) {
+  if (initiatorUserId && isUuidLike(initiatorUserId)) {
     return resolveActiveRoleIdsForUser(em, initiatorUserId, scope)
   }
 
