@@ -65,4 +65,51 @@ describe('edge form transforms', () => {
       },
     })
   })
+
+  it('does not let advanced config overwrite managed activity fields', () => {
+    const edge = {
+      id: 'start_to_end',
+      source: 'start',
+      target: 'end',
+      data: {
+        transitionName: 'Start to End',
+        trigger: 'auto',
+        priority: 100,
+      },
+    } as unknown as Edge
+
+    const updates = formValuesToEdgeUpdates({
+      transitionName: 'Start to End',
+      trigger: 'auto',
+      priority: '100',
+      continueOnActivityFailure: false,
+      preConditions: [],
+      postConditions: [],
+      activities: [
+        {
+          activityId: 'current_activity',
+          activityName: 'Current activity',
+          activityType: 'CALL_API',
+          config: { endpoint: '/api/current' },
+        },
+      ],
+      advancedConfig: JSON.stringify({
+        activities: [
+          {
+            activityId: 'stale_activity',
+            activityName: 'Stale activity',
+            activityType: 'CALL_API',
+            config: { endpoint: '/api/stale' },
+          },
+        ],
+      }),
+    }, edge)
+
+    expect((updates as any).activities).toEqual([
+      expect.objectContaining({
+        activityId: 'current_activity',
+        activityName: 'Current activity',
+      }),
+    ])
+  })
 })

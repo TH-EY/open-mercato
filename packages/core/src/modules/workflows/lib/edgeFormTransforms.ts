@@ -9,6 +9,17 @@ import type { Edge } from '@xyflow/react'
 import type { Activity } from '../components/fields/ActivityArrayEditor'
 import type { TransitionCondition } from '../components/fields/BusinessRuleConditionsEditor'
 
+const MANAGED_EDGE_DATA_KEYS = new Set([
+  'transitionName',
+  'label',
+  'trigger',
+  'priority',
+  'continueOnActivityFailure',
+  'preConditions',
+  'postConditions',
+  'activities',
+])
+
 /**
  * Normalized condition format (object only, no string)
  */
@@ -117,7 +128,7 @@ export function formValuesToEdgeUpdates(
   if (values.advancedConfig && values.advancedConfig.trim()) {
     try {
       const parsed = JSON.parse(values.advancedConfig)
-      Object.assign(updates, parsed)
+      Object.assign(updates, omitManagedEdgeDataKeys(parsed))
     } catch (error) {
       console.error('Invalid JSON in Advanced Configuration:', error)
       throw new Error('Invalid JSON in Advanced Configuration. Please check your syntax.')
@@ -125,6 +136,14 @@ export function formValuesToEdgeUpdates(
   }
 
   return updates
+}
+
+export function omitManagedEdgeDataKeys(config: Record<string, any> | null | undefined): Record<string, any> {
+  if (!config || typeof config !== 'object') return {}
+
+  return Object.fromEntries(
+    Object.entries(config).filter(([key]) => !MANAGED_EDGE_DATA_KEYS.has(key))
+  )
 }
 
 /**

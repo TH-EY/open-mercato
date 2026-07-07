@@ -29,6 +29,7 @@ import {JsonBuilder} from '@open-mercato/ui/backend/JsonBuilder'
 import {useT} from '@open-mercato/shared/lib/i18n/context'
 import {useDialogKeyHandler} from '@open-mercato/ui/hooks/useDialogKeyHandler'
 import {useConfirmDialog} from '@open-mercato/ui/backend/confirm-dialog'
+import {omitManagedEdgeDataKeys} from '../lib/edgeFormTransforms'
 
 export interface EdgeEditDialogProps {
   edge: Edge | null
@@ -125,12 +126,7 @@ export function EdgeEditDialog({ edge, isOpen, onClose, onSave, onDelete }: Edge
 
       setActivities(edgeData?.activities || [])
 
-      // Load advanced config (activities, etc.)
-      const advancedFields: any = {}
-      if (edgeData?.activities && edgeData.activities.length > 0) {
-        advancedFields.activities = edgeData.activities
-      }
-      setAdvancedConfig(advancedFields)
+      setAdvancedConfig(omitManagedEdgeDataKeys(edgeData))
       setExpandedActivities(new Set())
       setExpandedPreConditions(new Set())
       setExpandedPostConditions(new Set())
@@ -292,7 +288,7 @@ export function EdgeEditDialog({ edge, isOpen, onClose, onSave, onDelete }: Edge
 
     // Merge advanced config
     if (advancedConfig && Object.keys(advancedConfig).length > 0) {
-      Object.assign(updates, advancedConfig)
+      Object.assign(updates, omitManagedEdgeDataKeys(advancedConfig))
     }
 
     onSave(edge.id, updates)
