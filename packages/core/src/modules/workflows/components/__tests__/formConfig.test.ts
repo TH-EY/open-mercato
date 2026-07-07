@@ -152,6 +152,48 @@ describe('workflow definition formConfig', () => {
 
       expect(payload.definition).not.toHaveProperty('triggers')
     })
+
+    test('normalizes legacy activity retry policy keys before API submit', () => {
+      const values: WorkflowDefinitionFormValues = {
+        ...defaultFormValues,
+        workflowId: 'wf',
+        workflowName: 'Workflow',
+        steps: [],
+        transitions: [
+          {
+            transitionId: 'start-to-end',
+            fromStepId: 'start',
+            toStepId: 'end',
+            trigger: 'auto',
+            activities: [
+              {
+                activityId: 'lookup',
+                activityName: 'Lookup',
+                activityType: 'CALL_API',
+                config: {},
+                retryPolicy: {
+                  maxAttempts: 4,
+                  retryDelay: 1500,
+                  backoffMultiplier: 2.5,
+                },
+              },
+            ],
+          },
+        ],
+      }
+
+      const payload = buildWorkflowPayload(values)
+      const retryPolicy = payload.definition.transitions[0].activities[0].retryPolicy
+
+      expect(retryPolicy).toEqual({
+        maxAttempts: 4,
+        initialIntervalMs: 1500,
+        backoffCoefficient: 2.5,
+        maxIntervalMs: 10000,
+      })
+      expect(retryPolicy).not.toHaveProperty('retryDelay')
+      expect(retryPolicy).not.toHaveProperty('backoffMultiplier')
+    })
   })
 
   // Regression for issue #2503: the Category/Tags/Icon fields are declared with

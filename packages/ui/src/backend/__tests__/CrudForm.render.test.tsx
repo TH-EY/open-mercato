@@ -152,6 +152,88 @@ describe('CrudForm initialValues', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
+  it('submits the latest custom field value when save follows a custom update in the same batch', async () => {
+    const onSubmit = jest.fn()
+    const fields: CrudField[] = [
+      {
+        id: 'activities',
+        label: 'Activities',
+        type: 'custom',
+        component: ({ setValue }) => (
+          <button
+            type="button"
+            onClick={() => setValue([{ activityId: 'lookup', activityName: 'Lookup deal' }])}
+          >
+            Add activity
+          </button>
+        ),
+      },
+    ]
+
+    renderWithProviders(
+      <CrudForm title="Form" fields={fields} initialValues={{ activities: [] }} onSubmit={onSubmit} />,
+      {
+        dict: {
+          'ui.forms.actions.save': 'Save',
+        },
+      },
+    )
+
+    const addActivity = screen.getByRole('button', { name: 'Add activity' })
+    const save = screen.getAllByRole('button', { name: 'Save' })[0]
+
+    await act(async () => {
+      addActivity.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      save.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          activities: [{ activityId: 'lookup', activityName: 'Lookup deal' }],
+        }),
+        expect.anything(),
+      )
+    })
+  })
+
+  it('shows a general save error even when the server reports an unmapped nested field path', async () => {
+    const onSubmit = jest.fn(async () => {
+      throw Object.assign(
+        new Error('definition.transitions.0.activities.0.retryPolicy.initialIntervalMs - Invalid input'),
+        {
+          details: [
+            {
+              path: ['definition', 'transitions', 0, 'activities', 0, 'retryPolicy', 'initialIntervalMs'],
+              message: 'Invalid input',
+            },
+          ],
+        },
+      )
+    })
+
+    renderWithProviders(
+      <CrudForm
+        title="Form"
+        fields={[{ id: 'workflowName', label: 'Workflow name', type: 'text' }]}
+        initialValues={{ workflowName: 'Workflow' }}
+        onSubmit={onSubmit}
+      />,
+      {
+        dict: {
+          'ui.forms.actions.save': 'Save',
+        },
+      },
+    )
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[0])
+
+    await waitFor(() => {
+      expect(screen.getByText('definition.transitions.0.activities.0.retryPolicy.initialIntervalMs - Invalid input')).toBeInTheDocument()
+    })
+  })
+
   it('does not re-invoke loadOptions on parent re-render (#814)', async () => {
     const loader = jest.fn().mockResolvedValue([{ label: 'A', value: 'a' }])
     const baseFields: CrudField[] = [

@@ -2281,9 +2281,11 @@ export function CrudForm<TValues extends Record<string, unknown>>({
   const setValue = React.useCallback((id: string, nextValue: unknown) => {
     let nextData: CrudFormValues<TValues> | null = null
     let nextDirty: boolean | null = null
-    const currentValue = (valuesRef.current as Record<string, unknown>)[id]
+    const currentValues = valuesRef.current as Record<string, unknown>
+    const currentValue = currentValues[id]
     if (!Object.is(currentValue, nextValue)) {
       updateEditedFieldMarker(id, nextValue)
+      valuesRef.current = { ...currentValues, [id]: nextValue } as CrudFormValues<TValues>
     }
     setValues((prev) => {
       if (Object.is(prev[id], nextValue)) return prev
@@ -3540,7 +3542,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
               )}
               {hasSecondaryColumn ? <div className="space-y-3" data-crud-injection-region>{col2Content}</div> : null}
             </div>
-            {formError && !Object.keys(errors).length ? <div className="text-sm text-status-error-text">{formError}</div> : null}
+            {formError ? <div className="text-sm text-status-error-text">{formError}</div> : null}
             {hideFooterActions || formReadOnly ? null : (
               <FormFooter
                 embedded={embedded}
@@ -3637,7 +3639,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
                 )
               })}
             </div>
-            {formError && !Object.keys(errors).length ? <div className="text-sm text-status-error-text">{formError}</div> : null}
+            {formError ? <div className="text-sm text-status-error-text">{formError}</div> : null}
             {hideFooterActions || formReadOnly ? null : (
               <FormFooter
                 embedded={embedded}

@@ -17,6 +17,7 @@ import { ChevronDown, Plus, Trash2 } from 'lucide-react'
 import { JsonBuilder } from '@open-mercato/ui/backend/JsonBuilder'
 import type { CrudCustomFieldRenderProps } from '@open-mercato/ui/backend/CrudForm'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
+import { createDefaultActivityRetryPolicy } from '../../lib/activity-retry-policy'
 
 /**
  * Activity definition structure
@@ -78,12 +79,7 @@ export function ActivityArrayEditor({ id, value = [], error, setValue, disabled 
       activityType: 'CALL_API',
       config: {},
       timeout: '',
-      retryPolicy: {
-        maxAttempts: 3,
-        initialIntervalMs: 1000,
-        backoffCoefficient: 2,
-        maxIntervalMs: 10000,
-      },
+      retryPolicy: createDefaultActivityRetryPolicy(),
     }
     const newActivities = [...activities, newActivity]
     setValue(newActivities)

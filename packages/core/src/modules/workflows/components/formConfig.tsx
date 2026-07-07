@@ -4,6 +4,7 @@ import * as React from 'react'
 import { z } from 'zod'
 import type { CrudField, CrudFormGroup } from '@open-mercato/ui/backend/CrudForm'
 import type { WorkflowDefinitionTrigger } from '../data/entities'
+import { normalizeActivityDefinitions } from '../lib/activity-retry-policy'
 
 /**
  * Form Values Type
@@ -274,6 +275,22 @@ export function buildWorkflowPayload(values: WorkflowDefinitionFormValues) {
     ...(category ? { category } : {}),
     ...(icon ? { icon } : {}),
   }
+  const steps = Array.isArray(values.steps)
+    ? values.steps.map((step) => ({
+        ...step,
+        ...(Array.isArray(step?.activities)
+          ? { activities: normalizeActivityDefinitions(step.activities) }
+          : {}),
+      }))
+    : []
+  const transitions = Array.isArray(values.transitions)
+    ? values.transitions.map((transition) => ({
+        ...transition,
+        ...(Array.isArray(transition?.activities)
+          ? { activities: normalizeActivityDefinitions(transition.activities) }
+          : {}),
+      }))
+    : []
   return {
     workflowId: values.workflowId,
     workflowName: values.workflowName,
@@ -284,8 +301,8 @@ export function buildWorkflowPayload(values: WorkflowDefinitionFormValues) {
     effectiveTo: values.effectiveTo || null,
     metadata,
     definition: {
-      steps: values.steps,
-      transitions: values.transitions,
+      steps,
+      transitions,
       ...(triggers.length > 0 ? { triggers } : {}),
     },
   }

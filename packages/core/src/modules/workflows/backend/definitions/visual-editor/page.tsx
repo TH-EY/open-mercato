@@ -244,6 +244,11 @@ export default function VisualEditorPage() {
           : edge
       )
     )
+    setSelectedEdge((edge) =>
+      edge?.id === edgeId
+        ? { ...edge, data: { ...edge.data, ...updates } }
+        : edge
+    )
     flash('Transition updated successfully', 'success')
   }, [])
 
@@ -1246,4 +1251,3 @@ function getDefaultBadge(nodeType: string): string {
   }
   return badges[nodeType] || 'Task'
 }
-

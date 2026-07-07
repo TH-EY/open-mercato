@@ -14,6 +14,7 @@ import {
 import { Textarea } from '@open-mercato/ui/primitives/textarea'
 import { Trash2, Plus, ChevronUp, ChevronDown } from 'lucide-react'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
+import { createDefaultActivityRetryPolicy } from '../lib/activity-retry-policy'
 
 interface Activity {
   activityId: string
@@ -23,6 +24,9 @@ interface Activity {
   async?: boolean
   retryPolicy?: {
     maxAttempts?: number
+    initialIntervalMs?: number
+    backoffCoefficient?: number
+    maxIntervalMs?: number
     retryDelay?: number
     backoffMultiplier?: number
   }
@@ -112,11 +116,7 @@ export function TransitionsEditor({ value = [], onChange, steps = [], error }: T
       activityType: 'CALL_API',
       config: {},
       async: false,
-      retryPolicy: {
-        maxAttempts: 3,
-        retryDelay: 1000,
-        backoffMultiplier: 2,
-      },
+      retryPolicy: createDefaultActivityRetryPolicy(),
     }
     const updated = [...value]
     updated[transitionIndex] = {
@@ -433,7 +433,7 @@ export function TransitionsEditor({ value = [], onChange, steps = [], error }: T
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
                           <div>
                             <Label htmlFor={`activity-${index}-${activityIndex}-type`} className="text-xs">
                               {t('workflows.activities.activityType')} *
@@ -498,26 +498,38 @@ export function TransitionsEditor({ value = [], onChange, steps = [], error }: T
                           </div>
                           <div>
                             <Label htmlFor={`activity-${index}-${activityIndex}-retry-delay`} className="text-xs">
-                              {t('workflows.form.retryDelay')} (ms)
+                              {t('workflows.form.initialInterval')}
                             </Label>
                             <Input
                               id={`activity-${index}-${activityIndex}-retry-delay`}
                               type="number"
-                              value={activity.retryPolicy?.retryDelay || 1000}
-                              onChange={(e) => updateRetryPolicy(index, activityIndex, 'retryDelay', parseInt(e.target.value))}
+                              value={activity.retryPolicy?.initialIntervalMs ?? activity.retryPolicy?.retryDelay ?? 1000}
+                              onChange={(e) => updateRetryPolicy(index, activityIndex, 'initialIntervalMs', parseInt(e.target.value))}
                               className="mt-1 text-xs h-8"
                             />
                           </div>
                           <div>
                             <Label htmlFor={`activity-${index}-${activityIndex}-backoff`} className="text-xs">
-                              {t('workflows.form.backoffMultiplier')}
+                              {t('workflows.form.backoffCoefficient')}
                             </Label>
                             <Input
                               id={`activity-${index}-${activityIndex}-backoff`}
                               type="number"
                               step="0.1"
-                              value={activity.retryPolicy?.backoffMultiplier || 2}
-                              onChange={(e) => updateRetryPolicy(index, activityIndex, 'backoffMultiplier', parseFloat(e.target.value))}
+                              value={activity.retryPolicy?.backoffCoefficient ?? activity.retryPolicy?.backoffMultiplier ?? 2}
+                              onChange={(e) => updateRetryPolicy(index, activityIndex, 'backoffCoefficient', parseFloat(e.target.value))}
+                              className="mt-1 text-xs h-8"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor={`activity-${index}-${activityIndex}-max-interval`} className="text-xs">
+                              {t('workflows.form.maxInterval')}
+                            </Label>
+                            <Input
+                              id={`activity-${index}-${activityIndex}-max-interval`}
+                              type="number"
+                              value={activity.retryPolicy?.maxIntervalMs ?? 10000}
+                              onChange={(e) => updateRetryPolicy(index, activityIndex, 'maxIntervalMs', parseInt(e.target.value))}
                               className="mt-1 text-xs h-8"
                             />
                           </div>
