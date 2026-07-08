@@ -316,12 +316,13 @@ export default function VisualEditorPage() {
 
   // Validate workflow
   const handleValidate = useCallback(() => {
-    const graphErrors = validateWorkflowGraph(nodes, edges)
+    const currentNodes = nodesRef.current
+    const graphErrors = validateWorkflowGraph(currentNodes, edges)
     const allErrors: ValidationError[] = [...graphErrors]
 
     // Run Zod schema validation
     try {
-      const definitionData = graphToDefinition(nodes, edges, { includePositions: true })
+      const definitionData = graphToDefinition(currentNodes, edges, { includePositions: true })
       const result = workflowDefinitionDataSchema.safeParse(definitionData)
 
       if (!result.success) {
@@ -351,7 +352,7 @@ export default function VisualEditorPage() {
         : firstError.message
       flash(message, firstError.type === 'error' ? 'error' : 'warning')
     }
-  }, [nodes, edges])
+  }, [edges])
 
   // Save workflow definition
   const handleSave = useCallback(async () => {
@@ -362,7 +363,8 @@ export default function VisualEditorPage() {
     }
 
     // Validate workflow structure
-    const errors = validateWorkflowGraph(nodes, edges)
+    const currentNodes = nodesRef.current
+    const errors = validateWorkflowGraph(currentNodes, edges)
     const criticalErrors = errors.filter(e => e.type === 'error')
     if (criticalErrors.length > 0) {
       flash(`Cannot save: ${criticalErrors.length} validation error(s) found. Please fix them first.`, 'error')
@@ -370,7 +372,7 @@ export default function VisualEditorPage() {
     }
 
     // Generate definition data and include triggers
-    const graphDefinition = graphToDefinition(nodes, edges, { includePositions: true })
+    const graphDefinition = graphToDefinition(currentNodes, edges, { includePositions: true })
     const definitionData = {
       ...graphDefinition,
       triggers: triggers.length > 0 ? triggers : undefined,
@@ -464,7 +466,7 @@ export default function VisualEditorPage() {
     } finally {
       setIsSaving(false)
     }
-  }, [nodes, edges, workflowId, workflowName, description, version, enabled, category, tags, icon, effectiveFrom, effectiveTo, triggers, definitionId, updatedAt, router])
+  }, [edges, workflowId, workflowName, description, version, enabled, category, tags, icon, effectiveFrom, effectiveTo, triggers, definitionId, updatedAt, router])
 
   // Customize a code-defined workflow → creates an override and reloads the
   // editor pointed at the new UUID. Mirrors the non-visual edit page button.
@@ -523,7 +525,7 @@ export default function VisualEditorPage() {
   // Test workflow
   const handleTest = useCallback(() => {
     // First validate
-    const errors = validateWorkflowGraph(nodes, edges)
+    const errors = validateWorkflowGraph(nodesRef.current, edges)
     const criticalErrors = errors.filter((e) => e.type === 'error')
     if (criticalErrors.length > 0) {
       flash(`Cannot test: ${criticalErrors.length} validation error(s) found. Please fix them first.`, 'error')
@@ -532,7 +534,7 @@ export default function VisualEditorPage() {
 
     // TODO: Implement test logic (create instance, run first step)
     flash('Test functionality will be implemented next', 'info')
-  }, [nodes, edges])
+  }, [edges])
 
   // Load example workflow
   const handleLoadExample = useCallback(() => {
