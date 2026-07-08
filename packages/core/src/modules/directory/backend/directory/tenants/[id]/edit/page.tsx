@@ -1,13 +1,16 @@
 "use client"
 import * as React from 'react'
+import { usePathname } from 'next/navigation'
 import { E } from '#generated/entities.ids.generated'
 import { Page, PageBody } from '@open-mercato/ui/backend/Page'
 import { CrudForm, type CrudField, type CrudFormGroup } from '@open-mercato/ui/backend/CrudForm'
 import { collectCustomFieldValues } from '@open-mercato/ui/backend/utils/customFieldValues'
 import { updateCrud } from '@open-mercato/ui/backend/utils/crud'
 import { raiseCrudError } from '@open-mercato/ui/backend/utils/serverErrors'
-import { readApiResultOrThrow, apiCall } from '@open-mercato/ui/backend/utils/apiCall'
+import { readApiResultOrThrow, apiCall, withScopedApiRequestHeaders } from '@open-mercato/ui/backend/utils/apiCall'
+import { buildOptimisticLockHeader } from '@open-mercato/ui/backend/utils/optimisticLock'
 import { ErrorMessage, RecordNotFoundState } from '@open-mercato/ui/backend/detail'
+import { buildRecordInjectionContext, useSetCurrentRecordInjectionContext } from '@open-mercato/ui/backend/injection/recordContext'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { extractCustomFieldEntries } from '@open-mercato/shared/lib/crud/custom-fields-client'
 
@@ -15,10 +18,12 @@ type TenantFormValues = {
   id: string
   name: string
   isActive: boolean
+  updatedAt?: string | null
 } & Record<string, unknown>
 
 export default function EditTenantPage({ params }: { params?: { id?: string } }) {
   const tenantId = params?.id
+  const pathname = usePathname()
   const [initial, setInitial] = React.useState<TenantFormValues | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -57,6 +62,11 @@ export default function EditTenantPage({ params }: { params?: { id?: string } })
           id: String(row.id),
           name: String(row.name),
           isActive: !!row.isActive,
+          updatedAt: typeof row.updatedAt === 'string'
+            ? row.updatedAt
+            : typeof row.updated_at === 'string'
+              ? row.updated_at
+              : null,
           ...cfValues,
         }
         if (!cancelled) setInitial(values)
@@ -76,6 +86,20 @@ export default function EditTenantPage({ params }: { params?: { id?: string } })
     load()
     return () => { cancelled = true }
   }, [tenantId, t])
+
+  // Publish page-load record context to the AppShell-owned `backend:record:current`
+  // mount so the enterprise record_locks widget resolves `directory.tenant` + id
+  // explicitly. The resourceKind mirrors the CrudForm `versionHistory` so the held
+  // lock matches the save-time conflict surface for the same tenant.
+  useSetCurrentRecordInjectionContext(
+    buildRecordInjectionContext({
+      resourceKind: 'directory.tenant',
+      resourceId: tenantId || null,
+      updatedAt: initial?.updatedAt ?? null,
+      data: initial as Record<string, unknown> | null,
+      path: pathname,
+    }),
+  )
 
   if (!tenantId) return null
 
@@ -114,6 +138,7 @@ export default function EditTenantPage({ params }: { params?: { id?: string } })
           groups={groups}
           entityId={E.directory.tenant}
           initialValues={(initial || { id: tenantId, name: '', isActive: true }) as Partial<TenantFormValues>}
+          optimisticLockUpdatedAt={initial?.updatedAt}
           isLoading={loading}
           loadingMessage={t('directory.tenants.form.loading', 'Loading tenant…')}
           submitLabel={t('common.save', 'Save')}
@@ -137,10 +162,13 @@ export default function EditTenantPage({ params }: { params?: { id?: string } })
             await updateCrud('directory/tenants', payload)
           }}
           onDelete={async () => {
-            const call = await apiCall(
-              `/api/directory/tenants?id=${encodeURIComponent(tenantId)}`,
-              { method: 'DELETE' },
-            )
+            const headers = buildOptimisticLockHeader(initial?.updatedAt)
+            const call = await withScopedApiRequestHeaders(headers, () => (
+              apiCall(
+                `/api/directory/tenants?id=${encodeURIComponent(tenantId)}`,
+                { method: 'DELETE' },
+              )
+            ))
             if (!call.ok) {
               await raiseCrudError(call.response, t('directory.tenants.form.errors.delete', 'Failed to delete tenant'))
             }

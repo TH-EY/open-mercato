@@ -11,7 +11,9 @@ import { PasswordInput } from '@open-mercato/ui/primitives/password-input'
 import { Spinner } from '@open-mercato/ui/primitives/spinner'
 import { SwitchField } from '@open-mercato/ui/primitives/switch-field'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@open-mercato/ui/primitives/dialog'
-import { apiCall, readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
+import { apiCall, readApiResultOrThrow, withScopedApiRequestHeaders } from '@open-mercato/ui/backend/utils/apiCall'
+import { buildOptimisticLockHeader } from '@open-mercato/ui/backend/utils/optimisticLock'
+import { surfaceRecordConflict } from '@open-mercato/ui/backend/conflicts'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { useConfirmDialog } from '@open-mercato/ui/backend/confirm-dialog'
@@ -249,25 +251,25 @@ export default function CustomerUserDetailPage({ params }: { params?: { id?: str
   React.useEffect(() => {
     if (!data) return
     let cancelled = false
-    async function loadCrmNames() {
-      if (data!.personEntityId) {
-        try {
-          const call = await apiCall<{ id?: string; firstName?: string; lastName?: string }>(`/api/customers/people/${encodeURIComponent(data!.personEntityId)}`)
-          if (!cancelled && call.ok && call.result) {
-            setPersonName([call.result.firstName, call.result.lastName].filter(Boolean).join(' ') || call.result.id || null)
-          }
-        } catch { /* ignore */ }
-      }
-      if (data!.customerEntityId) {
-        try {
-          const call = await apiCall<{ id?: string; name?: string }>(`/api/customers/${encodeURIComponent(data!.customerEntityId)}`)
-          if (!cancelled && call.ok && call.result) {
-            setCompanyName(call.result.name || call.result.id || null)
-          }
-        } catch { /* ignore */ }
-      }
+    async function loadPersonName() {
+      if (!data!.personEntityId) return
+      try {
+        const call = await apiCall<{ id?: string; firstName?: string; lastName?: string }>(`/api/customers/people/${encodeURIComponent(data!.personEntityId)}`)
+        if (!cancelled && call.ok && call.result) {
+          setPersonName([call.result.firstName, call.result.lastName].filter(Boolean).join(' ') || call.result.id || null)
+        }
+      } catch { /* ignore */ }
     }
-    loadCrmNames()
+    async function loadCompanyName() {
+      if (!data!.customerEntityId) return
+      try {
+        const call = await apiCall<{ id?: string; name?: string }>(`/api/customers/${encodeURIComponent(data!.customerEntityId)}`)
+        if (!cancelled && call.ok && call.result) {
+          setCompanyName(call.result.name || call.result.id || null)
+        }
+      } catch { /* ignore */ }
+    }
+    void Promise.all([loadPersonName(), loadCompanyName()])
     return () => { cancelled = true }
   }, [data])
 
@@ -332,21 +334,25 @@ export default function CustomerUserDetailPage({ params }: { params?: { id?: str
     setIsSaving(true)
     try {
       await runMutationWithContext(async () => {
-        const call = await apiCall<{ ok: boolean; error?: string }>(
-          `/api/customer_accounts/admin/users/${encodeURIComponent(id)}`,
-          {
-            method: 'PUT',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              displayName: editDisplayName.trim() || undefined,
-              isActive: editActive,
-              roleIds: selectedRoleIds,
-              personEntityId: editPersonEntityId,
-              customerEntityId: editCustomerEntityId,
-            }),
-          },
+        const call = await withScopedApiRequestHeaders(
+          buildOptimisticLockHeader(data.updatedAt),
+          () => apiCall<{ ok: boolean; error?: string; updatedAt?: string | null }>(
+            `/api/customer_accounts/admin/users/${encodeURIComponent(id)}`,
+            {
+              method: 'PUT',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                displayName: editDisplayName.trim() || undefined,
+                isActive: editActive,
+                roleIds: selectedRoleIds,
+                personEntityId: editPersonEntityId,
+                customerEntityId: editCustomerEntityId,
+              }),
+            },
+          ),
         )
         if (!call.ok) {
+          if (surfaceRecordConflict({ status: call.status, body: call.result }, t)) return
           flash(call.result?.error || t('customer_accounts.admin.detail.error.save', 'Failed to save user'), 'error')
           return
         }
@@ -357,6 +363,7 @@ export default function CustomerUserDetailPage({ params }: { params?: { id?: str
           displayName: editDisplayName.trim() || prev.displayName,
           personEntityId: editPersonEntityId,
           customerEntityId: editCustomerEntityId,
+          updatedAt: call.result?.updatedAt ?? prev.updatedAt,
         } : prev)
       }, { displayName: editDisplayName, isActive: editActive, roleIds: selectedRoleIds, personEntityId: editPersonEntityId, customerEntityId: editCustomerEntityId })
     } catch (err) {
@@ -378,11 +385,15 @@ export default function CustomerUserDetailPage({ params }: { params?: { id?: str
     if (!confirmed) return
     try {
       await runMutationWithContext(async () => {
-        const call = await apiCall(
-          `/api/customer_accounts/admin/users/${encodeURIComponent(id)}`,
-          { method: 'DELETE' },
+        const call = await withScopedApiRequestHeaders(
+          buildOptimisticLockHeader(data.updatedAt),
+          () => apiCall(
+            `/api/customer_accounts/admin/users/${encodeURIComponent(id)}`,
+            { method: 'DELETE' },
+          ),
         )
         if (!call.ok) {
+          if (surfaceRecordConflict({ status: call.status, body: call.result }, t)) return
           flash(t('customer_accounts.admin.error.delete', 'Failed to delete user'), 'error')
           return
         }

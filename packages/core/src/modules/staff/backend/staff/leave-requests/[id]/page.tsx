@@ -1,24 +1,27 @@
 "use client"
 
 import * as React from 'react'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { Page, PageBody } from '@open-mercato/ui/backend/Page'
 import { Badge } from '@open-mercato/ui/primitives/badge'
 import { Button } from '@open-mercato/ui/primitives/button'
 import { Textarea } from '@open-mercato/ui/primitives/textarea'
 import { LoadingMessage, ErrorMessage, RecordNotFoundState } from '@open-mercato/ui/backend/detail'
 import { SendObjectMessageDialog } from '@open-mercato/ui/backend/messages'
-import { apiCallOrThrow, readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
+import { apiCallOrThrow, readApiResultOrThrow, withScopedApiRequestHeaders } from '@open-mercato/ui/backend/utils/apiCall'
+import { buildOptimisticLockHeader } from '@open-mercato/ui/backend/utils/optimisticLock'
 import { updateCrud } from '@open-mercato/ui/backend/utils/crud'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { LeaveRequestForm, buildLeaveRequestPayload, type LeaveRequestFormValues } from '@open-mercato/core/modules/staff/components/LeaveRequestForm'
+import { buildRecordInjectionContext, useSetCurrentRecordInjectionContext } from '@open-mercato/ui/backend/injection/recordContext'
 import { type LeaveRequestRecord, type LeaveRequestsResponse, type NormalizedLeaveRequest, normalizeLeaveRequest, resolveStatusVariant, formatDateLabel, formatDateRange } from '../../../../lib/leaveRequestHelpers'
 
 export default function StaffLeaveRequestDetailPage({ params }: { params?: { id?: string } }) {
   const id = params?.id
   const t = useT()
   const router = useRouter()
+  const pathname = usePathname()
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [isNotFound, setIsNotFound] = React.useState(false)
@@ -89,6 +92,7 @@ export default function StaffLeaveRequestDetailPage({ params }: { params?: { id?
     unavailabilityReasonEntryId: record?.unavailabilityReasonEntryId ?? null,
     unavailabilityReasonValue: record?.unavailabilityReasonValue ?? null,
     note: record?.note ?? null,
+    updatedAt: record?.updatedAt ?? null,
   }), [record, memberLabel])
 
 const handleSubmit = React.useCallback(async (values: LeaveRequestFormValues) => {
@@ -104,11 +108,14 @@ const handleSubmit = React.useCallback(async (values: LeaveRequestFormValues) =>
   const handleDecision = React.useCallback(async (action: 'accept' | 'reject') => {
     if (!record?.id) return
     const endpoint = action === 'accept' ? '/api/staff/leave-requests/accept' : '/api/staff/leave-requests/reject'
-    await apiCallOrThrow(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id: record.id, decisionComment: decisionComment || null }),
-    })
+    await withScopedApiRequestHeaders(
+      buildOptimisticLockHeader(record.updatedAt),
+      () => apiCallOrThrow(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: record.id, decisionComment: decisionComment || null }),
+      }),
+    )
     flash(
       action === 'accept'
         ? t('staff.leaveRequests.messages.accepted', 'Leave request approved.')
@@ -116,7 +123,21 @@ const handleSubmit = React.useCallback(async (values: LeaveRequestFormValues) =>
       'success',
     )
     router.refresh()
-  }, [decisionComment, record?.id, router, t])
+  }, [decisionComment, record?.id, record?.updatedAt, router, t])
+
+  // Publish page-load record context to the AppShell-owned `backend:record:current`
+  // mount so the enterprise record_locks widget resolves `staff.leaveRequest` + id
+  // explicitly. The resourceKind follows the module's camelCase version-history
+  // convention so the held lock matches the leave request's save-time conflict surface.
+  useSetCurrentRecordInjectionContext(
+    buildRecordInjectionContext({
+      resourceKind: 'staff.leaveRequest',
+      resourceId: id || null,
+      updatedAt: record?.updatedAt ?? null,
+      data: record as Record<string, unknown> | null,
+      path: pathname,
+    }),
+  )
 
   if (isLoading) {
     return (

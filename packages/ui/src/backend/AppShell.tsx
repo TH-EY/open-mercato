@@ -24,14 +24,22 @@ import { QueryProvider } from '../theme/QueryProvider'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { apiCall } from './utils/apiCall'
 import { LastOperationBanner } from './operations/LastOperationBanner'
+import { RecordConflictBanner } from './conflicts/RecordConflictBanner'
+import { dismissRecordConflict } from './conflicts/store'
 import { ProgressTopBar } from './progress/ProgressTopBar'
 import { UpgradeActionBanner } from './upgrades/UpgradeActionBanner'
 import { PartialIndexBanner } from './indexes/PartialIndexBanner'
+import { OrganizationScopeBoundary } from './OrganizationScopeBoundary'
 import { useLocale, useT } from '@open-mercato/shared/lib/i18n/context'
 import { slugifySidebarId } from '@open-mercato/shared/modules/navigation/sidebarPreferences'
+import { readVersionedPreference, writeVersionedPreference } from '@open-mercato/shared/lib/browser/versionedPreference'
 import { cloneSidebarGroups } from './sidebar/customization-helpers'
 import type { SectionNavGroup } from './section-page/types'
 import { InjectionSpot } from './injection/InjectionSpot'
+import {
+  BackendRecordInjectionContextProvider,
+  type RecordInjectionContext,
+} from './injection/recordContext'
 import type { InjectionMenuItem } from '@open-mercato/shared/modules/widgets/injection'
 import { LEGACY_GLOBAL_MUTATION_INJECTION_SPOT_ID } from './injection/mutationEvents'
 import { mergeMenuItems } from './injection/mergeMenuItems'
@@ -56,6 +64,25 @@ import {
   GLOBAL_HEADER_STATUS_INDICATORS_INJECTION_SPOT_ID,
   GLOBAL_SIDEBAR_STATUS_BADGES_INJECTION_SPOT_ID,
 } from './injection/spotIds'
+
+// Versioned-envelope discriminator for the persisted sidebar open/closed group
+// map. This is a structured value (a record), so it carries a version so future
+// shape changes can migrate or safely discard stale data; legacy bare
+// `Record<string, boolean>` values are migrated forward on the next write. The
+// neighbouring `om:sidebarCollapsed` / `om:progress:expanded` flags are trivial
+// scalar booleans and deliberately stay raw (see their write sites). See
+// `@open-mercato/shared/lib/browser/versionedPreference`.
+const SIDEBAR_OPEN_GROUPS_KEY = 'om:sidebarOpenGroups'
+const SIDEBAR_OPEN_GROUPS_VERSION = 1
+
+function isBooleanRecord(value: unknown): value is Record<string, boolean> {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.values(value as Record<string, unknown>).every((entry) => typeof entry === 'boolean')
+  )
+}
 
 export type ShellLogo = {
   src: string
@@ -151,55 +178,6 @@ function resolveInjectedMenuLabel(
 function shouldBypassLogoOptimization(src?: string | null): boolean {
   const value = src ?? ''
   return /^https?:\/\//.test(value) || /^\/api\/attachments\/(?:image|file)\//.test(value)
-}
-
-function ShellBrandLogo({
-  logo,
-  brandName,
-  unoptimized,
-  compact = false,
-  mobile = false,
-}: {
-  logo?: ShellLogo
-  brandName: string
-  unoptimized?: boolean
-  compact?: boolean
-  mobile?: boolean
-}) {
-  const src = logo?.src ?? '/open-mercato.svg'
-  const alt = logo?.alt ?? brandName
-  const isCustomLogo = Boolean(logo?.src)
-  if (!isCustomLogo) {
-    return (
-      <Image
-        src={src}
-        alt={alt}
-        width={mobile ? 28 : 40}
-        height={mobile ? 28 : 40}
-        className={`${mobile ? 'rounded' : 'rounded-full'} shrink-0`}
-        unoptimized={unoptimized ? true : undefined}
-      />
-    )
-  }
-
-  const width = compact ? 40 : mobile ? 96 : 120
-  const height = mobile ? 28 : 40
-  const className = compact
-    ? 'h-10 max-w-10 w-auto shrink-0 object-contain'
-    : mobile
-      ? 'h-7 max-w-24 w-auto shrink-0 object-contain'
-      : 'h-10 max-w-[120px] w-auto shrink-0 object-contain'
-
-  return (
-    <Image
-      src={src}
-      alt={alt}
-      width={width}
-      height={height}
-      className={className}
-      unoptimized={unoptimized ? true : undefined}
-    />
-  )
 }
 
 function mergeSidebarItemsWithInjected(
@@ -506,6 +484,13 @@ function AppShellBody({ productName, logo, email, canManageUpgradeActions = fals
   // section sidebar by default. Set to 'main' to force-show the main nav even
   // when the route is in a section context. Reset on close.
   const [mobileDrawerView, setMobileDrawerView] = React.useState<'auto' | 'main'>('auto')
+  // Clear the persistent record-conflict bar when the route changes. The
+  // conflict is scoped to the record the user was editing, so navigating to an
+  // unrelated page should dismiss it instead of carrying a stale "Record
+  // changed" bar across modules.
+  React.useEffect(() => {
+    dismissRecordConflict()
+  }, [pathname])
   React.useEffect(() => {
     if (!mobileOpen) setMobileDrawerView('auto')
   }, [mobileOpen])
@@ -612,6 +597,21 @@ function AppShellBody({ productName, logo, email, canManageUpgradeActions = fals
     [pathname, searchParams],
   )
 
+  // AppShell-owned transport for the current detail record (Phase 0 / S2).
+  // Detail pages publish here; the merged context feeds the global
+  // `backend:record:current` mount so the record_locks widget can resolve the
+  // resource without a hardcoded path allowlist. Stale context (published for a
+  // different path) is ignored so it never leaks across route transitions.
+  const [currentRecordInjectionContext, setCurrentRecordInjectionContext] =
+    React.useState<RecordInjectionContext | null>(null)
+
+  const recordInjectionContext = React.useMemo(() => {
+    if (!currentRecordInjectionContext) return injectionContext
+    const publishedPath = currentRecordInjectionContext.path
+    if (publishedPath && pathname && publishedPath !== pathname) return injectionContext
+    return { ...injectionContext, ...currentRecordInjectionContext }
+  }, [injectionContext, currentRecordInjectionContext, pathname])
+
   const isOnSettingsPath = React.useMemo(() => {
     if (!pathname) return false
     if (pathname === '/backend/settings') return true
@@ -645,22 +645,23 @@ function AppShellBody({ productName, logo, email, canManageUpgradeActions = fals
   }, [mobileOpen])
 
   React.useEffect(() => {
-    try {
-      const savedOpen = typeof window !== 'undefined' ? localStorage.getItem('om:sidebarOpenGroups') : null
-      if (!savedOpen) return
-      const parsed = JSON.parse(savedOpen) as Record<string, boolean>
-      setOpenGroups((prev) => {
-        const next = { ...prev }
-        for (const group of resolvedGroups) {
-          const key = resolveGroupKey(group)
-          if (key in parsed) next[key] = !!parsed[key]
-          else if (group.name in parsed) next[key] = !!parsed[group.name]
-        }
-        return next
-      })
-    } catch {
-      // ignore localStorage errors to avoid breaking hydration
-    }
+    const parsed = readVersionedPreference<Record<string, boolean>>(
+      SIDEBAR_OPEN_GROUPS_KEY,
+      SIDEBAR_OPEN_GROUPS_VERSION,
+      isBooleanRecord,
+      {},
+      { legacyIsValid: isBooleanRecord },
+    )
+    if (Object.keys(parsed).length === 0) return
+    setOpenGroups((prev) => {
+      const next = { ...prev }
+      for (const group of resolvedGroups) {
+        const key = resolveGroupKey(group)
+        if (key in parsed) next[key] = !!parsed[key]
+        else if (group.name in parsed) next[key] = !!parsed[group.name]
+      }
+      return next
+    })
   }, [resolvedGroups])
 
   const toggleGroup = (groupId: string) => setOpenGroups((prev) => ({ ...prev, [groupId]: prev[groupId] === false }))
@@ -673,6 +674,9 @@ function AppShellBody({ productName, logo, email, canManageUpgradeActions = fals
   // private/incognito mode (storage blocked) or when cookies are disabled —
   // the persisted preference is purely a UX nice-to-have, never functional, so
   // swallow the failure and let the component fall back to the default state.
+  // This is a trivial scalar flag ('1' | '0') with no schema to evolve, so it is
+  // intentionally kept raw rather than wrapped in a versioned envelope (the
+  // versioning threshold lives in `@open-mercato/shared/lib/browser/versionedPreference`).
   React.useEffect(() => {
     try { localStorage.setItem('om:sidebarCollapsed', collapsed ? '1' : '0') } catch { /* localStorage blocked (private mode) — non-critical */ }
     try {
@@ -699,7 +703,7 @@ function AppShellBody({ productName, logo, email, canManageUpgradeActions = fals
     previousSidebarModeRef.current = sidebarMode
   }, [sidebarMode, collapsed])
   React.useEffect(() => {
-    try { localStorage.setItem('om:sidebarOpenGroups', JSON.stringify(openGroups)) } catch { /* localStorage blocked (private mode) — non-critical */ }
+    writeVersionedPreference(SIDEBAR_OPEN_GROUPS_KEY, SIDEBAR_OPEN_GROUPS_VERSION, openGroups)
   }, [openGroups])
 
   // Ensure current route's group is expanded on load
@@ -750,7 +754,7 @@ function AppShellBody({ productName, logo, email, canManageUpgradeActions = fals
               className={`flex items-center gap-3 rounded-xl transition-colors hover:bg-muted ${compact ? 'p-2 justify-center' : 'p-3'}`}
               aria-label={t('appShell.goToDashboard')}
             >
-              <ShellBrandLogo logo={resolvedLogo} brandName={resolvedBrandName} compact={compact} unoptimized={resolvedLogoBypassesOptimization} />
+              <Image src={resolvedLogo?.src ?? "/open-mercato.svg"} alt={resolvedLogo?.alt ?? resolvedBrandName} width={40} height={40} className="rounded-full shrink-0" unoptimized={resolvedLogoBypassesOptimization ? true : undefined} />
               {!compact && <span className="truncate text-sm font-medium text-foreground">{resolvedBrandName}</span>}
             </Link>
           </div>
@@ -883,7 +887,7 @@ function AppShellBody({ productName, logo, email, canManageUpgradeActions = fals
                 className={`flex items-center gap-3 rounded-xl transition-colors hover:bg-muted ${compact ? 'p-2 justify-center' : 'p-3'}`}
                 aria-label={t('appShell.goToDashboard')}
               >
-                <ShellBrandLogo logo={resolvedLogo} brandName={resolvedBrandName} compact={compact} unoptimized={resolvedLogoBypassesOptimization} />
+                <Image src={resolvedLogo?.src ?? "/open-mercato.svg"} alt={resolvedLogo?.alt ?? resolvedBrandName} width={40} height={40} className="rounded-full shrink-0" unoptimized={resolvedLogoBypassesOptimization ? true : undefined} />
                 {!compact && <span className="truncate text-sm font-medium text-foreground">{resolvedBrandName}</span>}
               </Link>
             </div>
@@ -949,7 +953,7 @@ function AppShellBody({ productName, logo, email, canManageUpgradeActions = fals
               className={`flex items-center gap-3 rounded-xl transition-colors hover:bg-muted ${compact ? 'p-2 justify-center' : 'p-3'}`}
               aria-label={t('appShell.goToDashboard')}
             >
-              <ShellBrandLogo logo={resolvedLogo} brandName={resolvedBrandName} compact={compact} unoptimized={resolvedLogoBypassesOptimization} />
+              <Image src={resolvedLogo?.src ?? "/open-mercato.svg"} alt={resolvedLogo?.alt ?? resolvedBrandName} width={40} height={40} className="rounded-full shrink-0" unoptimized={resolvedLogoBypassesOptimization ? true : undefined} />
               {!compact && <span className="truncate text-sm font-medium text-foreground">{resolvedBrandName}</span>}
             </Link>
           </div>
@@ -1408,13 +1412,18 @@ function AppShellBody({ productName, logo, email, canManageUpgradeActions = fals
           <PartialIndexBanner />
           {canManageUpgradeActions ? <UpgradeActionBanner /> : null}
           <LastOperationBanner />
-          <InjectionSpot spotId={BACKEND_RECORD_CURRENT_INJECTION_SPOT_ID} context={injectionContext} />
+          <RecordConflictBanner />
+          <InjectionSpot spotId={BACKEND_RECORD_CURRENT_INJECTION_SPOT_ID} context={recordInjectionContext} />
           <InjectionSpot
             spotId={LEGACY_GLOBAL_MUTATION_INJECTION_SPOT_ID}
             context={injectionContext}
           />
           <div id="om-top-banners" className="mb-3 space-y-2" />
-          {children}
+          <OrganizationScopeBoundary active={isOnSettingsPath}>
+            <BackendRecordInjectionContextProvider setCurrentRecordInjectionContext={setCurrentRecordInjectionContext}>
+              {children}
+            </BackendRecordInjectionContextProvider>
+          </OrganizationScopeBoundary>
           <InjectionSpot spotId={BACKEND_LAYOUT_FOOTER_INJECTION_SPOT_ID} context={injectionContext} />
         </main>
         <footer className="border-t bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/80 px-4 py-3 flex flex-wrap items-center justify-end gap-4">
@@ -1441,7 +1450,7 @@ function AppShellBody({ productName, logo, email, canManageUpgradeActions = fals
           <aside className="absolute left-0 top-0 flex h-full w-[280px] max-w-[85vw] flex-col bg-background border-r shadow-lg overflow-hidden">
             <div className="shrink-0 flex items-center justify-between gap-2 border-b px-4 py-3">
               <Link href="/backend" className="flex items-center gap-2 min-w-0 text-sm font-semibold" onClick={() => setMobileOpen(false)} aria-label={t('appShell.goToDashboard')}>
-                <ShellBrandLogo logo={resolvedLogo} brandName={resolvedBrandName} mobile unoptimized={resolvedLogoBypassesOptimization} />
+                <Image src={resolvedLogo?.src ?? "/open-mercato.svg"} alt={resolvedLogo?.alt ?? resolvedBrandName} width={28} height={28} className="rounded shrink-0" unoptimized={resolvedLogoBypassesOptimization ? true : undefined} />
                 <span className="truncate">{resolvedBrandName}</span>
               </Link>
               <IconButton variant="ghost" size="sm" onClick={() => setMobileOpen(false)} aria-label={t('appShell.closeMenu')}>

@@ -15,15 +15,23 @@ import {
   clearEphemeralEnvironmentState,
   resolveBuildCacheTtlSeconds,
   resolveAppReadyTimeoutMs,
+  resolveEphemeralPostgresImage,
+  ephemeralPostgresInitSql,
   shouldReuseBuildArtifacts,
   acquireEphemeralRuntimeLock,
+  waitForApplicationReadiness,
 } from '../integration'
+import { EventEmitter } from 'node:events'
+import type { ChildProcess } from 'node:child_process'
 
 const CACHE_TTL_ENV_VAR = 'OM_INTEGRATION_BUILD_CACHE_TTL_SECONDS'
 const APP_READY_TIMEOUT_ENV_VAR = 'OM_INTEGRATION_APP_READY_TIMEOUT_SECONDS'
 const CHECKOUT_TEST_INJECTION_FLAG = 'NEXT_PUBLIC_OM_EXAMPLE_CHECKOUT_TEST_INJECTIONS_ENABLED'
+const PRIVATE_ATTACHMENTS_PARTITION_ENV_KEY = 'ATTACHMENTS_PARTITION_PRIVATE_ATTACHMENTS_ROOT'
 const resolver = createResolver()
 const projectRootDirectory = resolver.getRootDir()
+const appDirectory = path.join(projectRootDirectory, 'apps', 'mercato')
+const defaultPrivateAttachmentsRoot = path.join(appDirectory, 'storage', 'attachments', 'privateAttachments')
 
 const mockHealthyReadinessFetch = (
   overrides: {
@@ -164,6 +172,7 @@ describe('integration cache and options', () => {
         'postgres://integration:integration@127.0.0.1:5432/open_mercato',
       )
       expect(environment?.commandEnvironment.QUEUE_BASE_DIR).toBe('/tmp/open-mercato-queue')
+      expect(environment?.commandEnvironment[PRIVATE_ATTACHMENTS_PARTITION_ENV_KEY]).toBe(defaultPrivateAttachmentsRoot)
       expect(environment?.commandEnvironment.PW_CAPTURE_SCREENSHOTS).toBe('1')
       expect(environment?.commandEnvironment.NEXT_PUBLIC_OM_EXAMPLE_CHECKOUT_TEST_INJECTIONS_ENABLED).toBeUndefined()
     } finally {
@@ -198,6 +207,43 @@ describe('integration cache and options', () => {
       expect(environment?.commandEnvironment.NEXT_PUBLIC_OM_EXAMPLE_CHECKOUT_TEST_INJECTIONS_ENABLED).toBe('true')
     } finally {
       fetchSpy.mockRestore()
+    }
+  }, REUSE_ENV_TEST_TIMEOUT_MS)
+
+  it('reuses app-local private attachment storage when queue state points at an app root', async () => {
+    const baseUrl = 'http://127.0.0.1:5001'
+    const appRoot = await mkdtemp(path.join(os.tmpdir(), 'om-integration-app-root-'))
+    const queueBaseDir = path.join(appRoot, '.mercato', 'queue')
+    const fetchSpy = mockHealthyReadinessFetch()
+
+    try {
+      await mkdir(path.join(appRoot, 'src'), { recursive: true })
+      await writeFile(path.join(appRoot, 'package.json'), '{"name":"integration-test-app"}\n', 'utf8')
+      await writeFile(path.join(appRoot, 'src', 'modules.ts'), 'export const enabledModules = []\n', 'utf8')
+
+      await writeEphemeralEnvironmentState({
+        baseUrl,
+        port: 5001,
+        databaseUrl: 'postgres://integration:integration@127.0.0.1:5432/open_mercato',
+        queueBaseDir,
+        logPrefix: 'integration',
+        captureScreenshots: false,
+      })
+
+      const environment = await tryReuseExistingEnvironment({
+        verbose: false,
+        captureScreenshots: false,
+        logPrefix: 'integration',
+        forceRebuild: false,
+      })
+
+      expect(environment).not.toBeNull()
+      expect(environment?.commandEnvironment[PRIVATE_ATTACHMENTS_PARTITION_ENV_KEY]).toBe(
+        path.join(appRoot, 'storage', 'attachments', 'privateAttachments'),
+      )
+    } finally {
+      fetchSpy.mockRestore()
+      await rm(appRoot, { recursive: true, force: true })
     }
   }, REUSE_ENV_TEST_TIMEOUT_MS)
 
@@ -400,6 +446,27 @@ describe('integration cache and options', () => {
     warn.mockRestore()
   })
 
+  it('defaults the ephemeral Postgres image to a pgvector-enabled build', () => {
+    expect(resolveEphemeralPostgresImage({})).toBe('pgvector/pgvector:pg16')
+    expect(resolveEphemeralPostgresImage({ OM_INTEGRATION_POSTGRES_IMAGE: '   ' })).toBe(
+      'pgvector/pgvector:pg16',
+    )
+  })
+
+  it('honors an OM_INTEGRATION_POSTGRES_IMAGE override for the ephemeral Postgres image', () => {
+    expect(
+      resolveEphemeralPostgresImage({ OM_INTEGRATION_POSTGRES_IMAGE: 'pgvector/pgvector:pg17' }),
+    ).toBe('pgvector/pgvector:pg17')
+  })
+
+  it('creates the vector and pgcrypto extensions in the ephemeral init SQL', () => {
+    const sql = ephemeralPostgresInitSql()
+    expect(sql).toContain('CREATE EXTENSION IF NOT EXISTS vector')
+    expect(sql).toContain('CREATE EXTENSION IF NOT EXISTS pgcrypto')
+    // Extensions are also seeded into template1 so future databases inherit them.
+    expect(sql).toContain('\\connect template1')
+  })
+
   it('reuses build artifacts only with matching source fingerprint and fresh cache state', async () => {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'om-int-cache-test-'))
     try {
@@ -553,6 +620,82 @@ describe('integration cache and options', () => {
     } finally {
       warn.mockRestore()
       await rm(tempRoot, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('waitForApplicationReadiness', () => {
+  const makeFakeProcess = (): ChildProcess => new EventEmitter() as unknown as ChildProcess
+  const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+  it('serializes probe cycles so slow probes never pile up concurrent login attempts', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    let loginPageCycles = 0
+
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : String(input)
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      try {
+        // Each probe fetch is slower than the retry interval; the old race-against-a-tick loop
+        // would launch overlapping cycles here and blow past 3 concurrent in-flight requests.
+        await sleep(40)
+        const isLoginPage = url.endsWith('/login') && !url.endsWith('/api/auth/login')
+        if (isLoginPage) {
+          loginPageCycles += 1
+          if (loginPageCycles <= 2) {
+            return { status: 503, ok: false, text: async () => '' } as unknown as Response
+          }
+          return {
+            status: 200,
+            ok: true,
+            text: async () => '<!doctype html><script src="/_next/static/chunks/app.js"></script>',
+          } as unknown as Response
+        }
+        if (url.endsWith('/api/auth/login')) {
+          return { status: 200, ok: true, text: async () => JSON.stringify({ token: 'token' }) } as unknown as Response
+        }
+        if (url.includes('/api/customers/people')) {
+          return { status: 200, ok: true, text: async () => JSON.stringify({ items: [] }) } as unknown as Response
+        }
+        return { status: 200, ok: true, text: async () => '' } as unknown as Response
+      } finally {
+        inFlight -= 1
+      }
+    })
+
+    try {
+      await waitForApplicationReadiness('http://127.0.0.1:5001', makeFakeProcess(), {
+        timeoutMs: 5_000,
+        intervalMs: 5,
+        stabilizationMs: 10,
+      })
+      // One cycle issues exactly three parallel probe fetches (login page, backend login,
+      // authenticated login). Serialized cycles keep the peak at three; overlap would exceed it.
+      expect(maxInFlight).toBeLessThanOrEqual(3)
+      expect(loginPageCycles).toBeGreaterThanOrEqual(3)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it('fails fast when the application process exits before becoming ready', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async () => {
+      await sleep(20)
+      return { status: 503, ok: false, text: async () => '' } as unknown as Response
+    })
+    const fakeProcess = makeFakeProcess()
+
+    try {
+      const readiness = waitForApplicationReadiness('http://127.0.0.1:5001', fakeProcess, {
+        timeoutMs: 5_000,
+        intervalMs: 5,
+      })
+      setTimeout(() => fakeProcess.emit('exit', 1), 30)
+      await expect(readiness).rejects.toThrow(/exited before readiness check \(exit 1\)/)
+    } finally {
+      fetchSpy.mockRestore()
     }
   })
 })

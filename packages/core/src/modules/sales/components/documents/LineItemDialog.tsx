@@ -12,9 +12,11 @@ import {
   type CrudCustomFieldRenderProps,
 } from "@open-mercato/ui/backend/CrudForm";
 import { collectCustomFieldValues } from "@open-mercato/ui/backend/utils/customFieldValues";
-import { apiCall } from "@open-mercato/ui/backend/utils/apiCall";
+import { apiCall, withScopedApiRequestHeaders } from "@open-mercato/ui/backend/utils/apiCall";
+import { buildOptimisticLockHeader } from "@open-mercato/ui/backend/utils/optimisticLock";
 import { createCrud, updateCrud } from "@open-mercato/ui/backend/utils/crud";
 import { createCrudFormError } from "@open-mercato/ui/backend/utils/serverErrors";
+import { handleSectionMutationError } from "./optimisticLock";
 import {
   Dialog,
   DialogContent,
@@ -113,6 +115,42 @@ type TaxRateOption = {
   rate: number | null;
   isDefault: boolean;
 };
+
+function mapTaxRateOption(item: Record<string, unknown>): TaxRateOption | null {
+  const id = typeof item.id === "string" ? item.id : null;
+  const name =
+    typeof item.name === "string" && item.name.trim().length
+      ? item.name.trim()
+      : typeof item.code === "string"
+        ? item.code
+        : null;
+  if (!id || !name) return null;
+  const rate = normalizeNumber((item as ApiTaxRateItem).rate);
+  const code =
+    typeof (item as ApiTaxRateItem).code === "string" &&
+    (item as ApiTaxRateItem).code?.trim().length
+      ? (item as ApiTaxRateItem).code?.trim() ?? null
+      : null;
+  const isDefault = Boolean(
+    (item as ApiTaxRateItem).isDefault ?? (item as ApiTaxRateItem).is_default,
+  );
+  return {
+    id,
+    name,
+    code,
+    rate: Number.isFinite(rate) ? rate : null,
+    isDefault,
+  };
+}
+
+function mergeTaxRateOptions(
+  options: TaxRateOption[],
+  selected: TaxRateOption | null,
+): TaxRateOption[] {
+  if (!selected) return options;
+  if (options.some((option) => option.id === selected.id)) return options;
+  return [selected, ...options];
+}
 
 type StatusOption = {
   id: string;
@@ -254,6 +292,7 @@ type SalesLineDialogProps = {
   documentId: string;
   currencyCode: string | null | undefined;
   existingLineCount?: number;
+  documentUpdatedAt?: string | null;
   organizationId: string | null;
   tenantId: string | null;
   initialLine?: SalesLineRecord | null;
@@ -482,6 +521,7 @@ export function LineItemDialog({
   documentId,
   currencyCode,
   existingLineCount,
+  documentUpdatedAt,
   organizationId,
   tenantId,
   initialLine,
@@ -633,32 +673,7 @@ export function LineItemDialog({
         ? response.result.items
         : [];
       const parsed = items
-        .map<TaxRateOption | null>((item) => {
-          const id = typeof item.id === "string" ? item.id : null;
-          const name =
-            typeof item.name === "string" && item.name.trim().length
-              ? item.name.trim()
-              : typeof item.code === "string"
-                ? item.code
-                : null;
-          if (!id || !name) return null;
-          const rate = normalizeNumber((item as ApiTaxRateItem).rate);
-          const code =
-            typeof (item as ApiTaxRateItem).code === "string" &&
-            (item as ApiTaxRateItem).code?.trim().length
-              ? (item as ApiTaxRateItem).code?.trim() ?? null
-              : null;
-          const isDefault = Boolean(
-            (item as ApiTaxRateItem).isDefault ?? (item as ApiTaxRateItem).is_default,
-          );
-          return {
-            id,
-            name,
-            code,
-            rate: Number.isFinite(rate) ? rate : null,
-            isDefault,
-          };
-        })
+        .map<TaxRateOption | null>((item) => mapTaxRateOption(item))
         .filter((entry): entry is TaxRateOption => Boolean(entry));
       taxRatesRef.current = parsed;
       defaultTaxRateRef.current = parsed.find((rate) => rate.isDefault) ?? null;
@@ -672,6 +687,42 @@ export function LineItemDialog({
       return [];
     }
   }, []);
+
+  const loadTaxRateById = React.useCallback(
+    async (taxRateId: string): Promise<TaxRateOption | null> => {
+      const response = await apiCall<{
+        items?: Array<Record<string, unknown>>;
+      }>(
+        `/api/sales/tax-rates?id=${encodeURIComponent(taxRateId)}&pageSize=1`,
+        undefined,
+        { fallback: { items: [] } },
+      );
+      const items = Array.isArray(response.result?.items)
+        ? response.result.items
+        : [];
+      return (
+        items
+          .map<TaxRateOption | null>((item) => mapTaxRateOption(item))
+          .find((entry): entry is TaxRateOption => entry?.id === taxRateId) ??
+        null
+      );
+    },
+    [],
+  );
+
+  React.useEffect(() => {
+    const selectedId =
+      typeof initialValues.taxRateId === "string" && initialValues.taxRateId.trim().length
+        ? initialValues.taxRateId.trim()
+        : null;
+    if (!selectedId || taxRates.some((rate) => rate.id === selectedId)) return;
+    loadTaxRateById(selectedId)
+      .then((selected) => {
+        taxRatesRef.current = mergeTaxRateOptions(taxRatesRef.current, selected);
+        setTaxRates((current) => mergeTaxRateOptions(current, selected));
+      })
+      .catch(() => {});
+  }, [initialValues.taxRateId, loadTaxRateById, taxRates]);
 
   const loadProductOptionById = React.useCallback(
     async (productId: string): Promise<ProductOption | null> => {
@@ -1652,15 +1703,19 @@ export function LineItemDialog({
 
       try {
         const action = editingId ? updateCrud : createCrud;
-        const result = await action(
-          resourcePath,
-          editingId ? { id: editingId, ...payload } : payload,
-          {
-            errorMessage: t(
-              "sales.documents.items.errorSave",
-              "Failed to save line.",
+        const result = await withScopedApiRequestHeaders(
+          buildOptimisticLockHeader(documentUpdatedAt),
+          () =>
+            action(
+              resourcePath,
+              editingId ? { id: editingId, ...payload } : payload,
+              {
+                errorMessage: t(
+                  "sales.documents.items.errorSave",
+                  "Failed to save line.",
+                ),
+              },
             ),
-          },
         );
         if (result.ok) {
           if (shouldSyncDocumentCurrency) {
@@ -1670,6 +1725,14 @@ export function LineItemDialog({
           closeDialog();
         }
       } catch (err) {
+        if (
+          handleSectionMutationError(err, t, () => {
+            if (onSaved) void onSaved();
+          })
+        ) {
+          closeDialog();
+          return;
+        }
         throw err;
       }
     },
@@ -1677,6 +1740,7 @@ export function LineItemDialog({
       currencyCode,
       documentId,
       documentKey,
+      documentUpdatedAt,
       editingId,
       priceOptions,
       productOption,
@@ -2448,6 +2512,9 @@ export function LineItemDialog({
             typeof value === "string" && value.trim().length
               ? value
               : findTaxRateIdByValue((values as Record<string, unknown>)?.taxRate as number | null | undefined);
+          const selectedTaxRate = resolvedValue
+            ? taxRateMap.get(resolvedValue) ?? null
+            : null;
           const handleChange = (
             event: React.ChangeEvent<HTMLSelectElement>,
           ) => {
@@ -2477,7 +2544,11 @@ export function LineItemDialog({
                             "No tax classes available",
                           )
                     }
-                  />
+                  >
+                    {selectedTaxRate
+                      ? `${selectedTaxRate.name}${selectedTaxRate.code ? ` • ${selectedTaxRate.code.toUpperCase()}` : ""}${Number.isFinite(selectedTaxRate.rate) ? ` • ${selectedTaxRate.rate}%` : ""}`
+                      : undefined}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {taxRates.map((rate) => (

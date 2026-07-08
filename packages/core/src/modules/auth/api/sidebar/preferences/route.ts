@@ -9,13 +9,17 @@ import {
   sidebarPreferencesScopeSchema,
 } from '../../../data/validators'
 import {
+  loadRoleSidebarPreferenceUpdatedAt,
   loadRoleSidebarPreferences,
   loadSidebarPreference,
+  loadSidebarPreferenceUpdatedAt,
   saveRoleSidebarPreference,
   saveSidebarPreference,
 } from '../../../services/sidebarPreferencesService'
 import { SIDEBAR_PREFERENCES_VERSION } from '@open-mercato/shared/modules/navigation/sidebarPreferences'
 import { withAtomicFlush } from '@open-mercato/shared/lib/commands/flush'
+import { enforceCommandOptimisticLock } from '@open-mercato/shared/lib/crud/optimistic-lock-command'
+import { isCrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { Role, RoleSidebarPreference } from '../../../data/entities'
 import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import { z } from 'zod'
@@ -47,6 +51,7 @@ const sidebarPreferencesResponseSchema = z.object({
   canApplyToRoles: z.boolean(),
   roles: z.array(sidebarRoleEntrySchema),
   scope: sidebarPreferencesScopeSchema,
+  updatedAt: z.string().datetime().nullable(),
 })
 
 const sidebarPreferencesUpdateResponseSchema = sidebarPreferencesResponseSchema.extend({
@@ -116,16 +121,23 @@ async function findRoleInScope(
   em: EntityManager,
   options: { roleId: string; tenantId: string | null },
 ): Promise<Role | null> {
+  // Scope the DB query so MikroORM only fetches in-scope rows: a role belongs to either
+  // the auth tenant or the global (null tenant) pool. Mirrors loadRolesPayload()'s scoping
+  // so cross-tenant role rows are never loaded or decrypted into memory in the first place.
+  const roleScope: FilterQuery<Role> = options.tenantId
+    ? { id: options.roleId, $or: [{ tenantId: options.tenantId }, { tenantId: null }] }
+    : { id: options.roleId, tenantId: null }
   const role = await findOneWithDecryption(
     em,
     Role,
-    { id: options.roleId },
+    roleScope,
     undefined,
     { tenantId: options.tenantId, organizationId: null },
   )
   if (!role) return null
-  // Cross-tenant guard: a role belongs to either the auth tenant or the global (null tenant) pool.
-  // Reject the lookup otherwise so a multi-tenant deployment can't leak across tenants.
+  // Cross-tenant guard (defense-in-depth): a role belongs to either the auth tenant or the
+  // global (null tenant) pool. Reject the lookup otherwise so a multi-tenant deployment can't
+  // leak across tenants even if the query above is later changed.
   if (role.tenantId && options.tenantId && role.tenantId !== options.tenantId) return null
   if (role.tenantId && !options.tenantId) return null
   return role
@@ -165,6 +177,11 @@ export async function GET(req: Request) {
     })
     const pref = rolePrefs.get(role.id) ?? null
     const rolesPayload = await loadRolesPayload(em, { tenantId: auth.tenantId ?? null, locale })
+    const roleVersion = await loadRoleSidebarPreferenceUpdatedAt(em, {
+      roleId: role.id,
+      tenantId: auth.tenantId ?? null,
+      locale,
+    })
     return NextResponse.json({
       locale,
       settings: pref
@@ -180,6 +197,7 @@ export async function GET(req: Request) {
       canApplyToRoles,
       roles: rolesPayload,
       scope: { type: 'role', roleId: role.id },
+      updatedAt: roleVersion?.updatedAt ? roleVersion.updatedAt.toISOString() : null,
     })
   }
 
@@ -198,6 +216,15 @@ export async function GET(req: Request) {
     ? await loadRolesPayload(em, { tenantId: auth.tenantId ?? null, locale })
     : []
 
+  const userVersion = effectiveUserId
+    ? await loadSidebarPreferenceUpdatedAt(em, {
+        userId: effectiveUserId,
+        tenantId: auth.tenantId ?? null,
+        organizationId: auth.orgId ?? null,
+        locale,
+      })
+    : null
+
   return NextResponse.json({
     locale,
     settings: {
@@ -211,6 +238,7 @@ export async function GET(req: Request) {
     canApplyToRoles,
     roles: rolesPayload,
     scope: { type: 'user' },
+    updatedAt: userVersion?.updatedAt ? userVersion.updatedAt.toISOString() : null,
   })
 }
 
@@ -318,11 +346,34 @@ export async function PUT(req: Request) {
     if (!role) {
       return NextResponse.json({ error: 'Role not found' }, { status: 404 })
     }
+    const existingRolePref = await loadRoleSidebarPreferenceUpdatedAt(em, {
+      roleId: role.id,
+      tenantId: auth.tenantId ?? null,
+      locale,
+    })
+    if (existingRolePref) {
+      try {
+        enforceCommandOptimisticLock({
+          resourceKind: 'auth.role_sidebar_preference',
+          resourceId: existingRolePref.id,
+          current: existingRolePref.updatedAt ?? null,
+          request: req,
+        })
+      } catch (err) {
+        if (isCrudHttpError(err)) return NextResponse.json(err.body, { status: err.status })
+        throw err
+      }
+    }
     const saved = await saveRoleSidebarPreference(em, {
       roleId: role.id,
       tenantId: auth.tenantId ?? null,
       locale,
     }, payload)
+    const savedRoleVersion = await loadRoleSidebarPreferenceUpdatedAt(em, {
+      roleId: role.id,
+      tenantId: auth.tenantId ?? null,
+      locale,
+    })
     if (cache?.deleteByTags) {
       try {
         await cache.deleteByTags([`nav:sidebar:role:${role.id}`])
@@ -342,6 +393,7 @@ export async function PUT(req: Request) {
       canApplyToRoles,
       roles: rolesPayload,
       scope: { type: 'role', roleId: role.id },
+      updatedAt: savedRoleVersion?.updatedAt ? savedRoleVersion.updatedAt.toISOString() : null,
       appliedRoles: [],
       clearedRoles: [],
     })
@@ -354,6 +406,26 @@ export async function PUT(req: Request) {
 
   if ((applyToRoles.length > 0 || clearRoleIds.length > 0) && !canApplyToRoles) {
     return NextResponse.json({ error: 'Forbidden', requiredFeatures: [FEATURE_MANAGE] }, { status: 403 })
+  }
+
+  const existingUserPref = await loadSidebarPreferenceUpdatedAt(em, {
+    userId: effectiveUserId,
+    tenantId: auth.tenantId ?? null,
+    organizationId: auth.orgId ?? null,
+    locale,
+  })
+  if (existingUserPref) {
+    try {
+      enforceCommandOptimisticLock({
+        resourceKind: 'auth.sidebar_preference',
+        resourceId: existingUserPref.id,
+        current: existingUserPref.updatedAt ?? null,
+        request: req,
+      })
+    } catch (err) {
+      if (isCrudHttpError(err)) return NextResponse.json(err.body, { status: err.status })
+      throw err
+    }
   }
 
   const settings = await saveSidebarPreference(em, {
@@ -444,12 +516,20 @@ export async function PUT(req: Request) {
     }))
   }
 
+  const savedUserVersion = await loadSidebarPreferenceUpdatedAt(em, {
+    userId: effectiveUserId,
+    tenantId: auth.tenantId ?? null,
+    organizationId: auth.orgId ?? null,
+    locale,
+  })
+
   return NextResponse.json({
     locale,
     settings,
     canApplyToRoles,
     roles: rolesPayload,
     scope: { type: 'user' },
+    updatedAt: savedUserVersion?.updatedAt ? savedUserVersion.updatedAt.toISOString() : null,
     appliedRoles: updatedRoleIds,
     clearedRoles: filteredClearRoleIds,
   })

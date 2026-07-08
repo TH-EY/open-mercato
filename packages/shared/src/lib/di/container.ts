@@ -1,4 +1,4 @@
-import { createContainer, asValue, AwilixContainer, InjectionMode, type Resolver } from 'awilix'
+import { asFunction, createContainer, asValue, AwilixContainer, InjectionMode, type Resolver } from 'awilix'
 import { RequestContext } from '@mikro-orm/core'
 import { getOrm } from '@open-mercato/shared/lib/db/mikro'
 import { EntityManager } from '@mikro-orm/postgresql'
@@ -6,6 +6,9 @@ import { BasicQueryEngine } from '@open-mercato/shared/lib/query/engine'
 import { DefaultDataEngine } from '@open-mercato/shared/lib/data/engine'
 import { commandRegistry, CommandBus } from '@open-mercato/shared/lib/commands'
 import { applyDiOverridesToContainer } from '@open-mercato/shared/modules/overrides'
+import { createOptimisticLockGuardService } from '@open-mercato/shared/lib/crud/optimistic-lock'
+import { getAllOptimisticLockReaders } from '@open-mercato/shared/lib/crud/optimistic-lock-store'
+import { createCommandOptimisticLockGuardService } from '@open-mercato/shared/lib/crud/optimistic-lock-command'
 
 type DynamicCradle = Record<string, any>
 
@@ -155,6 +158,30 @@ export async function createRequestContainer(): Promise<AppContainer> {
     dataEngine: asValue(new DefaultDataEngine(em, container as any)),
     commandRegistry: asValue(commandRegistry),
     commandBus: asValue(new CommandBus()),
+    // Default OSS optimistic-lock guard. Reads from the global reader store
+    // (populated by `makeCrudRoute` auto-registration + any module-DI
+    // hand-wired calls to `registerOptimisticLockReaders`). Service is
+    // strictly additive: when `OM_OPTIMISTIC_LOCK=off` (or no header is
+    // sent) it short-circuits at validateMutation. Module-level di.ts
+    // registrations override this default via Awilix replace semantics —
+    // see the enterprise `record_locks` module for the canonical override.
+    // Spec: .ai/specs/implemented/2026-05-25-oss-optimistic-locking.md
+    crudMutationGuardService: asFunction(({ em: scopedEm }: { em: EntityManager }) =>
+      createOptimisticLockGuardService({
+        getEm: () => scopedEm,
+        readers: getAllOptimisticLockReaders(),
+      }),
+    ).scoped(),
+    // Default OSS command-level optimistic-lock guard, awaited by
+    // `enforceCommandOptimisticLockWithGuards` for Command-pattern writes.
+    // Header/explicit-token compare only (no `resolveExpected`), so it is
+    // behaviourally identical to calling `enforceCommandOptimisticLock`
+    // directly. The enterprise `record_locks` module overrides this DI key
+    // with a lock-backed `resolveExpected` via Awilix replace semantics.
+    // Spec: .ai/specs/enterprise/2026-06-09-record-locks-unified-coverage.md (Phase 0)
+    commandOptimisticLockGuardService: asFunction(() =>
+      createCommandOptimisticLockGuardService(),
+    ).scoped(),
   })
   // Allow modules to override/extend
   for (const reg of diRegistrars) {

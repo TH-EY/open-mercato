@@ -23,8 +23,11 @@ import { slugify } from '@open-mercato/shared/lib/slugify'
 import { CrudForm, type CrudField, type CrudFormGroup, type CrudFormGroupComponentProps } from '@open-mercato/ui/backend/CrudForm'
 import { ComboboxInput, type ComboboxOption } from '@open-mercato/ui/backend/inputs'
 import { Page, PageBody } from '@open-mercato/ui/backend/Page'
+import { RecordNotFoundState } from '@open-mercato/ui/backend/detail'
 import { SwitchableMarkdownInput } from '@open-mercato/ui/backend/inputs'
-import { apiCall, apiCallOrThrow, readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
+import { apiCall, apiCallOrThrow, readApiResultOrThrow, withScopedApiRequestHeaders } from '@open-mercato/ui/backend/utils/apiCall'
+import { buildOptimisticLockHeader } from '@open-mercato/ui/backend/utils/optimisticLock'
+import { surfaceRecordConflict } from '@open-mercato/ui/backend/conflicts'
 import { collectCustomFieldValues } from '@open-mercato/ui/backend/utils/customFieldValues'
 import { Button } from '@open-mercato/ui/primitives/button'
 import { ColorPicker } from '@open-mercato/ui/primitives/color-picker'
@@ -38,6 +41,7 @@ import { getLocalizedDefaultCheckoutCustomerFields } from '../lib/defaults'
 import type { CustomerFieldDefinitionInput, PriceListItemInput } from '../data/validators'
 import { getGatewayProviderConfigurationMessageKey } from '../lib/gatewayProviderAvailability'
 import { readCustomerFieldsSectionError } from '../lib/customerFieldErrors'
+import { isRecordNotFoundError } from '../lib/recordNotFound'
 import { CheckoutCurrencySelect } from './CheckoutCurrencySelect'
 import { CustomerFieldsEditor } from './CustomerFieldsEditor'
 import { GatewaySettingsFields } from './GatewaySettingsFields'
@@ -260,6 +264,7 @@ function normalizeFormValues(value: FormValues | null | undefined, t?: Translate
     primaryColor: readString(source.primaryColor).trim() || defaults.primaryColor,
     secondaryColor: readString(source.secondaryColor).trim() || defaults.secondaryColor,
     backgroundColor: readString(source.backgroundColor).trim() || defaults.backgroundColor,
+    gatewayProviderKey: readString(source.gatewayProviderKey).trim(),
     gatewaySettings: isRecord(source.gatewaySettings) ? source.gatewaySettings : {},
     customFieldsetCode: readString(source.customFieldsetCode).trim() || null,
     collectCustomerDetails: readBoolean(source.collectCustomerDetails, true),
@@ -1329,6 +1334,7 @@ export function LinkTemplateForm({ mode, recordId }: Props) {
   const [initialValues, setInitialValues] = React.useState<FormValues | null>(
     recordId ? null : normalizeFormValues(createDefaultValues(t), t),
   )
+  const [notFound, setNotFound] = React.useState(false)
 
   const replaceInitialValues = React.useCallback((nextValues: FormValues) => {
     setInitialValues(nextValues)
@@ -1422,13 +1428,19 @@ export function LinkTemplateForm({ mode, recordId }: Props) {
   React.useEffect(() => {
     if (!recordId) return
     let active = true
+    setNotFound(false)
     void readApiResultOrThrow<FormValues>(`/api/checkout/${mode === 'link' ? 'links' : 'templates'}/${encodeURIComponent(recordId)}`)
       .then((result) => {
         if (!active) return
         replaceInitialValues(normalizeFormValues(result, t))
       })
-      .catch(() => {
-        if (active) replaceInitialValues(normalizeFormValues({}, t))
+      .catch((error) => {
+        if (!active) return
+        if (isRecordNotFoundError(error)) {
+          setNotFound(true)
+          return
+        }
+        replaceInitialValues(normalizeFormValues({}, t))
       })
     return () => {
       active = false
@@ -1564,6 +1576,26 @@ export function LinkTemplateForm({ mode, recordId }: Props) {
     </div>
   ) : undefined
 
+  const listHref = mode === 'link' ? '/backend/checkout/pay-links' : '/backend/checkout/templates'
+
+  if (notFound) {
+    return (
+      <Page>
+        <PageBody>
+          <RecordNotFoundState
+            label={t(mode === 'link'
+              ? 'checkout.linkTemplateForm.notFound.link.title'
+              : 'checkout.linkTemplateForm.notFound.template.title')}
+            description={t(mode === 'link'
+              ? 'checkout.linkTemplateForm.notFound.link.description'
+              : 'checkout.linkTemplateForm.notFound.template.description')}
+            backHref={listHref}
+          />
+        </PageBody>
+      </Page>
+    )
+  }
+
   return (
     <Page>
       <PageBody>
@@ -1638,11 +1670,24 @@ export function LinkTemplateForm({ mode, recordId }: Props) {
                 customFields: collectCustomFieldValues(values),
               }
               const endpoint = `/api/checkout/${mode === 'link' ? 'links' : 'templates'}${recordId ? `/${encodeURIComponent(recordId)}` : ''}`
-              const response = await readApiResultOrThrow<{ id?: string; slug?: string; ok?: boolean }>(endpoint, {
-                method: recordId ? 'PUT' : 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-              })
+              let response: { id?: string; slug?: string; ok?: boolean }
+              try {
+                response = await withScopedApiRequestHeaders(
+                  recordId ? buildOptimisticLockHeader(readString(initialValues?.updatedAt) || null) : {},
+                  () => readApiResultOrThrow<{ id?: string; slug?: string; ok?: boolean }>(endpoint, {
+                    method: recordId ? 'PUT' : 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                  }),
+                )
+              } catch (error) {
+                if (surfaceRecordConflict(error, t)) return
+                if (recordId && isRecordNotFoundError(error)) {
+                  setNotFound(true)
+                  return
+                }
+                throw error
+              }
               const targetId = recordId ?? (typeof response?.id === 'string' ? response.id : null)
               const logoAttachmentId = readString(values.logoAttachmentId)
               if (
@@ -1687,7 +1732,19 @@ export function LinkTemplateForm({ mode, recordId }: Props) {
                 : `/backend/checkout/templates?flash=${encodeURIComponent(t('checkout.common.flash.saved'))}&type=success`
             }}
             onDelete={recordId ? async () => {
-              await apiCallOrThrow(`/api/checkout/${mode === 'link' ? 'links' : 'templates'}/${encodeURIComponent(recordId)}`, { method: 'DELETE' })
+              try {
+                await withScopedApiRequestHeaders(
+                  buildOptimisticLockHeader(readString(initialValues?.updatedAt) || null),
+                  () => apiCallOrThrow(`/api/checkout/${mode === 'link' ? 'links' : 'templates'}/${encodeURIComponent(recordId)}`, { method: 'DELETE' }),
+                )
+              } catch (error) {
+                if (surfaceRecordConflict(error, t)) return
+                if (isRecordNotFoundError(error)) {
+                  setNotFound(true)
+                  return
+                }
+                throw error
+              }
               window.location.href = mode === 'link'
                 ? `/backend/checkout/pay-links?flash=${encodeURIComponent(t('checkout.common.flash.deleted'))}&type=success`
                 : `/backend/checkout/templates?flash=${encodeURIComponent(t('checkout.common.flash.deleted'))}&type=success`

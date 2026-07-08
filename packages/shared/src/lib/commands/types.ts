@@ -54,6 +54,38 @@ export type CommandExecuteResult<TResult> = {
   logEntry: any | null
 }
 
+/**
+ * Shape of the persisted action log handed to a command's `undo()` handler.
+ *
+ * IMPORTANT: there is intentionally **no `payload` field**. `buildLog()` returns
+ * a `payload` in its metadata, but the command bus persists that under
+ * `commandPayload` (column `command_payload`, wrapped in a redo envelope) — the
+ * stored row never has a top-level `payload`. Reading `logEntry.payload` in an
+ * undo handler is therefore always `undefined` and silently no-ops the undo
+ * (issue #2504). Always read the undo snapshot through
+ * `extractUndoPayload(logEntry)` from `@open-mercato/shared/lib/commands/undo`,
+ * which unwraps `commandPayload`/snapshots correctly. Omitting `payload` here
+ * makes the footgun a compile-time error instead of a runtime silent failure.
+ */
+export type CommandUndoLogEntry = {
+  id?: string
+  commandId?: string
+  commandPayload?: unknown | null
+  snapshotBefore?: unknown | null
+  snapshotAfter?: unknown | null
+  resourceKind?: string | null
+  resourceId?: string | null
+  undoToken?: string | null
+  actionLabel?: string | null
+  tenantId?: string | null
+  organizationId?: string | null
+  actorUserId?: string | null
+  changesJson?: Record<string, unknown> | null
+  contextJson?: Record<string, unknown> | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+}
+
 export type CommandLogBuilderArgs<TInput, TResult> = {
   input: TInput
   result: TResult
@@ -71,7 +103,18 @@ export interface CommandHandler<TInput = unknown, TResult = unknown> {
   execute(input: TInput, ctx: CommandRuntimeContext): Promise<TResult> | TResult
   buildLog?(args: CommandLogBuilderArgs<TInput, TResult>): Promise<CommandLogMetadata | null | undefined> | CommandLogMetadata | null | undefined
   captureAfter?(input: TInput, result: TResult, ctx: CommandRuntimeContext): Promise<unknown> | unknown
-  undo?(params: { input: TInput; ctx: CommandRuntimeContext; logEntry: any }): Promise<void> | void
+  undo?(params: { input: TInput; ctx: CommandRuntimeContext; logEntry: CommandUndoLogEntry }): Promise<void> | void
+  /**
+   * Optional redo handler. When defined, the command bus calls this instead of
+   * `execute()` while replaying a previously undone action (the redo route passes
+   * `redoLogEntry` in the execution options). It receives the source action log so
+   * it can re-materialize the original record **reusing its id** — for a create
+   * command this restores the soft-deleted row (or re-creates it from the
+   * `snapshotAfter`) instead of minting a new id, keeping undo/redo snapshots and
+   * references stable (issue #2506, invariant I6). Handlers without `redo` keep the
+   * legacy behavior of replaying `execute(__redoInput)`.
+   */
+  redo?(params: { input: TInput; ctx: CommandRuntimeContext; logEntry: CommandUndoLogEntry }): Promise<TResult> | TResult
 }
 
 export type CommandExecutionOptions<TInput> = {
@@ -79,6 +122,16 @@ export type CommandExecutionOptions<TInput> = {
   ctx: CommandRuntimeContext
   metadata?: CommandLogMetadata | null
   skipCacheInvalidation?: boolean
+  /**
+   * When set, marks this execution as a redo of a previously undone action. If the
+   * resolved handler defines a `redo` method, the command bus calls
+   * `handler.redo({ input, ctx, logEntry })` instead of `handler.execute(...)`. The
+   * rest of the pipeline (snapshots, buildLog, undo-token minting, persistence,
+   * cache invalidation, side effects) is identical, so the fresh log entry — and
+   * the `x-om-operation` header derived from it — automatically carry the restored
+   * resourceId. Ignored when the handler has no `redo` method (legacy replay path).
+   */
+  redoLogEntry?: CommandUndoLogEntry | null
 }
 
 export function defaultUndoToken(): string {

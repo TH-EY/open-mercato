@@ -6,6 +6,7 @@ import { resolveTranslations } from '@open-mercato/shared/lib/i18n/server'
 import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { buildChanges, emitCrudSideEffects, emitCrudUndoSideEffects, parseWithCustomFields, setCustomFieldsIfAny } from '@open-mercato/shared/lib/commands/helpers'
 import { buildCustomFieldResetMap, diffCustomFieldChanges, loadCustomFieldSnapshot, type CustomFieldSnapshot } from '@open-mercato/shared/lib/commands/customFieldSnapshots'
+import { makeCreateRedo } from '@open-mercato/shared/lib/commands/redo'
 import { withAtomicFlush } from '@open-mercato/shared/lib/commands/flush'
 import type { DataEngine } from '@open-mercato/shared/lib/data/engine'
 import type { CrudIndexerConfig } from '@open-mercato/shared/lib/crud/types'
@@ -18,7 +19,15 @@ import {
   type StaffTeamMemberUpdateInput,
 } from '../data/validators'
 import { staffTeamMemberCrudEvents } from '../lib/crud'
-import { ensureOrganizationScope, ensureTenantScope, extractUndoPayload } from './shared'
+import {
+  applyScopeToWhere,
+  commandActorScope,
+  commandInputScope,
+  ensureOrganizationScope,
+  ensureTenantScope,
+  extractUndoPayload,
+  scopeForDecryption,
+} from './shared'
 import { E } from '#generated/entities.ids.generated'
 
 const teamMemberCrudIndexer: CrudIndexerConfig<StaffTeamMember> = {
@@ -88,6 +97,34 @@ async function loadTeamMemberCustomSnapshot(
   })
 }
 
+function teamMemberSeedFromSnapshot(snapshot: TeamMemberSnapshot): Record<string, unknown> {
+  return {
+    id: snapshot.id,
+    tenantId: snapshot.tenantId,
+    organizationId: snapshot.organizationId,
+    teamId: snapshot.teamId ?? null,
+    displayName: snapshot.displayName,
+    description: snapshot.description ?? null,
+    userId: snapshot.userId ?? null,
+    roleIds: Array.isArray(snapshot.roleIds) ? snapshot.roleIds : [],
+    tags: Array.isArray(snapshot.tags) ? snapshot.tags : [],
+    availabilityRuleSetId: null,
+    isActive: snapshot.isActive,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    deletedAt: null,
+  }
+}
+
+const redoTeamMemberCreate = makeCreateRedo<StaffTeamMember, TeamMemberSnapshot, StaffTeamMemberCreateInput, { memberId: string }>({
+  entityClass: StaffTeamMember,
+  getSnapshotId: (snapshot) => snapshot.id,
+  seedFromSnapshot: teamMemberSeedFromSnapshot,
+  buildResult: (entity) => ({ memberId: entity.id }),
+  events: staffTeamMemberCrudEvents,
+  indexer: teamMemberCrudIndexer,
+})
+
 async function ensureRolesExist(em: EntityManager, roleIds: string[], tenantId: string, organizationId: string): Promise<void> {
   if (!roleIds.length) return
   const roles = await findWithDecryption(
@@ -136,6 +173,7 @@ const createTeamMemberCommand: CommandHandler<StaffTeamMemberCreateInput, { memb
     const { parsed, custom } = parseWithCustomFields(staffTeamMemberCreateSchema, rawInput)
     ensureTenantScope(ctx, parsed.tenantId)
     ensureOrganizationScope(ctx, parsed.organizationId)
+    commandInputScope(ctx, parsed.tenantId, parsed.organizationId)
 
     const em = (ctx.container.resolve('em') as EntityManager).fork()
     const roleIds = normalizeStringList(parsed.roleIds)
@@ -245,9 +283,25 @@ const createTeamMemberCommand: CommandHandler<StaffTeamMemberCreateInput, { memb
       })
     }
   },
+  redo: async ({ logEntry, ctx }) => {
+    const result = await redoTeamMemberCreate({ input: undefined as unknown as StaffTeamMemberCreateInput, ctx, logEntry })
+    const payload = extractUndoPayload<TeamMemberUndoPayload>(logEntry)
+    const customAfter = payload?.customAfter
+    if (customAfter && Object.keys(customAfter).length) {
+      await setCustomFieldsIfAny({
+        dataEngine: ctx.container.resolve('dataEngine') as DataEngine,
+        entityId: E.staff.staff_team_member,
+        recordId: result.memberId,
+        tenantId: payload?.after?.tenantId ?? '',
+        organizationId: payload?.after?.organizationId ?? '',
+        values: customAfter,
+      })
+    }
+    return result
+  },
 }
 
-const updateTeamMemberCommand: CommandHandler<StaffTeamMemberUpdateInput, { memberId: string }> = {
+const updateTeamMemberCommand: CommandHandler<StaffTeamMemberUpdateInput, { memberId: string; updatedAt: string | null }> = {
   id: 'staff.team-members.update',
   async prepare(rawInput, ctx) {
     const { parsed } = parseWithCustomFields(staffTeamMemberUpdateSchema, rawInput)
@@ -260,12 +314,13 @@ const updateTeamMemberCommand: CommandHandler<StaffTeamMemberUpdateInput, { memb
   async execute(rawInput, ctx) {
     const { parsed, custom } = parseWithCustomFields(staffTeamMemberUpdateSchema, rawInput)
     const em = (ctx.container.resolve('em') as EntityManager).fork()
+    const scope = commandActorScope(ctx)
     const member = await findOneWithDecryption(
       em,
       StaffTeamMember,
-      { id: parsed.id, deletedAt: null },
+      applyScopeToWhere<StaffTeamMember>({ id: parsed.id, deletedAt: null }, scope),
       undefined,
-      { tenantId: ctx.auth?.tenantId ?? null, organizationId: ctx.auth?.orgId ?? null },
+      scopeForDecryption(scope),
     )
     if (!member) throw new CrudHttpError(404, { error: 'Team member not found.' })
     ensureTenantScope(ctx, member.tenantId)
@@ -323,7 +378,10 @@ const updateTeamMemberCommand: CommandHandler<StaffTeamMemberUpdateInput, { memb
       indexer: teamMemberCrudIndexer,
     })
 
-    return { memberId: member.id }
+    // Return the freshly-bumped updatedAt so non-CrudForm callers (e.g. the
+    // availability schedule switcher) can refresh their optimistic-lock token
+    // and not falsely 409 on the next sequential edit (#2848).
+    return { memberId: member.id, updatedAt: member.updatedAt ? member.updatedAt.toISOString() : null }
   },
   buildLog: async ({ snapshots, ctx }) => {
     const before = snapshots.before as TeamMemberSnapshot | undefined
@@ -428,12 +486,13 @@ const deleteTeamMemberCommand: CommandHandler<{ id?: string }, { memberId: strin
     const id = input?.id
     if (!id) throw new CrudHttpError(400, { error: 'Member id is required.' })
     const em = (ctx.container.resolve('em') as EntityManager).fork()
+    const scope = commandActorScope(ctx)
     const member = await findOneWithDecryption(
       em,
       StaffTeamMember,
-      { id, deletedAt: null },
+      applyScopeToWhere<StaffTeamMember>({ id, deletedAt: null }, scope),
       undefined,
-      { tenantId: ctx.auth?.tenantId ?? null, organizationId: ctx.auth?.orgId ?? null },
+      scopeForDecryption(scope),
     )
     if (!member) throw new CrudHttpError(404, { error: 'Team member not found.' })
     ensureTenantScope(ctx, member.tenantId)

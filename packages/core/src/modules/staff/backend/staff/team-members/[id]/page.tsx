@@ -2,18 +2,20 @@
 
 import * as React from 'react'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { Page, PageBody } from '@open-mercato/ui/backend/Page'
 import { Button } from '@open-mercato/ui/primitives/button'
 import { readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
 import { extractCustomFieldEntries } from '@open-mercato/shared/lib/crud/custom-fields-client'
 import { updateCrud, deleteCrud } from '@open-mercato/ui/backend/utils/crud'
+import { switchTeamMemberSchedule } from '@open-mercato/core/modules/staff/lib/scheduleSwitch'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { createTranslatorWithFallback } from '@open-mercato/shared/lib/i18n/translate'
 import { AvailabilityRulesEditor } from '@open-mercato/core/modules/planner/components/AvailabilityRulesEditor'
 import { buildMemberScheduleItems } from '@open-mercato/core/modules/staff/lib/memberSchedule'
 import { TeamMemberForm, buildTeamMemberPayload, type TeamMemberFormValues } from '@open-mercato/core/modules/staff/components/TeamMemberForm'
+import { buildRecordInjectionContext, useSetCurrentRecordInjectionContext } from '@open-mercato/ui/backend/injection/recordContext'
 import { NotesSection } from '@open-mercato/ui/backend/detail'
 import { ActivitiesSection, type SectionAction } from '@open-mercato/ui/backend/detail'
 import { AddressesSection as SharedAddressesSection } from '@open-mercato/ui/backend/detail'
@@ -54,6 +56,8 @@ type TeamMemberRecord = {
   is_active?: boolean
   availabilityRuleSetId?: string | null
   availability_rule_set_id?: string | null
+  updatedAt?: string | null
+  updated_at?: string | null
   user?: { id?: string; email?: string | null } | null
   team?: { id?: string; name?: string | null } | null
   customFields?: Record<string, unknown> | null
@@ -68,6 +72,7 @@ export default function StaffTeamMemberDetailPage({ params }: { params?: { id?: 
   const t = useT()
   const detailTranslator = React.useMemo(() => createTranslatorWithFallback(t), [t])
   const router = useRouter()
+  const pathname = usePathname()
   const searchParams = useSearchParams()
   const [initialValues, setInitialValues] = React.useState<TeamMemberFormValues | null>(null)
   const [memberRecord, setMemberRecord] = React.useState<TeamMemberRecord | null>(null)
@@ -226,6 +231,11 @@ export default function StaffTeamMemberDetailPage({ params }: { params?: { id?: 
             roleIds: normalizedRoleIds,
             tags: normalizeStringList(record.tags),
             isActive: record.isActive ?? record.is_active ?? true,
+            updatedAt: typeof record.updatedAt === 'string'
+              ? record.updatedAt
+              : typeof record.updated_at === 'string'
+                ? record.updated_at
+                : null,
             ...customFields,
           })
           setMemberRecord(record)
@@ -268,6 +278,11 @@ export default function StaffTeamMemberDetailPage({ params }: { params?: { id?: 
     }
   }, [memberId, router, searchParams, t])
 
+  // optimistic-lock-exempt: the inline updateCrud/deleteCrud below run inside the
+  // TeamMemberForm <CrudForm> host, which auto-derives the version header from
+  // initialValues.updatedAt and surfaces 409 conflicts for both submit and delete.
+  // The availability-schedule switch is version-locked separately via
+  // switchTeamMemberSchedule (see ../../../../lib/scheduleSwitch).
   const handleSubmit = React.useCallback(async (values: TeamMemberFormValues) => {
     if (!memberId) return
     const payload = buildTeamMemberPayload(values, { id: memberId })
@@ -289,12 +304,20 @@ export default function StaffTeamMemberDetailPage({ params }: { params?: { id?: 
 
   const handleRulesetChange = React.useCallback(async (nextId: string | null) => {
     if (!memberId) return
-    await updateCrud('staff/team-members', { id: memberId, availabilityRuleSetId: nextId }, {
-      errorMessage: t('staff.teamMembers.availability.ruleset.updateError', 'Failed to update schedule.'),
+    const { updatedAt: nextUpdatedAt } = await switchTeamMemberSchedule({
+      memberId,
+      nextRuleSetId: nextId,
+      expectedUpdatedAt: initialValues?.updatedAt,
+      t,
     })
+    // Advance the optimistic-lock token so the next sequential switch sends the
+    // fresh updatedAt instead of the stale one and does not falsely 409 (#2848).
+    if (nextUpdatedAt) {
+      setInitialValues((prev) => (prev ? { ...prev, updatedAt: nextUpdatedAt } : prev))
+    }
     setAvailabilityRuleSetId(nextId)
     flash(t('staff.teamMembers.availability.ruleset.updateSuccess', 'Schedule updated.'), 'success')
-  }, [memberId, t])
+  }, [initialValues?.updatedAt, memberId, t])
 
   const panelTabs = React.useMemo(() => ([
     { id: 'details' as const, label: t('staff.teamMembers.detail.tabs.details', 'Details') },
@@ -319,6 +342,20 @@ export default function StaffTeamMemberDetailPage({ params }: { params?: { id?: 
     ? memberRecord?.roleNames
     : [t('staff.teamMembers.detail.roles.unassigned', 'No roles assigned')]
   const userEmail = memberRecord?.user?.email ?? null
+
+  // Publish page-load record context to the AppShell-owned `backend:record:current`
+  // mount so the enterprise record_locks widget resolves `staff.teamMember` + id
+  // explicitly. The resourceKind mirrors the TeamMemberForm `versionHistory` so the held
+  // lock matches the save-time conflict surface for the same team member.
+  useSetCurrentRecordInjectionContext(
+    buildRecordInjectionContext({
+      resourceKind: 'staff.teamMember',
+      resourceId: memberId || null,
+      updatedAt: initialValues?.updatedAt ?? null,
+      data: initialValues as Record<string, unknown> | null,
+      path: pathname,
+    }),
+  )
 
   if (isNotFound) {
     return (

@@ -129,29 +129,22 @@ describe('OrganizationBrandingPage', () => {
     })
   })
 
-  it.each([
-    ['png', 'image/png'],
-    ['jpg', 'image/jpeg'],
-    ['webp', 'image/webp'],
-  ])('uploads a selected %s logo file without storing the square thumbnail', async (extension, mimeType) => {
-    const attachmentId = `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb${extension === 'png' ? 'c' : extension === 'jpg' ? 'd' : 'e'}`
-    const fileUrl = `/api/attachments/file/${attachmentId}`
-
+  it('uploads a selected logo file before saving branding', async () => {
     readApiResultOrThrowMock
       .mockResolvedValueOnce(brandingPayload)
       .mockResolvedValueOnce({
         ok: true,
         item: {
-          id: attachmentId,
-          url: fileUrl,
-          thumbnailUrl: `/api/attachments/image/${attachmentId}/acme.${extension}?width=320&height=320`,
+          id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          url: '/api/attachments/image/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/acme.svg',
+          thumbnailUrl: '/api/attachments/image/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/acme.svg?width=320',
         },
       })
 
     renderWithProviders(<OrganizationBrandingPage />)
 
     const input = await screen.findByLabelText('Upload logo')
-    const file = new File(['logo'], `acme.${extension}`, { type: mimeType })
+    const file = new File(['<svg />'], 'acme.svg', { type: 'image/svg+xml' })
     fireEvent.change(input, { target: { files: [file] } })
     fireEvent.click(screen.getByRole('button', { name: /Save branding/ }))
 
@@ -170,7 +163,7 @@ describe('OrganizationBrandingPage', () => {
       expect.objectContaining({
         method: 'PUT',
         body: JSON.stringify({
-          logoUrl: fileUrl,
+          logoUrl: '/api/attachments/image/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/acme.svg?width=320',
         }),
       }),
       expect.anything(),
@@ -184,7 +177,7 @@ describe('OrganizationBrandingPage', () => {
     renderWithProviders(<OrganizationBrandingPage />)
 
     const input = await screen.findByLabelText('Upload logo')
-    const file = new File(['logo'], 'acme.png', { type: 'image/png' })
+    const file = new File(['<svg />'], 'acme.svg', { type: 'image/svg+xml' })
     fireEvent.change(input, { target: { files: [file] } })
 
     await waitFor(() => {

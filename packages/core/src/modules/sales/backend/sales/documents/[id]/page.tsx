@@ -3,7 +3,7 @@
 "use client"
 
 import * as React from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { Page, PageBody } from '@open-mercato/ui/backend/Page'
 import {
   CustomDataSection,
@@ -29,7 +29,9 @@ import { VersionHistoryAction } from '@open-mercato/ui/backend/version-history'
 import { SendObjectMessageDialog } from '@open-mercato/ui/backend/messages'
 import Link from 'next/link'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
-import { apiCall, apiCallOrThrow, readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
+import { apiCall, apiCallOrThrow, readApiResultOrThrow, withScopedApiRequestHeaders } from '@open-mercato/ui/backend/utils/apiCall'
+import { buildOptimisticLockHeader } from '@open-mercato/ui/backend/utils/optimisticLock'
+import { surfaceRecordConflict } from '@open-mercato/ui/backend/conflicts'
 import { collectCustomFieldValues } from '@open-mercato/ui/backend/utils/customFieldValues'
 import { mapCrudServerErrorToFormErrors } from '@open-mercato/ui/backend/utils/serverErrors'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
@@ -66,6 +68,7 @@ import { ICON_SUGGESTIONS } from '@open-mercato/core/modules/customers/lib/dicti
 import { readMarkdownPreferenceCookie, writeMarkdownPreferenceCookie } from '@open-mercato/core/modules/customers/lib/markdownPreference'
 import { InjectionSpot, useInjectionWidgets } from '@open-mercato/ui/backend/injection/InjectionSpot'
 import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
+import { buildRecordInjectionContext, useSetCurrentRecordInjectionContext } from '@open-mercato/ui/backend/injection/recordContext'
 
 function formatMessageAmount(amount: number | null | undefined, currency: string | null | undefined): string | null {
   if (typeof amount !== 'number' || !Number.isFinite(amount)) return null
@@ -916,6 +919,7 @@ type DocumentUpdateResult = {
   customerName?: string | null
   contactEmail?: string | null
   metadata?: Record<string, unknown> | null
+  updatedAt?: string | null
 }
 
 const normalizeCustomFieldSubmitValue = (value: unknown): unknown => {
@@ -924,6 +928,18 @@ const normalizeCustomFieldSubmitValue = (value: unknown): unknown => {
   }
   if (value === undefined) return null
   return value
+}
+
+export function handleDocumentMutationError(
+  err: unknown,
+  t: (key: string, fallback?: string) => string,
+  refresh: () => void,
+): boolean {
+  if (surfaceRecordConflict(err, t, { onRefresh: refresh })) {
+    refresh()
+    return true
+  }
+  return false
 }
 
 const prefixCustomFieldValues = (input: Record<string, unknown> | null | undefined): Record<string, unknown> => {
@@ -1877,6 +1893,7 @@ export default function SalesDocumentDetailPage({
   const t = useT()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const pathname = usePathname()
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
   const [loading, setLoading] = React.useState(true)
   const [isNotFound, setIsNotFound] = React.useState(false)
@@ -1956,6 +1973,18 @@ export default function SalesDocumentDetailPage({
       })
     },
     [detailInjectionContext, runMutation],
+  )
+  // Publish page-load record context to the AppShell-owned `backend:record:current`
+  // mount so record_locks gets presence + the action-log base (updatedAt/data) for
+  // this order/quote. Sub-resource sections inherit this context — no second mount.
+  useSetCurrentRecordInjectionContext(
+    buildRecordInjectionContext({
+      resourceKind: `sales.${kind}`,
+      resourceId: record?.id ?? null,
+      updatedAt: record?.updatedAt ?? null,
+      data: record as Record<string, unknown> | null,
+      path: pathname,
+    }),
   )
   const clearCustomerError = React.useCallback(() => setCustomerError(null), [])
   const { data: currencyDictionary } = useCurrencyDictionary()
@@ -3005,19 +3034,30 @@ export default function SalesDocumentDetailPage({
       }
       const endpoint = kind === 'order' ? '/api/sales/orders' : '/api/sales/quotes'
       const mutation = { id: record.id, ...patch }
-      return runMutationWithContext(
+      const call = await runMutationWithContext(
         () =>
-          apiCallOrThrow<DocumentUpdateResult>(
-            endpoint,
-            {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(mutation),
-            },
-            { errorMessage: t('sales.documents.detail.updateError', 'Failed to update document.') }
+          withScopedApiRequestHeaders(buildOptimisticLockHeader(record.updatedAt), () =>
+            apiCallOrThrow<DocumentUpdateResult>(
+              endpoint,
+              {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(mutation),
+              },
+              { errorMessage: t('sales.documents.detail.updateError', 'Failed to update document.') }
+            ),
           ),
         mutation,
       )
+      // Refresh the optimistic-lock token from the server's fresh updatedAt so a
+      // SUBSEQUENT inline save on the same page doesn't send a now-stale token and
+      // falsely 409 (#2055 QA). All per-field setRecord calls below spread from
+      // this updated `prev`, so the token stays consistent.
+      const freshUpdatedAt = call?.result?.updatedAt
+      if (typeof freshUpdatedAt === 'string' && freshUpdatedAt.length > 0) {
+        setRecord((prev) => (prev ? { ...prev, updatedAt: freshUpdatedAt } : prev))
+      }
+      return call
     },
     [kind, record, runMutationWithContext, t]
   )
@@ -3045,6 +3085,7 @@ export default function SalesDocumentDetailPage({
         flash(t('sales.documents.detail.updatedMessage', 'Document updated.'), 'success')
         return savedCode
       } catch (err) {
+        if (handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) return
         const message = err instanceof Error && err.message ? err.message : t('sales.documents.detail.updateError', 'Failed to update document.')
         flash(message, 'error')
         throw err
@@ -3073,6 +3114,7 @@ export default function SalesDocumentDetailPage({
         setRecord((prev) => (prev ? { ...prev, placedAt: savedPlacedAt } : prev))
         flash(t('sales.documents.detail.updatedMessage', 'Document updated.'), 'success')
       } catch (err) {
+        if (handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) return
         const message =
           err instanceof Error && err.message
             ? err.message
@@ -3106,6 +3148,7 @@ export default function SalesDocumentDetailPage({
         setRecord((prev) => (prev ? { ...prev, expectedDeliveryAt: savedExpectedDelivery } : prev))
         flash(t('sales.documents.detail.updatedMessage', 'Document updated.'), 'success')
       } catch (err) {
+        if (handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) return
         const message =
           err instanceof Error && err.message
             ? err.message
@@ -3132,6 +3175,7 @@ export default function SalesDocumentDetailPage({
         setRecord((prev) => (prev ? { ...prev, comment: savedComment } : prev))
         flash(t('sales.documents.detail.updatedMessage', 'Document updated.'), 'success')
       } catch (err) {
+        if (handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) return
         const message =
           err instanceof Error && err.message
             ? err.message
@@ -3158,6 +3202,7 @@ export default function SalesDocumentDetailPage({
         setRecord((prev) => (prev ? { ...prev, externalReference: savedExternalReference } : prev))
         flash(t('sales.documents.detail.updatedMessage', 'Document updated.'), 'success')
       } catch (err) {
+        if (handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) return
         const message =
           err instanceof Error && err.message
             ? err.message
@@ -3184,6 +3229,7 @@ export default function SalesDocumentDetailPage({
         setRecord((prev) => (prev ? { ...prev, customerReference: savedCustomerReference } : prev))
         flash(t('sales.documents.detail.updatedMessage', 'Document updated.'), 'success')
       } catch (err) {
+        if (handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) return
         const message =
           err instanceof Error && err.message
             ? err.message
@@ -3246,6 +3292,7 @@ export default function SalesDocumentDetailPage({
         })
         flash(t('sales.documents.detail.updatedMessage', 'Document updated.'), 'success')
       } catch (err) {
+        if (handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) return
         const message =
           err instanceof Error && err.message
             ? err.message
@@ -3270,6 +3317,7 @@ export default function SalesDocumentDetailPage({
         }
         flash(t('sales.documents.detail.updatedMessage', 'Document updated.'), 'success')
       } catch (err) {
+        if (handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) return
         const message =
           err instanceof Error && err.message
             ? err.message
@@ -3319,6 +3367,7 @@ export default function SalesDocumentDetailPage({
         emitSalesDocumentTotalsRefresh({ documentId: record.id, kind })
         flash(t('sales.documents.detail.updatedMessage', 'Document updated.'), 'success')
       } catch (err) {
+        if (handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) return
         const message =
           err instanceof Error && err.message
             ? err.message
@@ -3376,6 +3425,7 @@ export default function SalesDocumentDetailPage({
         emitSalesDocumentTotalsRefresh({ documentId: record.id, kind })
         flash(t('sales.documents.detail.updatedMessage', 'Document updated.'), 'success')
       } catch (err) {
+        if (handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) return
         const message =
           err instanceof Error && err.message
             ? err.message
@@ -3412,6 +3462,7 @@ export default function SalesDocumentDetailPage({
         }
         flash(t('sales.documents.detail.updatedMessage', 'Document updated.'), 'success')
       } catch (err) {
+        if (handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) return
         const message =
           err instanceof Error && err.message
             ? err.message
@@ -3490,6 +3541,7 @@ export default function SalesDocumentDetailPage({
         )
         flash(t('sales.documents.detail.updatedMessage', 'Document updated.'), 'success')
       } catch (err) {
+        if (handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) return
         const message =
           err instanceof Error && err.message
             ? err.message
@@ -3539,6 +3591,7 @@ export default function SalesDocumentDetailPage({
         )
         flash(t('sales.documents.detail.updatedMessage', 'Document updated.'), 'success')
       } catch (err) {
+        if (handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) return
         const message =
           err instanceof Error && err.message
             ? err.message
@@ -3588,6 +3641,7 @@ export default function SalesDocumentDetailPage({
       setNumberEditing(false)
       flash(t('sales.documents.detail.numberGenerated', 'New number generated.'), 'success')
     } catch (err) {
+      if (handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) return
       const message =
         err instanceof Error && err.message
           ? err.message
@@ -3631,6 +3685,7 @@ export default function SalesDocumentDetailPage({
         )
         flash(t('sales.documents.detail.updatedMessage', 'Document updated.'), 'success')
       } catch (err) {
+        if (handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) return
         const message =
           err instanceof Error && err.message
             ? err.message
@@ -3651,7 +3706,10 @@ export default function SalesDocumentDetailPage({
           '/api/sales/quotes/convert',
           {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...buildOptimisticLockHeader(record.updatedAt),
+            },
             body: JSON.stringify({ quoteId: record.id }),
           },
           { errorMessage: t('sales.documents.detail.convertError', 'Failed to convert quote.') },
@@ -3662,7 +3720,9 @@ export default function SalesDocumentDetailPage({
       }, { quoteId: record.id })
     } catch (err) {
       console.error('sales.documents.convert', err)
-      flash(t('sales.documents.detail.convertError', 'Failed to convert quote.'), 'error')
+      if (!handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) {
+        flash(t('sales.documents.detail.convertError', 'Failed to convert quote.'), 'error')
+      }
     } finally {
       setConverting(false)
     }
@@ -3702,20 +3762,24 @@ export default function SalesDocumentDetailPage({
     const endpoint = kind === 'order' ? '/api/sales/orders' : '/api/sales/quotes'
     try {
       await runMutationWithContext(async () => {
-        await apiCallOrThrow(endpoint, {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: record.id }),
-        }, {
-          errorMessage: t('sales.documents.detail.deleteFailed', 'Could not delete document.'),
-        })
+        await withScopedApiRequestHeaders(buildOptimisticLockHeader(record.updatedAt), () =>
+          apiCallOrThrow(endpoint, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: record.id }),
+          }, {
+            errorMessage: t('sales.documents.detail.deleteFailed', 'Could not delete document.'),
+          }),
+        )
       }, { id: record.id })
       flash(t('sales.documents.detail.deleted', 'Document deleted.'), 'success')
       const listPath = kind === 'order' ? '/backend/sales/orders' : '/backend/sales/quotes'
       router.push(listPath)
     } catch (err) {
       console.error('sales.documents.delete', err)
-      flash(t('sales.documents.detail.deleteFailed', 'Could not delete document.'), 'error')
+      if (!handleDocumentMutationError(err, t, () => setReloadKey((prev) => prev + 1))) {
+        flash(t('sales.documents.detail.deleteFailed', 'Could not delete document.'), 'error')
+      }
     }
     setDeleting(false)
   }, [kind, record, router, runMutationWithContext, t])
@@ -4169,6 +4233,7 @@ export default function SalesDocumentDetailPage({
           documentId={record.id}
           kind={kind}
           currencyCode={record.currencyCode ?? null}
+          documentUpdatedAt={record.updatedAt}
           organizationId={(record as any)?.organizationId ?? (record as any)?.organization_id ?? null}
           tenantId={(record as any)?.tenantId ?? (record as any)?.tenant_id ?? null}
           onActionChange={handleSectionActionChange}
@@ -4193,6 +4258,7 @@ export default function SalesDocumentDetailPage({
             currencyCode={record.currencyCode ?? null}
             organizationId={(record as any)?.organizationId ?? (record as any)?.organization_id ?? null}
             tenantId={(record as any)?.tenantId ?? (record as any)?.tenant_id ?? null}
+            documentUpdatedAt={record.updatedAt ?? null}
             shippingAddressSnapshot={shippingSnapshot ?? null}
             onActionChange={handleSectionActionChange}
             onAddComment={appendShipmentComment}
@@ -4215,6 +4281,7 @@ export default function SalesDocumentDetailPage({
         <SalesReturnsSection
           orderId={record.id}
           currencyCode={record.currencyCode ?? null}
+          documentUpdatedAt={record.updatedAt}
         />
       )
     }
@@ -4224,6 +4291,7 @@ export default function SalesDocumentDetailPage({
           documentId={record.id}
           kind={kind}
           currencyCode={record.currencyCode ?? null}
+          documentUpdatedAt={record.updatedAt}
           organizationId={(record as any)?.organizationId ?? (record as any)?.organization_id ?? null}
           tenantId={(record as any)?.tenantId ?? (record as any)?.tenant_id ?? null}
           onActionChange={handleSectionActionChange}
@@ -4247,6 +4315,7 @@ export default function SalesDocumentDetailPage({
           currencyCode={record.currencyCode ?? null}
           organizationId={(record as any)?.organizationId ?? (record as any)?.organization_id ?? null}
           tenantId={(record as any)?.tenantId ?? (record as any)?.tenant_id ?? null}
+          documentUpdatedAt={record.updatedAt ?? null}
           onActionChange={handleSectionActionChange}
           onPaymentsChange={(payments) => setHasPayments(payments.length > 0)}
           onTotalsChange={() => {

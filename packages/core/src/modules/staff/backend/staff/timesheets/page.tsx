@@ -87,7 +87,7 @@ function minutesToDecimal(minutes: number): string {
 function decimalToMinutes(value: string): number {
   const trimmed = value.trim()
   if (!trimmed) return 0
-  const num = parseFloat(trimmed)
+  const num = parseFloat(trimmed.replace(',', '.'))
   if (isNaN(num) || num < 0) return 0
   return Math.min(Math.round(num * 60), 1440)
 }
@@ -290,6 +290,10 @@ export default function MyTimesheetsPage() {
           .filter((id) => id.length > 0),
       )
 
+      const entriesParams = new URLSearchParams({ pageSize: '100', staffMemberId: memberId })
+      if (dateRange.from) entriesParams.set('from', dateRange.from)
+      if (dateRange.to) entriesParams.set('to', dateRange.to)
+
       const [projectsRes, entriesRes] = await Promise.all([
         assignedProjectIds.length > 0
           ? readApiResultOrThrow<{ items?: Array<Record<string, unknown>> }>(
@@ -299,7 +303,7 @@ export default function MyTimesheetsPage() {
             )
           : Promise.resolve({ items: [] as Array<Record<string, unknown>> }),
         readApiResultOrThrow<{ items?: Array<Record<string, unknown>> }>(
-          `/api/staff/timesheets/time-entries?pageSize=100&staffMemberId=${memberId}&from=${dateRange.from}&to=${dateRange.to}`,
+          `/api/staff/timesheets/time-entries?${entriesParams.toString()}`,
           undefined,
           { errorMessage: t('staff.timesheets.my.errors.load', 'Failed to load timesheets.'), fallback: { items: [] } },
         ),
@@ -361,15 +365,15 @@ export default function MyTimesheetsPage() {
     })
   }, [])
 
-  const handleCellBlur = React.useCallback((projectId: string, dateKey: string) => {
-    const text = rawText[projectId]?.[dateKey]
+  const handleCellBlur = React.useCallback((projectId: string, dateKey: string, currentValue: string) => {
+    const editedText = rawText[projectId]?.[dateKey]
+    const text = editedText ?? currentValue
     if (text === undefined) return
     const minutes = decimalToMinutes(text)
     const cellEntries = entries[projectId]?.[dateKey] ?? []
     const existingMinutes = cellEntries.reduce((sum, e) => sum + e.minutes, 0)
 
-    // Only mark dirty if the value actually changed
-    if (minutes !== existingMinutes || cellEntries.length > 0) {
+    if (minutes !== existingMinutes || (editedText !== undefined && cellEntries.length > 0)) {
       setDirty((prev) => {
         const projectEntries: Record<string, CellEntry> = { ...(prev[projectId] ?? {}) }
         const firstId = cellEntries[0]?.id
@@ -530,6 +534,11 @@ export default function MyTimesheetsPage() {
   // --- Add row handler ---
   const visibleProjectIds = React.useMemo(() => new Set(projects.map((p) => p.id)), [projects])
 
+  // optimistic-lock-exempt: the my-projects PATCH calls below only toggle the
+  // caller's own `showInGrid` preference on the staff.timesheets.time_project_member
+  // junction (a per-user membership flag). There is no shared, multi-user-editable
+  // state to lose, so version-locking the toggle would surface false 409s without
+  // protecting any data.
   const handleAddProject = React.useCallback(async (project: ProjectRow) => {
     try {
       const payload = { showInGrid: true }
@@ -842,7 +851,7 @@ export default function MyTimesheetsPage() {
                                 hover:border-muted-foreground/40 focus:border-primary focus:bg-background focus:outline-none`}
                               value={rawText[project.id]?.[dateKey] ?? minutesToDecimal(cellMinutes)}
                               onChange={(e) => handleCellChange(project.id, dateKey, e.target.value)}
-                              onBlur={() => handleCellBlur(project.id, dateKey)}
+                              onBlur={(event) => handleCellBlur(project.id, dateKey, event.currentTarget.value)}
                               placeholder={t('staff.timesheets.my.durationPlaceholder', '0')}
                             />
                           )}

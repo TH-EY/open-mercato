@@ -2,18 +2,21 @@
 
 import * as React from 'react'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { Page, PageBody } from '@open-mercato/ui/backend/Page'
 import { Building2, Hash, Users, BarChart3, StickyNote } from 'lucide-react'
 import { updateCrud, deleteCrud } from '@open-mercato/ui/backend/utils/crud'
-import { apiCallOrThrow, readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
+import { apiCallOrThrow, readApiResultOrThrow, withScopedApiRequestHeaders } from '@open-mercato/ui/backend/utils/apiCall'
+import { buildOptimisticLockHeader } from '@open-mercato/ui/backend/utils/optimisticLock'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
+import { surfaceRecordConflict } from '@open-mercato/ui/backend/conflicts'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { Button } from '@open-mercato/ui/primitives/button'
 import { AttachmentsSection, ErrorMessage, LoadingMessage, RecordNotFoundState, type SectionAction } from '@open-mercato/ui/backend/detail'
 import { useConfirmDialog } from '@open-mercato/ui/backend/confirm-dialog'
 import { InjectionSpot, useInjectionWidgets } from '@open-mercato/ui/backend/injection/InjectionSpot'
 import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
+import { buildRecordInjectionContext, useSetCurrentRecordInjectionContext } from '@open-mercato/ui/backend/injection/recordContext'
 import { createTranslatorWithFallback } from '@open-mercato/shared/lib/i18n/translate'
 import { CrudForm } from '@open-mercato/ui/backend/CrudForm'
 import { CollapsibleZoneLayout, type ZoneSectionDescriptor } from '@open-mercato/ui/backend/crud/CollapsibleZoneLayout'
@@ -47,6 +50,7 @@ export default function CompanyDetailV2Page({ params }: { params?: { id?: string
   const t = useT()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const pathname = usePathname()
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
 
   const detailTranslator = React.useMemo(() => createTranslatorWithFallback(t), [t])
@@ -191,6 +195,21 @@ export default function CompanyDetailV2Page({ params }: { params?: { id?: string
     logContext: 'customers.companies-v2',
   })
 
+  // Publish page-load record context to the AppShell-owned `backend:record:current`
+  // mount so the enterprise record_locks widget resolves `customers.company` + id
+  // explicitly (the hardcoded path allowlist misses the `companies-v2` route).
+  useSetCurrentRecordInjectionContext(
+    buildRecordInjectionContext({
+      resourceKind: 'customers.company',
+      resourceId: currentCompanyId,
+      updatedAt: (data?.company as { updatedAt?: string | null; updated_at?: string | null } | undefined)?.updatedAt
+        ?? (data?.company as { updated_at?: string | null } | undefined)?.updated_at
+        ?? null,
+      data: data as Record<string, unknown> | null,
+      path: pathname,
+    }),
+  )
+
   const handleEditActivity = React.useCallback((activity: { id: string; interactionType?: string; title?: string | null; body?: string | null; scheduledAt?: string | null; occurredAt?: string | null; [key: string]: unknown }) => {
     const raw = activity as Record<string, unknown>
     const durationValue = typeof raw.duration === 'number'
@@ -204,6 +223,7 @@ export default function CompanyDetailV2Page({ params }: { params?: { id?: string
     // moment instead of "today" (#1807 prefill).
     const editPayload = {
       id: activity.id,
+      updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt as string : typeof raw.updated_at === 'string' ? raw.updated_at as string : null,
       interactionType: typeof activity.interactionType === 'string' ? activity.interactionType : undefined,
       title: typeof activity.title === 'string' ? activity.title : null,
       body: typeof activity.body === 'string' ? activity.body : null,
@@ -323,10 +343,28 @@ export default function CompanyDetailV2Page({ params }: { params?: { id?: string
       variant: 'destructive',
     })
     if (!approved) return
-    await runMutationWithContext(
-      () => deleteCrud('customers/companies', { id: companyId }),
-      { id: companyId, operation: 'deleteCompany' },
-    )
+    try {
+      await runMutationWithContext(
+        () => withScopedApiRequestHeaders(
+          buildOptimisticLockHeader((data?.company as { updatedAt?: string } | undefined)?.updatedAt),
+          () => deleteCrud('customers/companies', { id: companyId }),
+        ),
+        { id: companyId, operation: 'deleteCompany' },
+      )
+    } catch (err) {
+      // The guarded mutation already routes a 409 to the unified conflict bar;
+      // surface any other server error (e.g. "Cannot delete company: linked
+      // deals…") as a flash instead of letting it crash the page.
+      if (!surfaceRecordConflict(err, t)) {
+        flash(
+          err instanceof Error && err.message.trim().length > 0
+            ? err.message
+            : t('customers.companies.detail.deleteError', 'Failed to delete company.'),
+          'error',
+        )
+      }
+      return
+    }
     flash(t('customers.companies.list.deleteSuccess', 'Company deleted.'), 'success')
     router.push('/backend/customers/companies')
   }, [confirm, data?.company?.id, router, runMutationWithContext, t])
@@ -449,7 +487,7 @@ export default function CompanyDetailV2Page({ params }: { params?: { id?: string
                 <CrudForm<CompanyEditFormValues>
                   embedded
                   trackDirtyWhenEmbedded
-                  injectionSpotId="customers.company"
+                  injectionSpotId="crud-form:customers.company"
                   entityIds={[E.customers.customer_entity, E.customers.customer_company_profile]}
                   schema={formSchema}
                   fields={formFields}
@@ -457,6 +495,7 @@ export default function CompanyDetailV2Page({ params }: { params?: { id?: string
                   initialValues={initialValues}
                   onSubmit={handleFormSubmit}
                   onDelete={handleDelete}
+                  optimisticLockUpdatedAt={(data?.company as { updatedAt?: string } | undefined)?.updatedAt}
                   hideFooterActions
                   collapsibleGroups={{ pageType: 'company-v2', chevronPosition: 'right' }}
                   sortableGroups={{ pageType: 'company-v2' }}

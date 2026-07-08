@@ -22,7 +22,17 @@ import {
   type StaffTeamMemberActivityUpdateInput,
 } from '../data/validators'
 import { staffTeamMemberActivityCrudEvents } from '../lib/crud'
-import { ensureOrganizationScope, ensureTenantScope, extractUndoPayload, requireTeamMember } from './shared'
+import {
+  applyScopeToWhere,
+  commandActorScope,
+  commandInputScope,
+  ensureOrganizationScope,
+  ensureTenantScope,
+  explicitStaffCommandScope,
+  extractUndoPayload,
+  requireTeamMember,
+} from './shared'
+import { resolveRedoSnapshot } from '@open-mercato/shared/lib/commands/redo'
 import { E } from '#generated/entities.ids.generated'
 import {
   loadCustomFieldSnapshot,
@@ -117,10 +127,16 @@ const createActivityCommand: CommandHandler<
     const { parsed, custom } = parseWithCustomFields(staffTeamMemberActivityCreateSchema, rawInput)
     ensureTenantScope(ctx, parsed.tenantId)
     ensureOrganizationScope(ctx, parsed.organizationId)
+    const scope = commandInputScope(ctx, parsed.tenantId, parsed.organizationId)
     const normalizedAuthor = normalizeAuthorUserId(parsed.authorUserId, ctx.auth)
 
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    const member = await requireTeamMember(em, parsed.entityId, 'Team member not found')
+    const member = await requireTeamMember(
+      em,
+      parsed.entityId,
+      scope,
+      'Team member not found',
+    )
     ensureTenantScope(ctx, member.tenantId)
     ensureOrganizationScope(ctx, member.organizationId)
 
@@ -192,6 +208,66 @@ const createActivityCommand: CommandHandler<
       await em.flush()
     }
   },
+  redo: async ({ logEntry, ctx }) => {
+    const after = resolveRedoSnapshot<ActivitySnapshot>(logEntry)
+    if (!after) {
+      throw new CrudHttpError(400, { error: '[internal] redo snapshot unavailable for activity create' })
+    }
+    const em = (ctx.container.resolve('em') as EntityManager).fork()
+    const member = await requireTeamMember(
+      em,
+      after.activity.memberId,
+      explicitStaffCommandScope(after.activity.tenantId, after.activity.organizationId),
+      'Team member not found',
+    )
+    let activity = await em.findOne(StaffTeamMemberActivity, { id: after.activity.id })
+    if (!activity) {
+      activity = em.create(StaffTeamMemberActivity, {
+        id: after.activity.id,
+        organizationId: after.activity.organizationId,
+        tenantId: after.activity.tenantId,
+        member,
+        activityType: after.activity.activityType,
+        subject: after.activity.subject,
+        body: after.activity.body,
+        occurredAt: after.activity.occurredAt ?? null,
+        authorUserId: after.activity.authorUserId,
+        appearanceIcon: after.activity.appearanceIcon,
+        appearanceColor: after.activity.appearanceColor,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      em.persist(activity)
+    } else {
+      activity.member = member
+      activity.activityType = after.activity.activityType
+      activity.subject = after.activity.subject
+      activity.body = after.activity.body
+      activity.occurredAt = after.activity.occurredAt ?? null
+      activity.authorUserId = after.activity.authorUserId
+      activity.appearanceIcon = after.activity.appearanceIcon
+      activity.appearanceColor = after.activity.appearanceColor
+    }
+    await em.flush()
+
+    await setActivityCustomFields(ctx, activity.id, activity.organizationId, activity.tenantId, after.custom ?? {})
+
+    const de = (ctx.container.resolve('dataEngine') as DataEngine)
+    await emitCrudSideEffects({
+      dataEngine: de,
+      action: 'created',
+      entity: activity,
+      identifiers: {
+        id: activity.id,
+        organizationId: activity.organizationId,
+        tenantId: activity.tenantId,
+      },
+      events: staffTeamMemberActivityCrudEvents,
+      indexer: activityCrudIndexer,
+    })
+
+    return { activityId: activity.id, authorUserId: activity.authorUserId ?? null }
+  },
 }
 
 const updateActivityCommand: CommandHandler<StaffTeamMemberActivityUpdateInput, { activityId: string }> = {
@@ -205,13 +281,17 @@ const updateActivityCommand: CommandHandler<StaffTeamMemberActivityUpdateInput, 
   async execute(rawInput, ctx) {
     const { parsed, custom } = parseWithCustomFields(staffTeamMemberActivityUpdateSchema, rawInput)
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    const activity = await em.findOne(StaffTeamMemberActivity, { id: parsed.id })
+    const scope = commandActorScope(ctx)
+    const activity = await em.findOne(
+      StaffTeamMemberActivity,
+      applyScopeToWhere<StaffTeamMemberActivity>({ id: parsed.id }, scope),
+    )
     if (!activity) throw new CrudHttpError(404, { error: 'Activity not found' })
     ensureTenantScope(ctx, activity.tenantId)
     ensureOrganizationScope(ctx, activity.organizationId)
 
     if (parsed.entityId !== undefined) {
-      const member = await requireTeamMember(em, parsed.entityId, 'Team member not found')
+      const member = await requireTeamMember(em, parsed.entityId, scope, 'Team member not found')
       ensureTenantScope(ctx, member.tenantId)
       ensureOrganizationScope(ctx, member.organizationId)
       activity.member = member
@@ -298,7 +378,12 @@ const updateActivityCommand: CommandHandler<StaffTeamMemberActivityUpdateInput, 
     if (!before) return
     const em = (ctx.container.resolve('em') as EntityManager).fork()
     let activity = await em.findOne(StaffTeamMemberActivity, { id: before.activity.id })
-    const member = await requireTeamMember(em, before.activity.memberId, 'Team member not found')
+    const member = await requireTeamMember(
+      em,
+      before.activity.memberId,
+      explicitStaffCommandScope(before.activity.tenantId, before.activity.organizationId),
+      'Team member not found',
+    )
 
     if (!activity) {
       activity = em.create(StaffTeamMemberActivity, {
@@ -370,7 +455,11 @@ const deleteActivityCommand: CommandHandler<{ body?: Record<string, unknown>; qu
     async execute(input, ctx) {
       const id = requireId(input, 'Activity id required')
       const em = (ctx.container.resolve('em') as EntityManager).fork()
-      const activity = await em.findOne(StaffTeamMemberActivity, { id })
+      const scope = commandActorScope(ctx)
+      const activity = await em.findOne(
+        StaffTeamMemberActivity,
+        applyScopeToWhere<StaffTeamMemberActivity>({ id }, scope),
+      )
       if (!activity) throw new CrudHttpError(404, { error: 'Activity not found' })
       ensureTenantScope(ctx, activity.tenantId)
       ensureOrganizationScope(ctx, activity.organizationId)
@@ -417,7 +506,12 @@ const deleteActivityCommand: CommandHandler<{ body?: Record<string, unknown>; qu
       const before = payload?.before
       if (!before) return
       const em = (ctx.container.resolve('em') as EntityManager).fork()
-      const member = await requireTeamMember(em, before.activity.memberId, 'Team member not found')
+      const member = await requireTeamMember(
+        em,
+        before.activity.memberId,
+        explicitStaffCommandScope(before.activity.tenantId, before.activity.organizationId),
+        'Team member not found',
+      )
       let activity = await em.findOne(StaffTeamMemberActivity, { id: before.activity.id })
       if (!activity) {
         activity = em.create(StaffTeamMemberActivity, {
