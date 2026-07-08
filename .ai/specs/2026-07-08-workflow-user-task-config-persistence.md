@@ -68,6 +68,7 @@ This ordering protects visible form edits and still keeps advanced-only keys suc
 - React Flow owns transient node properties like `selected` and `position`
 - the visual editor page owns dialog-edited `node.data`
 - when React Flow emits a stale snapshot, the page keeps the latest page-owned `data` while still accepting transient graph changes
+- the editor page updates a synchronous `nodesRef` alongside React state so stale React Flow events that fire before React flushes still merge against the newest dialog-edited node data
 
 ### API Validation Contract
 

@@ -74,6 +74,14 @@ export default function VisualEditorPage() {
   const [isSaving, setIsSaving] = useState(false)
   const [nodes, setNodes] = useState<Node[]>([])
   const [edges, setEdges] = useState<Edge[]>([])
+  const nodesRef = React.useRef<Node[]>([])
+  const setEditorNodes = useCallback<React.Dispatch<React.SetStateAction<Node[]>>>((nextNodesOrUpdater) => {
+    const nextNodes = typeof nextNodesOrUpdater === 'function'
+      ? (nextNodesOrUpdater as (previousNodes: Node[]) => Node[])(nodesRef.current)
+      : nextNodesOrUpdater
+    nodesRef.current = nextNodes
+    setNodes(nextNodes)
+  }, [])
   const [selectedNode, setSelectedNode] = useState<Node | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null)
   const [showMetadata, setShowMetadata] = useState(true)
@@ -151,7 +159,7 @@ export default function VisualEditorPage() {
 
         // Convert definition to graph
         const graph = definitionToGraph(definition.definition)
-        setNodes(graph.nodes)
+        setEditorNodes(graph.nodes)
         setEdges(graph.edges)
 
         // Load embedded triggers from definition
@@ -171,15 +179,15 @@ export default function VisualEditorPage() {
     }
 
     loadDefinition()
-  }, [definitionId])
+  }, [definitionId, setEditorNodes])
 
   // Handle node changes from ReactFlow. The lazy graph applies React Flow's
   // change reducers internally (#3169) and hands back the resolved nodes, so
   // this page never imports the @xyflow/react runtime.
   const handleNodesChange = useCallback((nextNodes: Node[]) => {
     if (isCodeOnly) return
-    setNodes((previousNodes) => mergeVisualEditorNodes(previousNodes, nextNodes))
-  }, [isCodeOnly])
+    setEditorNodes((previousNodes) => mergeVisualEditorNodes(previousNodes, nextNodes))
+  }, [isCodeOnly, setEditorNodes])
 
   // Handle edge changes from ReactFlow (resolved edges from the lazy graph).
   const handleEdgesChange = useCallback((nextEdges: Edge[]) => {
@@ -190,23 +198,25 @@ export default function VisualEditorPage() {
   // Handle adding new node from palette
   const handleAddNode = useCallback((nodeType: string) => {
     if (isCodeOnly) return
-    const newNode: Node = {
-      id: generateStepId(nodeType),
-      type: nodeType,
-      position: {
-        x: 250 + nodes.length * 50,
-        y: 100 + nodes.length * 150,
-      },
-      data: {
-        label: getDefaultLabel(nodeType),
-        description: '',
-        badge: getDefaultBadge(nodeType),
-        status: 'pending',
-      },
-    }
+    setEditorNodes((nds) => {
+      const newNode: Node = {
+        id: generateStepId(nodeType),
+        type: nodeType,
+        position: {
+          x: 250 + nds.length * 50,
+          y: 100 + nds.length * 150,
+        },
+        data: {
+          label: getDefaultLabel(nodeType),
+          description: '',
+          badge: getDefaultBadge(nodeType),
+          status: 'pending',
+        },
+      }
 
-    setNodes((nds) => [...nds, newNode])
-  }, [nodes.length, isCodeOnly])
+      return [...nds, newNode]
+    })
+  }, [isCodeOnly, setEditorNodes])
 
   // Handle node selection - open edit dialog (suppressed in read-only mode
   // so users can't open the node editor on a code-defined workflow).
@@ -227,7 +237,7 @@ export default function VisualEditorPage() {
 
   // Save node updates
   const handleSaveNode = useCallback((nodeId: string, updates: Partial<Node['data']>) => {
-    setNodes((nds) =>
+    setEditorNodes((nds) =>
       nds.map((node) =>
         node.id === nodeId
           ? { ...node, data: { ...node.data, ...updates } }
@@ -240,7 +250,7 @@ export default function VisualEditorPage() {
         : node
     )
     flash('Node updated successfully', 'success')
-  }, [])
+  }, [setEditorNodes])
 
   // Save edge updates
   const handleSaveEdge = useCallback((edgeId: string, updates: Partial<Edge['data']>) => {
@@ -279,11 +289,11 @@ export default function VisualEditorPage() {
       t,
       setShowNodeDialog,
       setSelectedNode,
-      setNodes,
+      setNodes: setEditorNodes,
       setEdges,
       notifyDeleted: () => flash('Step deleted successfully', 'success'),
     })
-  }, [confirm, nodes, t])
+  }, [confirm, nodes, setEditorNodes, t])
 
   // Handle new connections
   const handleConnect = useCallback((connection: Connection) => {
@@ -600,10 +610,10 @@ export default function VisualEditorPage() {
       },
     ]
 
-    setNodes(exampleNodes)
+    setEditorNodes(exampleNodes)
     setEdges(exampleEdges)
     flash('Example workflow loaded', 'success')
-  }, [])
+  }, [setEditorNodes])
 
   // Clear canvas
   const handleClear = useCallback(() => {
@@ -614,7 +624,7 @@ export default function VisualEditorPage() {
 
   // Confirm clear action
   const confirmClear = useCallback(() => {
-    setNodes([])
+    setEditorNodes([])
     setEdges([])
     setWorkflowId('')
     setWorkflowName('')
@@ -629,7 +639,7 @@ export default function VisualEditorPage() {
     setTriggers([])
     setShowClearConfirm(false)
     flash('Canvas cleared', 'success')
-  }, [])
+  }, [setEditorNodes])
 
   // Publish page-load record context to the AppShell-owned `backend:record:current`
   // mount so the enterprise record_locks widget resolves `workflows.definition` + id
