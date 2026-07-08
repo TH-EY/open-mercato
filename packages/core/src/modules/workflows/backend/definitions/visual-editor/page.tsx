@@ -11,6 +11,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { graphToDefinition, definitionToGraph, validateWorkflowGraph, generateStepId, generateTransitionId, appendWorkflowEdge, ValidationError } from '../../../lib/graph-utils'
 import { mergeVisualEditorEdges } from '../../../lib/visual-editor-edge-state'
+import { mergeVisualEditorNodes } from '../../../lib/visual-editor-node-state'
 import { performDeleteEdgeFlow, performDeleteNodeFlow } from '../../../lib/visual-editor-delete-flow'
 import { workflowDefinitionDataSchema } from '../../../data/validators'
 import { Page } from '@open-mercato/ui/backend/Page'
@@ -177,7 +178,7 @@ export default function VisualEditorPage() {
   // this page never imports the @xyflow/react runtime.
   const handleNodesChange = useCallback((nextNodes: Node[]) => {
     if (isCodeOnly) return
-    setNodes(nextNodes)
+    setNodes((previousNodes) => mergeVisualEditorNodes(previousNodes, nextNodes))
   }, [isCodeOnly])
 
   // Handle edge changes from ReactFlow (resolved edges from the lazy graph).
@@ -232,6 +233,11 @@ export default function VisualEditorPage() {
           ? { ...node, data: { ...node.data, ...updates } }
           : node
       )
+    )
+    setSelectedNode((node) =>
+      node?.id === nodeId
+        ? { ...node, data: { ...node.data, ...updates } }
+        : node
     )
     flash('Node updated successfully', 'success')
   }, [])
