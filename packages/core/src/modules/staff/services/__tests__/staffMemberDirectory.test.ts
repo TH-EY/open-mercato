@@ -2,6 +2,7 @@
 
 import type { EntityManager } from '@mikro-orm/postgresql'
 import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { StaffTeamMember } from '../../data/entities'
 import { DefaultStaffMemberDirectory } from '../staffMemberDirectory'
 
 jest.mock('@open-mercato/shared/lib/encryption/find', () => ({ findWithDecryption: jest.fn() }))
@@ -28,4 +29,20 @@ it('returns only active scoped scheduling references for requested users', async
     availabilityRuleSetId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
     displayName: 'Surveyor A',
   }])
+  expect(findMock).toHaveBeenCalledWith(
+    em,
+    StaffTeamMember,
+    {
+      userId: { $in: ['11111111-1111-4111-8111-111111111111'] },
+      tenantId: '22222222-2222-4222-8222-222222222222',
+      organizationId: '33333333-3333-4333-8333-333333333333',
+      isActive: true,
+      deletedAt: null,
+    },
+    { orderBy: { displayName: 'asc', id: 'asc' } },
+    {
+      tenantId: '22222222-2222-4222-8222-222222222222',
+      organizationId: '33333333-3333-4333-8333-333333333333',
+    },
+  )
 })

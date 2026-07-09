@@ -29,7 +29,13 @@ export class DefaultStaffMemberDirectory implements StaffMemberDirectory {
     const rows = await findWithDecryption(
       this.em,
       StaffTeamMember,
-      { userId: { $in: params.userIds }, isActive: true, deletedAt: null },
+      {
+        userId: { $in: params.userIds },
+        tenantId: params.tenantId,
+        organizationId: params.organizationId,
+        isActive: true,
+        deletedAt: null,
+      },
       { orderBy: { displayName: 'asc', id: 'asc' } },
       { tenantId: params.tenantId, organizationId: params.organizationId },
     )
