@@ -1,9 +1,14 @@
 /** @jest-environment node */
 
 import type { EntityManager } from '@mikro-orm/postgresql'
+import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { asValue, createContainer, InjectionMode } from 'awilix'
 import { register } from '../di'
 import type { StaffMemberDirectory } from '../services/staffMemberDirectory'
+
+jest.mock('@open-mercato/shared/lib/encryption/find', () => ({ findWithDecryption: jest.fn() }))
+
+const findMock = jest.mocked(findWithDecryption)
 
 describe('staff/di — availabilityAccessResolver registration', () => {
   it('registers the availabilityAccessResolver token with a resolveAvailabilityWriteAccess method', () => {
@@ -16,13 +21,22 @@ describe('staff/di — availabilityAccessResolver registration', () => {
     expect(typeof resolver.resolveAvailabilityWriteAccess).toBe('function')
   })
 
-  it('registers the staffMemberDirectory token with a listActiveSchedulingRefs method', () => {
-    const container = createContainer({ injectionMode: InjectionMode.PROXY })
-    container.register({ em: asValue({} as EntityManager) })
+  it('injects the registered entity manager into staffMemberDirectory in CLASSIC mode', async () => {
+    const em = {} as EntityManager
+    const container = createContainer({ injectionMode: InjectionMode.CLASSIC })
+    container.register({ em: asValue(em) })
     register(container)
+    findMock.mockResolvedValueOnce([])
+
     expect(container.hasRegistration('staffMemberDirectory')).toBe(true)
     const directory = container.resolve<StaffMemberDirectory>('staffMemberDirectory')
-    expect(typeof directory.listActiveSchedulingRefs).toBe('function')
+    await directory.listActiveSchedulingRefs({
+      userIds: ['11111111-1111-4111-8111-111111111111'],
+      tenantId: '22222222-2222-4222-8222-222222222222',
+      organizationId: '33333333-3333-4333-8333-333333333333',
+    })
+
+    expect(findMock.mock.calls[0]?.[0]).toBe(em)
   })
 
   it('returns undefined (not throws) when consumer uses allowUnregistered on a container without staff', () => {
