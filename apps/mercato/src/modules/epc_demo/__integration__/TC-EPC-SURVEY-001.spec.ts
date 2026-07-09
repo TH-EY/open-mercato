@@ -218,8 +218,10 @@ async function createBusyInteraction(
   input: {
     companyId: string;
     ownerUserId: string;
-    participantUserId: string;
-    participantName: string;
+    participant?: {
+      userId: string;
+      name: string;
+    };
     scheduledAt: string;
     suffix: string;
     label: string;
@@ -239,13 +241,17 @@ async function createBusyInteraction(
         scheduledAt: input.scheduledAt,
         durationMinutes: 60,
         ownerUserId: input.ownerUserId,
-        participants: [
-          {
-            userId: input.participantUserId,
-            name: input.participantName,
-            status: "accepted",
-          },
-        ],
+        ...(input.participant
+          ? {
+              participants: [
+                {
+                  userId: input.participant.userId,
+                  name: input.participant.name,
+                  status: "accepted",
+                },
+              ],
+            }
+          : {}),
       },
     },
   );
@@ -882,8 +888,6 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
         {
           companyId: companyAId,
           ownerUserId: primarySurveyorUserId,
-          participantUserId: primarySurveyorUserId,
-          participantName: surveyorName,
           scheduledAt: busySlot.startsAt,
           suffix,
           label: "Surveyor Owner Busy Event",
@@ -899,7 +903,7 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
         stateAfterBusyEvent.slots.some(
           (slot) => slot.startsAt === busySlot.startsAt,
         ),
-        "a busy Surveyor event should remove its overlapping slot",
+        "an event with the Surveyor only as owner should remove its overlapping slot",
       ).toBe(false);
       expect(
         stateAfterBusyEvent.slots.length,
@@ -913,8 +917,10 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
         {
           companyId: companyAId,
           ownerUserId: nonSurveyorUserId,
-          participantUserId: primarySurveyorUserId,
-          participantName: surveyorName,
+          participant: {
+            userId: primarySurveyorUserId,
+            name: surveyorName,
+          },
           scheduledAt: participantBusySlot.startsAt,
           suffix,
           label: "Surveyor Participant Busy Event",
