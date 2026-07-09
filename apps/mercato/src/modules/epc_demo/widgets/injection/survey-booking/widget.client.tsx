@@ -159,15 +159,15 @@ export default function EpcSurveyBookingWidget(_props: WidgetProps) {
     : t('epcDemo.surveyBooking.actions.book', 'Book survey')
 
   return (
-    <div className="flex min-h-40 flex-col gap-4">
+    <div className="flex min-h-40 min-w-0 max-w-full flex-col gap-4 overflow-hidden">
       {hasDeals ? (
-        <div className="flex items-start gap-3">
+        <div className="flex min-w-0 items-start gap-3">
           <div className="flex size-10 shrink-0 items-center justify-center rounded-md border bg-background">
             {bookedSurvey ? <CheckCircle2 className="size-5 text-emerald-600" /> : <CalendarClock className="size-5 text-primary" />}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{selectedDeal?.title}</p>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p className="break-words text-sm font-medium [overflow-wrap:anywhere]">{selectedDeal?.title}</p>
+            <p className="mt-1 break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">
               {bookedSurvey
                 ? t('epcDemo.surveyBooking.bookedFor', 'Booked for {{date}}', { date: formatDateTime(bookedSurvey.scheduledAt) })
                 : t('epcDemo.surveyBooking.available', 'Survey stage is ready for booking.')}
@@ -222,7 +222,7 @@ export default function EpcSurveyBookingWidget(_props: WidgetProps) {
                   value={selectedDeal?.id ?? ''}
                   onValueChange={setSelectedDealId}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="min-w-0">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -272,14 +272,14 @@ function SlotButton(props: {
     <button
       type="button"
       className={[
-        'flex min-h-14 items-center gap-3 rounded-md border px-3 py-2 text-left text-sm transition-colors',
+        'flex min-h-14 min-w-0 items-center gap-3 rounded-md border px-3 py-2 text-left text-sm transition-colors',
         props.selected ? 'border-primary bg-primary/5 text-foreground' : 'bg-background hover:bg-muted',
       ].join(' ')}
       aria-pressed={props.selected}
       onClick={props.onSelect}
     >
       <CalendarClock className="size-4 shrink-0 text-primary" />
-      <span className="min-w-0 font-medium">{props.slot.label}</span>
+      <span className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">{props.slot.label}</span>
     </button>
   )
 }
