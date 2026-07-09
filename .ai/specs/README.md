@@ -103,6 +103,7 @@ Specs awaiting implementation or partially complete. Focus here for actionable w
 | [Dictionary Custom Field Multiselect](2026-06-19-dictionary-custom-field-multiselect.md) | 2026-06-19 | Dictionary Custom Field Multiselect | Dictionary-backed custom fields can opt into multi-select CRUD form rendering while reusing existing EAV array persistence |
 | [Package Previews](2026-06-22-label-based-package-previews.md) | 2026-06-22 | Label-Based Package Previews | Label-triggered pkg.pr.new previews with npm canary snapshots moved behind a separate opt-in label |
 | [Workflow User Task Config Persistence](2026-07-08-workflow-user-task-config-persistence.md) | 2026-07-08 | Workflow User Task Config Persistence | Preserve visual-editor user task assignment, form key, actions, and form-field metadata across workflow definition save/read-back |
+| [Customer Survey Booking Hardening](2026-07-09-customer-survey-booking-hardening.md) | 2026-07-09 | Customer Survey Booking Hardening | Require explicit Surveyor availability, replace direct staff-table access with a public DI contract, and add persistence/security integration coverage |
 
 ### Implemented Specifications
 
