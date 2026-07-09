@@ -17,6 +17,7 @@ See [`.ai/specs/implemented/2026-05-08-staff-decouple-from-core.md`](../../../..
 | Key | Contract |
 |-----|----------|
 | `availabilityAccessResolver` | Resolves an `AvailabilityWriteAccess` shape for the authenticated request, including whether the caller may edit availability for all members vs only themselves. Consumed by `planner/api/access.ts` via `container.resolve(..., { allowUnregistered: true })` — planner gracefully degrades to `403 staff_module_not_loaded` when staff is absent. |
+| `staffMemberDirectory` | Lists active, tenant- and organization-scoped scheduling references for requested users through `StaffMemberDirectory.listActiveSchedulingRefs()`. |
 
 Resolver shape (from `lib/availabilityAccess.ts`):
 
