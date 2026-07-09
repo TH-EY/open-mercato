@@ -3747,6 +3747,7 @@ function TextInput({
   autoFocus,
   onSubmit,
   disabled,
+  readOnly,
   suggestions,
   inputType = 'text',
 }: {
@@ -3756,6 +3757,7 @@ function TextInput({
   autoFocus?: boolean
   onSubmit?: () => void
   disabled?: boolean
+  readOnly?: boolean
   suggestions?: string[]
   inputType?: 'text' | 'password'
 }) {
@@ -3776,12 +3778,12 @@ function TextInput({
   }, [value])
 
   const handleChange = React.useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    if (disabled) return
+    if (disabled || readOnly) return
     const next = e.target.value
     userTypingRef.current = true
     setLocal(next)
     onChange(next)
-  }, [disabled, onChange])
+  }, [disabled, readOnly, onChange])
 
   const handleKeyDown = React.useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (disabled) return
@@ -3815,6 +3817,7 @@ function TextInput({
         autoFocus={autoFocus}
         data-crud-focus-target=""
         disabled={disabled}
+        readOnly={readOnly}
       />
     )
   }
@@ -3832,6 +3835,7 @@ function TextInput({
         autoFocus={autoFocus}
         data-crud-focus-target=""
         disabled={disabled}
+        readOnly={readOnly}
         list={suggestions && suggestions.length > 0 ? datalistId : undefined}
       />
       {suggestions && suggestions.length > 0 && (
@@ -3924,6 +3928,7 @@ function TextAreaInput({
   showCount,
   rows,
   disabled,
+  readOnly,
 }: {
   value: string
   onChange: (v: string) => void
@@ -3933,6 +3938,7 @@ function TextAreaInput({
   showCount?: boolean
   rows?: number
   disabled?: boolean
+  readOnly?: boolean
 }) {
   const [local, setLocal] = React.useState<string>(value)
   const isFocusedRef = React.useRef(false)
@@ -3946,10 +3952,11 @@ function TextAreaInput({
   }, [value])
 
   const handleChange = React.useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    if (disabled || readOnly) return
     const next = e.target.value
     setLocal(next)
     onChange(next)
-  }, [onChange])
+  }, [disabled, readOnly, onChange])
 
   const handleFocus = React.useCallback(() => { isFocusedRef.current = true }, [])
   const handleBlur = React.useCallback(() => {
@@ -3969,6 +3976,7 @@ function TextAreaInput({
       showCount={showCount}
       rows={rows}
       disabled={disabled}
+      readOnly={readOnly}
       data-crud-focus-target=""
     />
   )
@@ -4264,6 +4272,7 @@ const FieldControl = React.memo(function FieldControlImpl({
           autoFocus={autoFocusField}
           onSubmit={onSubmitRequest}
           disabled={disabled}
+          readOnly={readOnly}
           suggestions={field.type === 'text' ? field.suggestions : undefined}
         />
       )}
@@ -4275,6 +4284,7 @@ const FieldControl = React.memo(function FieldControlImpl({
           autoFocus={autoFocusField}
           onSubmit={onSubmitRequest}
           disabled={disabled}
+          readOnly={readOnly}
           inputType="password"
         />
       )}
@@ -4363,6 +4373,7 @@ const FieldControl = React.memo(function FieldControlImpl({
           showCount={builtin?.showCount}
           rows={builtin?.rows}
           disabled={disabled}
+          readOnly={readOnly}
         />
       )}
       {field.type === 'richtext' && builtin?.editor === 'simple' && (
@@ -4453,7 +4464,7 @@ const FieldControl = React.memo(function FieldControlImpl({
             }
             setValue(field.id, next)
           }}
-          disabled={disabled}
+          disabled={disabled || readOnly}
         >
           <SelectTrigger data-crud-focus-target="">
             <SelectValue placeholder={t('ui.forms.select.emptyOption', '—')}>
