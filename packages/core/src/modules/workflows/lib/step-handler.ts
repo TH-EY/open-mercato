@@ -22,6 +22,7 @@ import {
 } from '../data/entities'
 import { parseDuration } from './duration'
 import { logWorkflowEvent } from './event-logger'
+import { normalizeUserTaskFormSchema } from './user-task-form-schema'
 
 // ============================================================================
 // Types and Interfaces
@@ -564,7 +565,7 @@ async function handleUserTaskStep(
     taskName: stepDef.stepName,
     description: stepDef.description || null,
     status: 'PENDING',
-    formSchema: userTaskConfig.formSchema || null,
+    formSchema: normalizeUserTaskFormSchema(userTaskConfig.formSchema) ?? userTaskConfig.formSchema ?? null,
     formData: null,
     assignedTo: assignedTo,
     assignedToRoles: assignedToRoles,

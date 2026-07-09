@@ -2,8 +2,11 @@ import { expect, test, type APIRequestContext } from '@playwright/test'
 import { apiRequest, getAuthToken } from '@open-mercato/core/helpers/integration/api'
 import { readJsonSafe } from '@open-mercato/core/helpers/integration/generalFixtures'
 import {
+  cancelWorkflowInstanceIfExists,
   createWorkflowDefinitionFixture,
   deleteWorkflowDefinitionIfExists,
+  findInstanceUserTask,
+  startWorkflowInstanceFixture,
 } from '@open-mercato/core/helpers/integration/workflowsFixtures'
 import { putWithLock } from '@open-mercato/core/helpers/integration/optimisticLockUi'
 
@@ -22,6 +25,13 @@ type WorkflowDefinitionRecord = {
     }>
     transitions: Array<Record<string, any>>
   }
+}
+
+type UserTaskRuntimeRecord = {
+  id: string
+  status: string
+  formSchema?: Record<string, any> | null
+  formData?: Record<string, any> | null
 }
 
 function buildDefinition(role: string, formKey: string, placeholder: string) {
@@ -117,6 +127,7 @@ test.describe('TC-WF-030: workflow user task form config round-trip', () => {
     const stamp = Date.now()
     const workflowId = `qa-wf-user-task-config-${stamp}`
     let definitionId: string | null = null
+    let instanceId: string | null = null
 
     try {
       definitionId = await createWorkflowDefinitionFixture(request, token, {
@@ -169,7 +180,89 @@ test.describe('TC-WF-030: workflow user task form config round-trip', () => {
         'updated_initial_contact_form',
         'Capture the updated conversation summary',
       )
+
+      instanceId = await startWorkflowInstanceFixture(request, token, {
+        workflowId,
+        initialContext: { qaStamp: stamp },
+      })
+
+      const pendingTask = await findInstanceUserTask(request, token, instanceId, { statuses: ['PENDING'] })
+      expect(pendingTask?.id, 'workflow start should create a pending user task').toBeTruthy()
+
+      const taskId = pendingTask!.id!
+      const taskDetailResponse = await apiRequest(
+        request,
+        'GET',
+        `/api/workflows/tasks/${encodeURIComponent(taskId)}`,
+        { token },
+      )
+      const taskDetailBody = await readJsonSafe<{ data?: UserTaskRuntimeRecord; error?: unknown }>(taskDetailResponse)
+      expect(
+        taskDetailResponse.status(),
+        `GET /api/workflows/tasks/${taskId} failed (${taskDetailResponse.status()}): ${JSON.stringify(taskDetailBody)}`,
+      ).toBe(200)
+
+      expect(taskDetailBody?.data?.formSchema).toMatchObject({
+        type: 'object',
+        fields: [
+          expect.objectContaining({
+            name: 'conversation_summary',
+            type: 'textarea',
+            label: 'Conversation summary',
+            required: true,
+            placeholder: 'Capture the updated conversation summary',
+            defaultValue: 'N/A',
+          }),
+        ],
+        required: ['conversation_summary'],
+        properties: {
+          conversation_summary: expect.objectContaining({
+            type: 'string',
+            title: 'Conversation summary',
+            description: 'Capture the updated conversation summary',
+            placeholder: 'Capture the updated conversation summary',
+            default: 'N/A',
+          }),
+        },
+      })
+
+      const missingRequiredResponse = await apiRequest(
+        request,
+        'POST',
+        `/api/workflows/tasks/${encodeURIComponent(taskId)}/complete`,
+        { token, data: { formData: {} } },
+      )
+      const missingRequiredBody = await readJsonSafe<{ error?: string; code?: string }>(missingRequiredResponse)
+      expect(
+        missingRequiredResponse.status(),
+        `missing required form data should return 400 (got ${missingRequiredResponse.status()}): ${JSON.stringify(missingRequiredBody)}`,
+      ).toBe(400)
+      expect(missingRequiredBody?.code).toBe('FORM_VALIDATION_FAILED')
+
+      const completeResponse = await apiRequest(
+        request,
+        'POST',
+        `/api/workflows/tasks/${encodeURIComponent(taskId)}/complete`,
+        {
+          token,
+          data: {
+            formData: {
+              conversation_summary: 'Reached the customer and captured the first-call summary.',
+            },
+          },
+        },
+      )
+      const completeBody = await readJsonSafe<{ data?: UserTaskRuntimeRecord; error?: unknown }>(completeResponse)
+      expect(
+        completeResponse.status(),
+        `POST /api/workflows/tasks/${taskId}/complete failed (${completeResponse.status()}): ${JSON.stringify(completeBody)}`,
+      ).toBe(200)
+      expect(completeBody?.data?.status).toBe('COMPLETED')
+      expect(completeBody?.data?.formData).toMatchObject({
+        conversation_summary: 'Reached the customer and captured the first-call summary.',
+      })
     } finally {
+      await cancelWorkflowInstanceIfExists(request, token, instanceId)
       await deleteWorkflowDefinitionIfExists(request, token, definitionId)
     }
   })

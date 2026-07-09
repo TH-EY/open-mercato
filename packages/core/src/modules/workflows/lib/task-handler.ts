@@ -22,6 +22,7 @@ import {
 import { executeWorkflow } from './workflow-executor'
 import * as stepHandler from './step-handler'
 import * as transitionHandler from './transition-handler'
+import { normalizeUserTaskFormSchema } from './user-task-form-schema'
 
 // ============================================================================
 // Types and Interfaces
@@ -369,12 +370,14 @@ function validateFormData(
   formData: Record<string, any>,
   formSchema: any
 ): void {
+  const normalizedSchema = normalizeUserTaskFormSchema(formSchema) ?? formSchema
+
   // For MVP: Basic validation - just check required fields exist
-  if (!formSchema || !formSchema.properties) {
+  if (!normalizedSchema || !normalizedSchema.properties) {
     return // No schema to validate against
   }
 
-  const requiredFields = formSchema.required || []
+  const requiredFields = normalizedSchema.required || []
 
   for (const field of requiredFields) {
     if (!(field in formData) || formData[field] === null || formData[field] === undefined) {

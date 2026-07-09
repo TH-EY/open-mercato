@@ -60,6 +60,7 @@
 - 🔒 Complete report-high.md tracker (16 HIGH findings) + dev-DX password amendment. (#2635) *(@pat-lewczuk)*
 
 ## 🐛 Fixes
+- 🐛 Render workflow user task forms from visual-editor field schemas and enforce required completion data. *(@pmadajthey)*
 - 🐛 Preserve workflow visual-editor user task assignment and form configuration across save/read-back. *(@pmadajthey)*
 - 🐛 Register feature toggle command handlers during module bootstrap. *(@pmadajthey)*
 - 📦 Classify runtime @types as deps and harden OSM tile host check. (#3800) *(@patzick)*

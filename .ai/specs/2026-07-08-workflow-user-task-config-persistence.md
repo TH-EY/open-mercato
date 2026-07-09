@@ -35,6 +35,7 @@ Saving a user-task node could report success while reopening the workflow showed
 1. The legacy node edit dialog loaded `node.data.userTaskConfig` into advanced configuration. When saving, it built a fresh `updates.userTaskConfig` from visible fields, then merged the stale advanced object over the fresh updates. If the advanced object contained `userTaskConfig: {}`, the fresh form schema and role assignment were overwritten.
 2. The API validator accepted `userTaskConfig`, but its Zod schema only described a narrow subset of keys. Zod stripped visual-editor keys such as `assignedToRoles`, `formKey`, `allowedActions`, and form-field metadata like `placeholder` or `defaultValue`.
 3. The visual editor page accepted full node snapshots from React Flow via `handleNodesChange` and replaced page state with them. A selection or position snapshot from React Flow could contain stale `node.data`, rolling back the node data that had just been saved by the dialog before the final workflow save.
+4. Runtime user-task pages and completion validation only recognized JSON Schema `properties`. The visual editor stores forms as `formSchema.fields`, so generated tasks could persist form definitions but still render the "no form" message and skip required-field validation.
 
 This is a code bug, not an environment configuration issue. The environment can choose the legacy dialog or CrudForm editor, but both persistence paths must preserve the same workflow definition fields.
 
@@ -48,6 +49,9 @@ Existing records that were already saved after stripping cannot be reconstructed
 4. Extend `userTaskConfigSchema` to preserve visual-editor user-task keys and field metadata.
 5. Merge React Flow node snapshots with existing page-owned node data before storing them in the editor page.
 6. Add unit, component, and integration tests that cover the UI merge and API round-trip.
+7. Add a shared user-task form schema normalizer that converts visual-editor `fields[]` into JSON Schema-style `properties` and `required`.
+8. Normalize the schema when creating `UserTask` rows, when validating completion payloads, and when rendering desktop/mobile task forms.
+9. Return structured 400 responses for `FORM_VALIDATION_FAILED` completion errors.
 
 ## Architecture
 
@@ -82,6 +86,17 @@ This ordering protects visible form edits and still keeps advanced-only keys suc
 - passthrough top-level `userTaskConfig` extension keys
 
 JSON Schema style `formSchema.properties` remains supported.
+
+### Runtime User Task Form Contract
+
+`normalizeUserTaskFormSchema()` makes both persisted formats consumable by the task runtime:
+
+- JSON Schema `properties` are passed through unchanged.
+- Visual-editor `fields[]` are converted to `properties` plus `required`.
+- `textarea` fields become string fields with a large `maxLength`, so existing task form renderers display a textarea.
+- `placeholder`/`defaultValue` metadata is preserved as renderable JSON Schema metadata.
+
+Newly created user tasks store the normalized schema for API/UI consumers while preserving the original `fields[]` payload for editor metadata. Existing user tasks that already contain only `fields[]` are normalized at render/validation time.
 
 ## Data Models
 
@@ -123,6 +138,8 @@ Affected routes:
 - `POST /api/workflows/definitions`
 - `GET /api/workflows/definitions/[id]`
 - `PUT /api/workflows/definitions/[id]`
+- `GET /api/workflows/tasks/[id]`
+- `POST /api/workflows/tasks/[id]/complete`
 
 The routes remain backward compatible:
 
@@ -130,6 +147,7 @@ The routes remain backward compatible:
 - no database migration
 - existing JSON Schema form definitions still validate
 - existing advanced user-task fields continue to pass through
+- existing `formSchema.fields` user tasks now render and validate as intended
 - already-stripped historical records are not backfilled
 
 ## Test Matrix
@@ -140,7 +158,8 @@ The routes remain backward compatible:
 | Transform unit | `formValuesToNodeUpdates` keeps visible user-task form config when advanced config has stale `userTaskConfig: {}` |
 | Component unit | `NodeEditDialog` submits roles, form key, and form schema despite stale advanced config |
 | Node state unit | `mergeVisualEditorNodes` preserves page-owned user-task data when React Flow emits a stale node snapshot |
-| Integration | `TC-WF-030` create/read-back/update/read-back proves workflow definition API preserves user-task form config |
+| Runtime unit | User task creation normalizes `fields[]`; completion rejects missing required `fields[]` data and persists valid form data |
+| Integration | `TC-WF-030` create/read-back/update/read-back proves workflow definition API preserves user-task form config, then starts a workflow and proves task detail/completion round-trip for the configured form |
 
 ## Risks & Impact Review
 
@@ -154,8 +173,10 @@ The routes remain backward compatible:
 - Local unit coverage passed: workflow validator, node form transform, and legacy `NodeEditDialog` regression tests.
 - Local typecheck passed for `@open-mercato/core`.
 - Local integration coverage passed: `TC-WF-030` create/read-back/update/read-back.
+- Runtime task form rendering/completion coverage added; local verification pending.
 - Preview deployment and headed QA evidence are pending.
 
 ## Changelog
 
 - 2026-07-08 - Initial in-progress spec for preserving workflow visual-editor user-task configuration across save/read-back.
+- 2026-07-09 - Extended scope to runtime user-task form rendering and completion validation for visual-editor `fields[]` schemas.
