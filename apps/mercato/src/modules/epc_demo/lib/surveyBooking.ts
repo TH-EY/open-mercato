@@ -53,6 +53,13 @@ type SurveyorCandidate = {
   availabilityRuleSetId: string | null
 }
 
+type SurveyorCandidateLoader = (
+  container: AwilixContainer,
+  em: EntityManager,
+  scope: SurveyBookingScope,
+  roleName: string,
+) => Promise<SurveyorCandidate[]>
+
 type BusyInterval = {
   userId: string
   start: Date
@@ -114,6 +121,18 @@ export function resolveSurveyorAvailabilityWindows(params: {
 }): AvailabilityWindow[] {
   if (!params.service || params.rules.length === 0) return []
   return params.service.getMergedAvailabilityWindows({ rules: params.rules, range: params.range })
+}
+
+export function createSurveyorLookup(loadCandidates: SurveyorCandidateLoader) {
+  return async (params: {
+    container: AwilixContainer
+    em: EntityManager
+    scope: SurveyBookingScope
+    userId: string
+  }): Promise<SurveyorCandidate | null> => {
+    const surveyors = await loadCandidates(params.container, params.em, params.scope, resolveSurveyorRoleName())
+    return surveyors.find((surveyor) => surveyor.userId === params.userId) ?? null
+  }
 }
 
 export function buildSurveyBookingSlots(params: {
@@ -290,7 +309,7 @@ export async function bookSurveySlot(params: {
 
   const scope = { tenantId: params.auth.tenantId, organizationId: params.auth.orgId }
   const em = (params.container.resolve('em') as EntityManager).fork()
-  const owner = await loadSurveyorByUserId(params.container, em, scope, slot.surveyorUserId)
+  const owner = await loadSurveyorByUserId({ container: params.container, em, scope, userId: slot.surveyorUserId })
   if (!owner) {
     throw new SurveyBookingError(409, 'This surveyor is no longer available.')
   }
@@ -494,15 +513,7 @@ async function loadSurveyors(
   return candidates.sort((a, b) => a.displayName.localeCompare(b.displayName) || a.userId.localeCompare(b.userId))
 }
 
-async function loadSurveyorByUserId(
-  container: AwilixContainer,
-  em: EntityManager,
-  scope: SurveyBookingScope,
-  userId: string,
-): Promise<SurveyorCandidate | null> {
-  const surveyors = await loadSurveyors(container, em, scope, resolveSurveyorRoleName())
-  return surveyors.find((surveyor) => surveyor.userId === userId) ?? null
-}
+const loadSurveyorByUserId = createSurveyorLookup(loadSurveyors)
 
 async function loadExistingBookings(
   em: EntityManager,
