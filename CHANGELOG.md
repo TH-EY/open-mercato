@@ -5,7 +5,7 @@
 <!-- TODO: Highlights — auto-update-changelog leaves this blank for the human author to fill in. -->
 
 ## ✨ Features
-- ✨ Require explicit planner availability for customer survey booking, expose a stable staff scheduling directory DI contract, and add authorization plus create/reschedule persistence coverage.
+- ✨ Require explicit planner availability for customer survey booking, expose a stable staff scheduling directory DI contract, and add authorization plus create/reschedule persistence coverage. *(@pmadajthey)*
 - ✨ Add per-module CPU/RAM resource-usage tracking. (#3760) *(@patzick)*
 - ✨ Allow disabling EU unit price presentation per tenant. (#3753) *(@jtomaszewski)*
 - ✨ Add Unarchive bulk action to Archived folder (#3578). (#3736) *(@adeptofvoltron)*
