@@ -10,7 +10,12 @@ import { CustomerDeal, CustomerInteraction, CustomerPipelineStage } from '@open-
 import type { InteractionCreateInput, InteractionUpdateInput } from '@open-mercato/core/modules/customers/data/validators'
 import { User } from '@open-mercato/core/modules/auth/data/entities'
 import { PlannerAvailabilityRule } from '@open-mercato/core/modules/planner/data/entities'
-import type { PlannerAvailabilityService } from '@open-mercato/core/modules/planner/services/plannerAvailabilityService'
+import type {
+  AvailabilityRuleLike,
+  AvailabilityWindow,
+  PlannerAvailabilityService,
+} from '@open-mercato/core/modules/planner/services/plannerAvailabilityService'
+import type { StaffMemberDirectory } from '@open-mercato/core/modules/staff/services/staffMemberDirectory'
 import type { CustomerAuthContext } from '@open-mercato/core/modules/customer_accounts/lib/customerAuth'
 import {
   EPC_SURVEY_BOOKING_MARKER,
@@ -54,24 +59,12 @@ type BusyInterval = {
   end: Date
 }
 
-type AvailabilityWindow = {
-  start: Date
-  end: Date
-}
-
 type InternalSurveySlot = EpcSurveyBookingSlot & {
   surveyorUserId: string
 }
 
 type InternalSurveyBookingState = Omit<EpcSurveyBookingState, 'slots'> & {
   slots: InternalSurveySlot[]
-}
-
-type StaffMemberRow = {
-  user_id: string | null
-  staff_member_id: string
-  availability_rule_set_id: string | null
-  display_name: string | null
 }
 
 type UserIdRow = {
@@ -112,6 +105,15 @@ export function encodeSurveySlotId(input: { surveyorUserId: string; startsAt: st
 
 export function intervalsOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
   return aStart < bEnd && aEnd > bStart
+}
+
+export function resolveSurveyorAvailabilityWindows(params: {
+  service: PlannerAvailabilityService | undefined
+  rules: AvailabilityRuleLike[]
+  range: { start: Date; end: Date }
+}): AvailabilityWindow[] {
+  if (!params.service || params.rules.length === 0) return []
+  return params.service.getMergedAvailabilityWindows({ rules: params.rules, range: params.range })
 }
 
 export function buildSurveyBookingSlots(params: {
@@ -224,7 +226,7 @@ async function loadSurveyBookingStateInternal(params: {
     return emptyState('not_in_survey_stage', durationMinutes)
   }
 
-  const surveyors = await loadSurveyors(em, scope, resolveSurveyorRoleName())
+  const surveyors = await loadSurveyors(params.container, em, scope, resolveSurveyorRoleName())
   if (surveyors.length === 0) {
     return {
       ok: true,
@@ -432,6 +434,7 @@ async function loadCustomerDealOwnership(
 }
 
 async function loadSurveyors(
+  container: AwilixContainer,
   em: EntityManager,
   scope: SurveyBookingScope,
   roleName: string,
@@ -448,34 +451,19 @@ async function loadSurveyors(
     [scope.tenantId, roleName, scope.tenantId, scope.organizationId],
   )
 
-  const staffRoleMembers = await executeRows<StaffMemberRow>(
-    em,
-    `select distinct m.user_id as "user_id", m.id as "staff_member_id",
-       m.availability_rule_set_id as "availability_rule_set_id", m.display_name as "display_name"
-     from staff_team_members m
-     inner join staff_team_roles sr on jsonb_exists(m.role_ids, sr.id::text)
-     where m.tenant_id = ? and m.organization_id = ? and m.deleted_at is null and m.is_active = true
-       and sr.tenant_id = ? and sr.organization_id = ? and sr.deleted_at is null and lower(sr.name) = lower(?)
-       and m.user_id is not null`,
-    [scope.tenantId, scope.organizationId, scope.tenantId, scope.organizationId, roleName],
-  ).catch(() => [] as StaffMemberRow[])
-
-  const userIds = Array.from(new Set([
-    ...authRoleUsers.map((row) => row.user_id),
-    ...staffRoleMembers.map((row) => row.user_id).filter((id): id is string => Boolean(id)),
-  ]))
+  const userIds = Array.from(new Set(authRoleUsers.map((row) => row.user_id)))
   if (userIds.length === 0) return []
 
-  const staffMembersByUserId = new Map<string, StaffMemberRow>()
-  const staffRows = [
-    ...staffRoleMembers,
-    ...await loadStaffMembersForUsers(em, scope, userIds),
-  ]
-  for (const row of staffRows) {
-    if (row.user_id && !staffMembersByUserId.has(row.user_id)) {
-      staffMembersByUserId.set(row.user_id, row)
-    }
-  }
+  const directory = container.resolve<StaffMemberDirectory>('staffMemberDirectory', {
+    allowUnregistered: true,
+  })
+  if (!directory) return []
+  const schedulingRefs = await directory.listActiveSchedulingRefs({
+    userIds,
+    tenantId: scope.tenantId,
+    organizationId: scope.organizationId,
+  })
+  const schedulingRefsByUserId = new Map(schedulingRefs.map((ref) => [ref.userId, ref]))
 
   const users = await findWithDecryption(
     em,
@@ -492,14 +480,14 @@ async function loadSurveyors(
   const candidates: SurveyorCandidate[] = []
   for (const userId of userIds) {
     const user = usersById.get(userId)
-    if (!user) continue
-    const staff = staffMembersByUserId.get(userId)
+    const schedulingRef = schedulingRefsByUserId.get(userId)
+    if (!user || !schedulingRef) continue
     candidates.push({
       userId,
-      displayName: user.name?.trim() || staff?.display_name?.trim() || 'Surveyor',
+      displayName: user.name?.trim() || schedulingRef.displayName.trim() || 'Surveyor',
       email: user.email ?? null,
-      staffMemberId: staff?.staff_member_id ?? null,
-      availabilityRuleSetId: staff?.availability_rule_set_id ?? null,
+      staffMemberId: schedulingRef.staffMemberId,
+      availabilityRuleSetId: schedulingRef.availabilityRuleSetId,
     })
   }
 
@@ -513,23 +501,6 @@ async function loadSurveyorByUserId(
 ): Promise<SurveyorCandidate | null> {
   const surveyors = await loadSurveyors(em, scope, resolveSurveyorRoleName())
   return surveyors.find((surveyor) => surveyor.userId === userId) ?? null
-}
-
-async function loadStaffMembersForUsers(
-  em: EntityManager,
-  scope: SurveyBookingScope,
-  userIds: string[],
-): Promise<StaffMemberRow[]> {
-  if (userIds.length === 0) return []
-  return executeRows<StaffMemberRow>(
-    em,
-    `select m.user_id as "user_id", m.id as "staff_member_id",
-       m.availability_rule_set_id as "availability_rule_set_id", m.display_name as "display_name"
-     from staff_team_members m
-     where m.tenant_id = ? and m.organization_id = ? and m.deleted_at is null and m.is_active = true
-       and m.user_id in (${placeholders(userIds.length)})`,
-    [scope.tenantId, scope.organizationId, ...userIds],
-  ).catch(() => [])
 }
 
 async function loadExistingBookings(
@@ -593,25 +564,26 @@ async function loadAvailabilityWindows(
     rulesBySubject.set(rule.subjectId, entries)
   }
 
-  const service = container.resolve('plannerAvailabilityService') as PlannerAvailabilityService | undefined
+  const service = container.resolve<PlannerAvailabilityService>('plannerAvailabilityService', {
+    allowUnregistered: true,
+  })
   const result = new Map<string, AvailabilityWindow[]>()
   for (const surveyor of surveyors) {
     const surveyorRules = [
       ...(surveyor.availabilityRuleSetId ? rulesBySubject.get(surveyor.availabilityRuleSetId) ?? [] : []),
       ...(surveyor.staffMemberId ? rulesBySubject.get(surveyor.staffMemberId) ?? [] : []),
     ]
-    const windows = surveyorRules.length > 0 && service
-      ? service.getMergedAvailabilityWindows({
-          rules: surveyorRules.map((rule) => ({
-            id: rule.id,
-            rrule: rule.rrule,
-            exdates: rule.exdates,
-            kind: rule.kind,
-            note: rule.note ?? null,
-          })),
-          range: { start: rangeStart, end: rangeEnd },
-        })
-      : buildFallbackWorkingWindows(rangeStart, rangeEnd)
+    const windows = resolveSurveyorAvailabilityWindows({
+      service,
+      rules: surveyorRules.map((rule) => ({
+        id: rule.id,
+        rrule: rule.rrule,
+        exdates: rule.exdates,
+        kind: rule.kind,
+        note: rule.note ?? null,
+      })),
+      range: { start: rangeStart, end: rangeEnd },
+    })
     result.set(surveyor.userId, windows)
   }
   return result
@@ -667,23 +639,6 @@ async function loadBusyIntervals(
     }
   }
   return result
-}
-
-function buildFallbackWorkingWindows(rangeStart: Date, rangeEnd: Date): AvailabilityWindow[] {
-  const windows: AvailabilityWindow[] = []
-  const cursor = new Date(Date.UTC(rangeStart.getUTCFullYear(), rangeStart.getUTCMonth(), rangeStart.getUTCDate()))
-  while (cursor < rangeEnd) {
-    const day = cursor.getUTCDay()
-    if (day >= 1 && day <= 5) {
-      const start = new Date(cursor)
-      start.setUTCHours(9, 0, 0, 0)
-      const end = new Date(cursor)
-      end.setUTCHours(17, 0, 0, 0)
-      if (end > rangeStart && start < rangeEnd) windows.push({ start, end })
-    }
-    cursor.setUTCDate(cursor.getUTCDate() + 1)
-  }
-  return windows
 }
 
 function buildInteractionPayload(params: {

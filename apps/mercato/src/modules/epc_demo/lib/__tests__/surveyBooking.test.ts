@@ -3,8 +3,10 @@ import {
   encodeSurveySlotId,
   intervalsOverlap,
   isSurveyStageName,
+  resolveSurveyorAvailabilityWindows,
   resolveSurveyDurationMinutes,
 } from '../surveyBooking'
+import { DefaultPlannerAvailabilityService } from '@open-mercato/core/modules/planner/services/plannerAvailabilityService'
 
 const surveyorA = {
   userId: '11111111-1111-4111-8111-111111111111',
@@ -23,6 +25,32 @@ const surveyorB = {
 }
 
 describe('EPC survey booking', () => {
+  it('returns no windows without explicit planner availability', () => {
+    expect(resolveSurveyorAvailabilityWindows({
+      service: new DefaultPlannerAvailabilityService(),
+      rules: [],
+      range: {
+        start: new Date('2026-07-13T00:00:00.000Z'),
+        end: new Date('2026-07-14T00:00:00.000Z'),
+      },
+    })).toEqual([])
+  })
+
+  it('returns no windows when the planner service is unavailable', () => {
+    expect(resolveSurveyorAvailabilityWindows({
+      service: undefined,
+      rules: [{
+        id: 'rule',
+        kind: 'availability',
+        rrule: 'DTSTART:20260713T090000Z\nDURATION:PT2H\nRRULE:FREQ=DAILY;COUNT=1',
+      }],
+      range: {
+        start: new Date('2026-07-13T00:00:00.000Z'),
+        end: new Date('2026-07-14T00:00:00.000Z'),
+      },
+    })).toEqual([])
+  })
+
   it('matches Survey stage names without accepting unrelated stages', () => {
     expect(isSurveyStageName('Survey')).toBe(true)
     expect(isSurveyStageName(' survey ')).toBe(true)
