@@ -290,7 +290,7 @@ export async function bookSurveySlot(params: {
 
   const scope = { tenantId: params.auth.tenantId, organizationId: params.auth.orgId }
   const em = (params.container.resolve('em') as EntityManager).fork()
-  const owner = await loadSurveyorByUserId(em, scope, slot.surveyorUserId)
+  const owner = await loadSurveyorByUserId(params.container, em, scope, slot.surveyorUserId)
   if (!owner) {
     throw new SurveyBookingError(409, 'This surveyor is no longer available.')
   }
@@ -495,11 +495,12 @@ async function loadSurveyors(
 }
 
 async function loadSurveyorByUserId(
+  container: AwilixContainer,
   em: EntityManager,
   scope: SurveyBookingScope,
   userId: string,
 ): Promise<SurveyorCandidate | null> {
-  const surveyors = await loadSurveyors(em, scope, resolveSurveyorRoleName())
+  const surveyors = await loadSurveyors(container, em, scope, resolveSurveyorRoleName())
   return surveyors.find((surveyor) => surveyor.userId === userId) ?? null
 }
 

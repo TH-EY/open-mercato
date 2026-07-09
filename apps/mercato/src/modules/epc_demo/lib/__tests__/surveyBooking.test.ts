@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   buildSurveyBookingSlots,
   encodeSurveySlotId,
@@ -25,6 +27,13 @@ const surveyorB = {
 }
 
 describe('EPC survey booking', () => {
+  it('threads the request container through POST owner revalidation', () => {
+    const source = readFileSync(join(__dirname, '..', 'surveyBooking.ts'), 'utf8')
+
+    expect(source).toMatch(/loadSurveyorByUserId\(\s*params\.container,\s*em,\s*scope,\s*slot\.surveyorUserId\s*\)/)
+    expect(source).toMatch(/async function loadSurveyorByUserId\(\s*container: AwilixContainer,\s*em: EntityManager,\s*scope: SurveyBookingScope,\s*userId: string,\s*\): Promise<SurveyorCandidate \| null> \{\s*const surveyors = await loadSurveyors\(container, em, scope, resolveSurveyorRoleName\(\)\)/s)
+  })
+
   it('returns no windows without explicit planner availability', () => {
     expect(resolveSurveyorAvailabilityWindows({
       service: new DefaultPlannerAvailabilityService(),
