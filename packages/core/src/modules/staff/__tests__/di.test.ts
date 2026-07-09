@@ -10,7 +10,7 @@ jest.mock('@open-mercato/shared/lib/encryption/find', () => ({ findWithDecryptio
 
 const findMock = jest.mocked(findWithDecryption)
 
-describe('staff/di — availabilityAccessResolver registration', () => {
+describe('staff/di registrations', () => {
   it('registers the availabilityAccessResolver token with a resolveAvailabilityWriteAccess method', () => {
     const container = createContainer({ injectionMode: InjectionMode.PROXY })
     register(container)
@@ -37,6 +37,21 @@ describe('staff/di — availabilityAccessResolver registration', () => {
     })
 
     expect(findMock.mock.calls[0]?.[0]).toBe(em)
+  })
+
+  it('scopes staffMemberDirectory instances to the current container scope', () => {
+    const container = createContainer({ injectionMode: InjectionMode.CLASSIC })
+    container.register({ em: asValue({} as EntityManager) })
+    register(container)
+    const firstScope = container.createScope()
+    const secondScope = container.createScope()
+
+    const firstDirectory = firstScope.resolve<StaffMemberDirectory>('staffMemberDirectory')
+    const sameScopeDirectory = firstScope.resolve<StaffMemberDirectory>('staffMemberDirectory')
+    const secondDirectory = secondScope.resolve<StaffMemberDirectory>('staffMemberDirectory')
+
+    expect(sameScopeDirectory).toBe(firstDirectory)
+    expect(secondDirectory).not.toBe(firstDirectory)
   })
 
   it('returns undefined (not throws) when consumer uses allowUnregistered on a container without staff', () => {
