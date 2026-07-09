@@ -1,8 +1,9 @@
 # Customer Survey Booking Hardening
 
 **Scope:** EPC application module with an additive reusable staff DI contract
-**Status:** Approved design; implementation pending
+**Status:** Implementation complete; deployment/headed verification pending
 **Decision date:** 2026-07-09
+**Implementation evidence date:** 2026-07-10
 
 ## TLDR
 
@@ -19,9 +20,10 @@ member scheduling references by user ID. The customer booking implementation
 will combine that contract with auth-role membership and the existing planner
 availability service.
 
-The change includes self-contained integration coverage for authorization,
-role filtering, availability, conflict handling, create and reschedule
-persistence, and backoffice visibility.
+The implementation includes self-contained API integration coverage for
+authorization, role filtering, availability, conflict handling, and create and
+reschedule persistence. Deployment and headed verification, including
+backoffice event visibility, remain pending.
 
 ## 1. Problem Statement
 
@@ -98,7 +100,7 @@ second active survey interaction for the same deal.
 
 ### 5.1 Public staff directory contract
 
-The staff module will register an additive DI service named
+The staff module registers an additive scoped DI service named
 `staffMemberDirectory`. Its public interface is:
 
 ```ts
@@ -118,9 +120,17 @@ export interface StaffMemberDirectory {
 }
 ```
 
-The staff implementation owns all reads of `StaffTeamMember`. It applies
-tenant, organization, active, and soft-delete constraints. Consumers resolve
-the service with `allowUnregistered: true`, because staff is optional.
+`DefaultStaffMemberDirectory` owns all reads of `StaffTeamMember`, maps the
+results to the public reference type, and applies requested-user, tenant,
+organization, active, and soft-delete constraints. Its Awilix factory accepts
+an explicit `em: EntityManager` argument so it works with the application's
+`InjectionMode.CLASSIC` container. A regression test resolves the real CLASSIC
+container and verifies that the registered entity manager reaches the query.
+
+Consumers resolve the service with `allowUnregistered: true`, because staff is
+optional. The EPC implementation passes role-derived user IDs plus the current
+tenant and organization scope, then joins the returned references to decrypted
+auth users in memory.
 
 The service is a backward-compatibility surface. It must be documented in
 `packages/core/src/modules/staff/AGENTS.md` and cannot later be renamed or
@@ -138,9 +148,10 @@ The EPC booking service performs these steps:
    for those user IDs.
 4. Load planner availability rules for each staff member ID and optional rule
    set ID.
-5. Use `plannerAvailabilityService` to merge explicit availability and
-   unavailability into windows. Empty rules or an unavailable planner service
-   result in an empty window list.
+5. Soft-resolve `plannerAvailabilityService` and use it to merge explicit
+   availability and unavailability into windows. Empty rules or an unavailable
+   planner service result in an empty window list; there is no weekday or
+   business-hours fallback.
 6. Load busy `CustomerInteraction` intervals and subtract them when building
    slots.
 7. Return anonymized slot IDs. Surveyor IDs and private calendar details are
@@ -182,8 +193,8 @@ The route keeps these status contracts:
 - Customers with eligible deals but no explicit Surveyor availability see the
   existing no-slots empty state and cannot submit.
 - The booked state survives reload and keeps the existing responsive layout.
-- The backoffice deal activity or calendar surface shows the created event
-  with its Surveyor owner and scheduled duration.
+- Backoffice deal activity or calendar visibility of the created event remains
+  a deployment/headed-verification obligation.
 
 ## 8. Persistence Test Matrix
 
@@ -322,7 +333,33 @@ separately for upstream contribution after EPC delivery and verification.
 - Unit, integration, typecheck, lint, generate, and relevant build checks pass.
 - Deployed headed QA evidence is attached and verified.
 
-## 15. Changelog
+## 15. Implementation Status and Compliance
+
+Implementation is complete in the codebase. The following focused evidence is
+recorded from Tasks 1-3; it is not a substitute for deployment, headed browser
+QA, or durable QA evidence.
+
+| Criterion | Implementation and automated evidence | Status |
+| --- | --- | --- |
+| Stable staff scheduling boundary | `packages/core/src/modules/staff/services/staffMemberDirectory.ts` defines `StaffMemberDirectory` and `StaffMemberSchedulingRef`; `packages/core/src/modules/staff/di.ts` registers scoped `staffMemberDirectory`. The directory query is tenant- and organization-scoped, active-only, non-deleted, ordered deterministically, and returns no rows for no requested users. | Passing focused tests |
+| CLASSIC DI compatibility | `packages/core/src/modules/staff/__tests__/di.test.ts` creates a real CLASSIC container, resolves the directory through the public key, verifies the registered entity manager reaches the query boundary, and covers scoped lifetime. | Passing focused tests |
+| Role-based and fail-closed slot eligibility | `apps/mercato/src/modules/epc_demo/lib/surveyBooking.ts` derives candidates from the configured tenant-scoped Surveyor auth role, softly resolves `staffMemberDirectory`, and requires an active scheduling reference. `resolveSurveyorAvailabilityWindows` returns no windows when rules are empty or the planner service is unavailable; synthetic working-hour fallback and direct staff-table access are removed. | Passing focused tests and forbidden-pattern check |
+| Booking and conflict behavior | The booking path recomputes candidate and busy state with the request container before writing. It creates or updates one planned survey `CustomerInteraction`; a stale or occupied slot returns `409`, and rescheduling keeps the interaction ID while updating schedule, owner, author, accepted participant, and `updatedAt`. | Passing focused API integration |
+| Authorization, isolation, and persistence | `apps/mercato/src/modules/epc_demo/__integration__/TC-EPC-SURVEY-001.spec.ts` is self-contained and cleans up its fixtures. It covers anonymous `401`, missing feature `403`, unlinked and cross-customer isolation, non-Survey deals, non-Surveyor and no-availability exclusion, owner- and participant-only busy intervals, create read-back, same-slot `409`, cross-Surveyor reschedule read-back, and portal reload. Canonical read-back asserts scalar fields, participants, links, guest permissions, tenant, organization, and `updatedAt`. | Passing focused API integration |
+| Focused local verification | `corepack yarn workspace @open-mercato/core test --runInBand src/modules/staff/__tests__/di.test.ts src/modules/staff/services/__tests__/staffMemberDirectory.test.ts` passed (2 suites, 4 tests); `corepack yarn workspace @open-mercato/core typecheck` passed; `corepack yarn workspace @open-mercato/app test --runInBand src/modules/epc_demo/lib/__tests__/surveyBooking.test.ts` passed (1 suite, 9 tests); `corepack yarn workspace @open-mercato/app typecheck` passed; `corepack yarn exec prettier --check apps/mercato/src/modules/epc_demo/__integration__/TC-EPC-SURVEY-001.spec.ts apps/mercato/src/modules/epc_demo/__integration__/meta.ts` passed. | Passing recorded evidence |
+| Managed integration verification | The managed ephemeral stack initialized successfully, including migrations, generation, package builds, and production application build. `BASE_URL=<managed-ephemeral-base-url> corepack yarn exec playwright test --config .ai/qa/tests/playwright.config.ts apps/mercato/src/modules/epc_demo/__integration__/TC-EPC-SURVEY-001.spec.ts --workers=1 --retries=0` passed: 1 test passed. | Passing recorded evidence |
+| Deployment, headed portal QA, and backoffice visibility | Verify desktop and mobile booking/rescheduling, no-slots behavior, reload persistence, and backoffice deal activity or calendar visibility after deployment. Inspect, inventory, attach, and read back durable evidence before closing this specification. | Pending |
+
+The forbidden-pattern check
+`rg -n "staff_team_members|staff_team_roles|buildFallbackWorkingWindows" apps/mercato/src/modules/epc_demo`
+returned no matches (exit code 1 is expected for an empty `rg` result).
+
+## 16. Changelog
 
 - 2026-07-09: Approved strict-availability design, public staff directory
   boundary, persistence matrix, and verification plan.
+- 2026-07-10: Recorded implementation completion: the additive
+  `staffMemberDirectory` DI boundary, CLASSIC-container regression coverage,
+  strict fail-closed Surveyor availability, role-based lookup, and focused
+  booking create/reschedule/conflict integration evidence. Deployment and
+  headed verification remain pending.
