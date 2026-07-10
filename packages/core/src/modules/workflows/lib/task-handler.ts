@@ -10,7 +10,7 @@
  * Functional API (no classes) following Open Mercato conventions.
  */
 
-import { EntityManager } from '@mikro-orm/core'
+import { EntityManager, LockMode } from '@mikro-orm/core'
 import type { AwilixContainer } from 'awilix'
 import {
   UserTask,
@@ -32,7 +32,17 @@ export interface CompleteUserTaskOptions {
   taskId: string
   formData: Record<string, any>
   userId: string
+  tenantId: string
+  organizationId: string
   comments?: string
+}
+
+export interface ClaimUserTaskOptions {
+  taskId: string
+  userId: string
+  userRoles: string[]
+  tenantId: string
+  organizationId: string
 }
 
 export class UserTaskError extends Error {
@@ -70,20 +80,47 @@ export async function completeUserTask(
   container: AwilixContainer,
   options: CompleteUserTaskOptions
 ): Promise<void> {
-  const { taskId, formData, userId, comments } = options
+  await em.transactional(async (tx) => {
+    await completeUserTaskInTransaction(tx, container, options)
+  })
+}
 
-  // Fetch task
+async function completeUserTaskInTransaction(
+  em: EntityManager,
+  container: AwilixContainer,
+  options: CompleteUserTaskOptions
+): Promise<void> {
+  const { taskId, formData, userId, tenantId, organizationId, comments } = options
+
+  // Lock the scoped row before checking its lifecycle state. This makes the
+  // completion and the workflow resume a single-winner operation.
   const task = await em.findOne(UserTask, {
     id: taskId,
-    status: { $in: ['PENDING', 'IN_PROGRESS'] },
-  })
+    tenantId,
+    organizationId,
+  }, { lockMode: LockMode.PESSIMISTIC_WRITE })
 
   if (!task) {
     throw new UserTaskError(
-      'Task not found or already completed',
+      'Task not found',
       'TASK_NOT_FOUND',
       { taskId }
     )
+  }
+
+  if (task.status !== 'PENDING' && task.status !== 'IN_PROGRESS') {
+    throw new UserTaskError(
+      'Task is no longer available for completion',
+      'TASK_STATE_CONFLICT',
+      { taskId, status: task.status }
+    )
+  }
+
+  const isDirectAssignee = task.assignedTo === userId
+  const isClaimedOwner = !task.assignedTo && task.status === 'IN_PROGRESS' && task.claimedBy === userId
+  if (!isDirectAssignee && !isClaimedOwner) {
+    // Deliberately hide whether an otherwise scoped task exists.
+    throw new UserTaskError('Task not found', 'TASK_NOT_FOUND', { taskId })
   }
 
   // Validate form data against schema (simple validation for MVP)
@@ -112,7 +149,11 @@ export async function completeUserTask(
   await em.flush()
 
   // Fetch workflow instance
-  const instance = await em.findOne(WorkflowInstance, task.workflowInstanceId)
+  const instance = await em.findOne(WorkflowInstance, {
+    id: task.workflowInstanceId,
+    tenantId,
+    organizationId,
+  })
   if (!instance) {
     throw new UserTaskError(
       'Workflow instance not found',
@@ -179,6 +220,8 @@ export async function completeUserTask(
   const stepInstance = await em.findOne(StepInstance, {
     id: task.stepInstanceId,
     status: 'ACTIVE',
+    tenantId,
+    organizationId,
   })
 
   if (stepInstance) {
@@ -191,6 +234,8 @@ export async function completeUserTask(
   // Load workflow definition to find transitions
   const definition = await em.findOne(WorkflowDefinition, {
     id: instance.definitionId,
+    tenantId,
+    organizationId,
   })
 
   if (!definition) {
@@ -267,64 +312,68 @@ export async function completeUserTask(
  */
 export async function claimUserTask(
   em: EntityManager,
-  taskId: string,
-  userId: string
+  options: ClaimUserTaskOptions
 ): Promise<void> {
-  const task = await em.findOne(UserTask, {
-    id: taskId,
-    status: 'PENDING',
-  })
+  await em.transactional(async (tx) => {
+    const { taskId, userId, userRoles, tenantId, organizationId } = options
+    const task = await tx.findOne(UserTask, {
+      id: taskId,
+      tenantId,
+      organizationId,
+    }, { lockMode: LockMode.PESSIMISTIC_WRITE })
 
-  if (!task) {
-    throw new UserTaskError(
-      'Task not found or already claimed',
-      'TASK_NOT_FOUND',
-      { taskId }
-    )
-  }
+    if (!task) {
+      throw new UserTaskError('Task not found', 'TASK_NOT_FOUND', { taskId })
+    }
 
-  if (task.assignedTo) {
-    throw new UserTaskError(
-      'Task is already assigned to a specific user',
-      'TASK_ALREADY_ASSIGNED',
-      { taskId, assignedTo: task.assignedTo }
-    )
-  }
+    const candidateRoles = task.assignedToRoles ?? []
+    const isCandidate = !task.assignedTo && candidateRoles.some((role) => userRoles.includes(role))
+    if (!isCandidate) {
+      throw new UserTaskError('Task not found', 'TASK_NOT_FOUND', { taskId })
+    }
 
-  if (!task.assignedToRoles || task.assignedToRoles.length === 0) {
-    throw new UserTaskError(
-      'Task is not assigned to any roles',
-      'TASK_NOT_ROLE_ASSIGNED',
-      { taskId }
-    )
-  }
+    if (task.claimedBy && task.claimedBy !== userId) {
+      // Once a shared task is claimed, hide it from former role candidates.
+      throw new UserTaskError('Task not found', 'TASK_NOT_FOUND', { taskId })
+    }
 
-  // Update task
-  const now = new Date()
-  task.claimedBy = userId
-  task.claimedAt = now
-  task.status = 'IN_PROGRESS'
-  task.updatedAt = now
+    if (task.status !== 'PENDING' || task.claimedBy) {
+      throw new UserTaskError(
+        'Task is no longer available to claim',
+        'TASK_STATE_CONFLICT',
+        { taskId, status: task.status, claimedBy: task.claimedBy }
+      )
+    }
 
-  await em.flush()
+    const now = new Date()
+    task.claimedBy = userId
+    task.claimedAt = now
+    task.status = 'IN_PROGRESS'
+    task.updatedAt = now
 
-  // Log event
-  const instance = await em.findOne(WorkflowInstance, task.workflowInstanceId)
-  if (instance) {
-    await logWorkflowEvent(em, {
-      workflowInstanceId: instance.id,
-      stepInstanceId: task.stepInstanceId,
-      eventType: 'USER_TASK_STARTED',
-      eventData: {
-        taskId: task.id,
-        taskName: task.taskName,
-        claimedBy: userId,
-      },
-      userId,
-      tenantId: instance.tenantId,
-      organizationId: instance.organizationId,
+    await tx.flush()
+
+    const instance = await tx.findOne(WorkflowInstance, {
+      id: task.workflowInstanceId,
+      tenantId,
+      organizationId,
     })
-  }
+    if (instance) {
+      await logWorkflowEvent(tx, {
+        workflowInstanceId: instance.id,
+        stepInstanceId: task.stepInstanceId,
+        eventType: 'USER_TASK_STARTED',
+        eventData: {
+          taskId: task.id,
+          taskName: task.taskName,
+          claimedBy: userId,
+        },
+        userId,
+        tenantId: instance.tenantId,
+        organizationId: instance.organizationId,
+      })
+    }
+  })
 }
 
 // ============================================================================

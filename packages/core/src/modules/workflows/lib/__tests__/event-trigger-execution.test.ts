@@ -79,6 +79,15 @@ describe('event-trigger-service — workflow execution dispatch', () => {
     }
 
     expect(executeWorkflowMock).toHaveBeenCalledWith(em, container, 'instance-1')
+    expect(startWorkflowMock).toHaveBeenCalledWith(
+      em,
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          entityId: 'deal-1',
+          entityType: 'customers.deal',
+        }),
+      }),
+    )
     expect(finished).toBe(false)
 
     resolveExecution()

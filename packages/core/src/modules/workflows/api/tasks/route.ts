@@ -11,7 +11,8 @@ import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { getAuthFromRequest } from '@open-mercato/shared/lib/auth/server'
 import { resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/directory/utils/organizationScope'
 import { resolveOrganizationScopeFilter } from '@open-mercato/core/modules/directory/utils/organizationScopeFilter'
-import { UserTask } from '../../data/entities'
+import { UserTask, WorkflowInstance } from '../../data/entities'
+import { buildPersonalTaskFilter, canActorClaimTask, canActorCompleteTask } from '../../lib/task-access'
 import {
   workflowsTag,
   userTaskListQuerySchema,
@@ -63,10 +64,38 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status')
     const assignedTo = searchParams.get('assignedTo')
     const workflowInstanceId = searchParams.get('workflowInstanceId')
+    const entityType = searchParams.get('entityType')
+    const entityId = searchParams.get('entityId')
     const overdue = searchParams.get('overdue') === 'true'
     const myTasks = searchParams.get('myTasks') === 'true'
+    const order = searchParams.get('order')
     const limit = parseInt(searchParams.get('limit') || '50')
     const offset = parseInt(searchParams.get('offset') || '0')
+
+    if (!!entityType !== !!entityId) {
+      return NextResponse.json(
+        { error: 'entityType and entityId must be provided together' },
+        { status: 400 }
+      )
+    }
+
+    if (!myTasks) {
+      const rbacService = container.resolve('rbacService') as {
+        userHasAllFeatures: (
+          userId: string,
+          features: string[],
+          scope: { tenantId: string | null; organizationId: string | null }
+        ) => Promise<boolean>
+      }
+      const canManage = await rbacService.userHasAllFeatures(
+        auth.sub,
+        ['workflows.manage'],
+        { tenantId, organizationId: scope?.selectedId ?? auth.orgId ?? null }
+      )
+      if (!canManage) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+    }
 
     // Build where clause with tenant scoping
     const where: any = {
@@ -92,31 +121,67 @@ export async function GET(request: NextRequest) {
       where.workflowInstanceId = workflowInstanceId
     }
 
+    let sourceInstances: WorkflowInstance[] | null = null
+    if (entityType && entityId) {
+      const scopedSourceInstances: WorkflowInstance[] = await em.find(WorkflowInstance, {
+        tenantId,
+        ...orgFilter.where,
+        $and: [
+          { metadata: { $contains: { entityType } } },
+          { metadata: { $contains: { entityId } } },
+        ],
+      })
+      sourceInstances = scopedSourceInstances
+      where.workflowInstanceId = { $in: scopedSourceInstances.map((instance) => instance.id) }
+    }
+
     if (overdue) {
       where.dueDate = { $lt: new Date() }
       where.status = { $in: ['PENDING', 'IN_PROGRESS'] }
     }
 
     if (myTasks) {
-      // Show tasks assigned to current user or to their roles
-      where.$or = [
-        { assignedTo: auth.sub },
-        { assignedToRoles: { $overlap: auth.roles || [] } },
-      ]
+      Object.assign(where, buildPersonalTaskFilter({
+        userId: auth.sub,
+        roles: auth.roles || [],
+      }))
     }
 
-    const [tasks, total] = await em.findAndCount(
+    const [tasks, total]: [UserTask[], number] = await em.findAndCount(
       UserTask,
       where,
       {
-        orderBy: { createdAt: 'DESC' },
+        orderBy: { createdAt: order === 'oldest' ? 'ASC' : 'DESC' },
         limit,
         offset,
       }
     )
 
+    if (!sourceInstances) {
+      const instanceIds = [...new Set(tasks.map((task) => task.workflowInstanceId))]
+      sourceInstances = instanceIds.length > 0
+        ? await em.find(WorkflowInstance, {
+            id: { $in: instanceIds },
+            tenantId,
+            ...orgFilter.where,
+          })
+        : []
+    }
+    const resolvedSourceInstances = sourceInstances ?? []
+    const instancesById = new Map(resolvedSourceInstances.map((instance) => [instance.id, instance]))
+    const actor = { userId: auth.sub, roles: auth.roles || [] }
+
     return NextResponse.json({
-      data: tasks,
+      data: tasks.map((task) => {
+        const instance = instancesById.get(task.workflowInstanceId)
+        return {
+          ...task,
+          sourceEntityType: instance?.metadata?.entityType ?? null,
+          sourceEntityId: instance?.metadata?.entityId ?? null,
+          canClaim: canActorClaimTask(task, actor),
+          canComplete: canActorCompleteTask(task, actor),
+        }
+      }),
       pagination: {
         total,
         limit,

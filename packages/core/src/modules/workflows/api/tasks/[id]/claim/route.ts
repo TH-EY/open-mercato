@@ -10,7 +10,7 @@ import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { getAuthFromRequest } from '@open-mercato/shared/lib/auth/server'
 import { resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/directory/utils/organizationScope'
-import { claimUserTask } from '../../../../lib/task-handler'
+import { claimUserTask, UserTaskError } from '../../../../lib/task-handler'
 import {
   workflowsTag,
   userTaskClaimResponseSchema,
@@ -55,7 +55,13 @@ export async function POST(
     }
 
     // Call task handler to claim task
-    await claimUserTask(em, params.id, auth.sub)
+    await claimUserTask(em, {
+      taskId: params.id,
+      userId: auth.sub,
+      userRoles: auth.roles || [],
+      tenantId,
+      organizationId,
+    })
 
     // Fetch updated task
     const { UserTask } = await import('../../../../data/entities')
@@ -80,16 +86,16 @@ export async function POST(
     console.error('Error claiming user task:', error)
 
     // Handle specific error codes from task-handler
-    if (error instanceof Error) {
-      if (error.message.includes('not found')) {
+    if (error instanceof UserTaskError) {
+      if (error.code === 'TASK_NOT_FOUND') {
         return NextResponse.json(
-          { error: error.message },
+          { error: error.message, code: error.code },
           { status: 404 }
         )
       }
-      if (error.message.includes('already')) {
+      if (error.code === 'TASK_STATE_CONFLICT') {
         return NextResponse.json(
-          { error: error.message },
+          { error: error.message, code: error.code, details: error.details },
           { status: 409 }
         )
       }

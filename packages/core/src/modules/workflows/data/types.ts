@@ -51,6 +51,10 @@ export type UserTaskResponse = {
   completedBy: string | null
   completedAt: string | null
   comments: string | null
+  sourceEntityType?: string | null
+  sourceEntityId?: string | null
+  canClaim?: boolean
+  canComplete?: boolean
   tenantId: string
   organizationId: string
   createdAt: string

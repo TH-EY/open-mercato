@@ -11,6 +11,14 @@ export const setup: ModuleSetupConfig = {
 
   defaultRoleFeatures: {
     admin: ['workflows.*'],
+    employee: [
+      // Task pages still use this frozen compatibility feature. Keep it in
+      // default grants until page metadata can accept feature aliases.
+      'workflows.view_tasks',
+      'workflows.tasks.view',
+      'workflows.tasks.claim',
+      'workflows.tasks.complete',
+    ],
   },
 }
 

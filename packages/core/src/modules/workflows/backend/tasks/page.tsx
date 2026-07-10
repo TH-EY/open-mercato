@@ -14,6 +14,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import type { FilterDef, FilterValues } from '@open-mercato/ui/backend/FilterBar'
 import { useConfirmDialog } from '@open-mercato/ui/backend/confirm-dialog'
+import { useBackendChrome } from '@open-mercato/ui/backend/BackendChromeProvider'
+import { hasFeature } from '@open-mercato/shared/security/features'
+import { StatusBadge, type StatusBadgeVariant } from '@open-mercato/ui/primitives/status-badge'
+import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
 
 type UserTaskStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
 
@@ -40,6 +44,8 @@ type UserTask = {
   organizationId: string
   createdAt: string
   updatedAt: string
+  canClaim?: boolean
+  canComplete?: boolean
 }
 
 type TasksResponse = {
@@ -60,7 +66,10 @@ export default function UserTasksListPage() {
   const t = useT()
   const router = useRouter()
   const queryClient = useQueryClient()
+  const { payload: chromePayload } = useBackendChrome()
+  const canManageTasks = hasFeature(chromePayload?.grantedFeatures ?? [], 'workflows.manage')
   const { confirm: confirmDialog, ConfirmDialogElement } = useConfirmDialog()
+  const { runMutation } = useGuardedMutation({ contextId: 'workflows.tasks.list' })
   const [filterValues, setFilterValues] = React.useState<FilterValues>({
     myTasks: 'true', // Default to "My Tasks" view
   })
@@ -74,6 +83,7 @@ export default function UserTasksListPage() {
       params.set('offset', offset.toString())
 
       if (filterValues.status) params.set('status', filterValues.status as string)
+      if (filterValues.myTasks === 'true') params.set('myTasks', 'true')
       if (filterValues.overdue === 'true') params.set('overdue', 'true')
       if (filterValues.workflowInstanceId) params.set('workflowInstanceId', filterValues.workflowInstanceId as string)
 
@@ -97,23 +107,33 @@ export default function UserTasksListPage() {
   })
 
   const handleClaim = async (id: string, taskName: string) => {
-    const confirmed = await confirmDialog({
-      title: t('workflows.tasks.confirm.claim', { name: taskName }),
-      variant: 'default',
-    })
-    if (!confirmed) {
-      return
-    }
+    try {
+      const confirmed = await confirmDialog({
+        title: t('workflows.tasks.confirm.claim', { name: taskName }),
+        variant: 'default',
+      })
+      if (!confirmed) {
+        return
+      }
 
-    const result = await apiCall(`/api/workflows/tasks/${id}/claim`, {
-      method: 'POST',
-    })
+      const result = await runMutation({
+        context: { resourceKind: 'workflows.user_task', resourceId: id },
+        mutationPayload: { taskId: id, operation: 'claim' },
+        operation: () => apiCall(`/api/workflows/tasks/${id}/claim`, {
+          method: 'POST',
+        }),
+      })
 
-    if (result.ok) {
+      if (!result.ok) {
+        throw new Error(t('workflows.tasks.messages.claimFailed'))
+      }
       flash(t('workflows.tasks.messages.claimed'), 'success')
-      queryClient.invalidateQueries({ queryKey: ['workflow-tasks'] })
-    } else {
-      flash(t('workflows.tasks.messages.claimFailed'), 'error')
+      await queryClient.invalidateQueries({ queryKey: ['workflow-tasks'] })
+    } catch (claimError) {
+      flash(
+        claimError instanceof Error ? claimError.message : t('workflows.tasks.messages.claimFailed'),
+        'error',
+      )
     }
   }
 
@@ -131,18 +151,18 @@ export default function UserTasksListPage() {
     setPage(1)
   }, [])
 
-  const getStatusBadgeClass = (status: UserTaskStatus) => {
+  const getStatusVariant = (status: UserTaskStatus): StatusBadgeVariant => {
     switch (status) {
       case 'PENDING':
-        return 'bg-yellow-100 text-yellow-800'
+        return 'warning'
       case 'IN_PROGRESS':
-        return 'bg-blue-100 text-blue-800'
+        return 'info'
       case 'COMPLETED':
-        return 'bg-green-100 text-green-800'
+        return 'success'
       case 'CANCELLED':
-        return 'bg-muted text-foreground'
+        return 'neutral'
       default:
-        return 'bg-muted text-muted-foreground'
+        return 'neutral'
     }
   }
 
@@ -166,7 +186,7 @@ export default function UserTasksListPage() {
         { label: t('workflows.tasks.statuses.CANCELLED'), value: 'CANCELLED' },
       ],
     },
-    {
+    ...(canManageTasks ? [{
       id: 'myTasks',
       type: 'select',
       label: t('workflows.tasks.filters.view'),
@@ -174,7 +194,7 @@ export default function UserTasksListPage() {
         { label: t('workflows.tasks.filters.myTasks'), value: 'true' },
         { label: t('workflows.tasks.filters.allTasks'), value: '' },
       ],
-    },
+    } satisfies FilterDef] : []),
     {
       id: 'overdue',
       type: 'select',
@@ -218,9 +238,9 @@ export default function UserTasksListPage() {
       header: t('workflows.tasks.fields.status'),
       accessorKey: 'status',
       cell: ({ row }) => (
-        <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${getStatusBadgeClass(row.original.status)}`}>
+        <StatusBadge variant={getStatusVariant(row.original.status)} dot>
           {t(`workflows.tasks.statuses.${row.original.status}`)}
-        </span>
+        </StatusBadge>
       ),
     },
     {
@@ -287,12 +307,7 @@ export default function UserTasksListPage() {
         ]
 
         // Allow claiming if task is PENDING and assigned to roles (not specific user)
-        if (
-          row.original.status === 'PENDING' &&
-          !row.original.assignedTo &&
-          row.original.assignedToRoles &&
-          row.original.assignedToRoles.length > 0
-        ) {
+        if (row.original.canClaim) {
           items.push({
             id: 'claim',
             label: t('workflows.tasks.actions.claim'),
@@ -301,7 +316,7 @@ export default function UserTasksListPage() {
         }
 
         // Allow completing if task is in progress or pending
-        if (row.original.status === 'PENDING' || row.original.status === 'IN_PROGRESS') {
+        if (row.original.canComplete) {
           items.push({
             id: 'complete',
             label: t('workflows.tasks.actions.complete'),

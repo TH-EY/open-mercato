@@ -78,7 +78,7 @@ export const features = [
     id: 'workflows.tasks.view',
     title: 'View user tasks',
     module: moduleId,
-    dependsOn: ['workflows.view'],
+    dependsOn: ['workflows.view_tasks'],
   },
   {
     id: 'workflows.tasks.claim',

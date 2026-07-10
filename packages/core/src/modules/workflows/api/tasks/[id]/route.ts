@@ -12,7 +12,8 @@ import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { getAuthFromRequest } from '@open-mercato/shared/lib/auth/server'
 import { resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/directory/utils/organizationScope'
 import { resolveOrganizationScopeFilter } from '@open-mercato/core/modules/directory/utils/organizationScopeFilter'
-import { UserTask } from '../../../data/entities'
+import { UserTask, WorkflowInstance } from '../../../data/entities'
+import { canActorClaimTask, canActorCompleteTask, isTaskVisibleToActor } from '../../../lib/task-access'
 import {
   workflowsTag,
   userTaskDetailResponseSchema,
@@ -66,8 +67,38 @@ export async function GET(
       )
     }
 
+    const rbacService = container.resolve('rbacService') as {
+      userHasAllFeatures: (
+        userId: string,
+        features: string[],
+        scope: { tenantId: string | null; organizationId: string | null }
+      ) => Promise<boolean>
+    }
+    const canManage = await rbacService.userHasAllFeatures(
+      auth.sub,
+      ['workflows.manage'],
+      { tenantId, organizationId: scope?.selectedId ?? auth.orgId ?? null }
+    )
+
+    const actor = { userId: auth.sub, roles: auth.roles || [] }
+    if (!canManage && !isTaskVisibleToActor(task, actor)) {
+      return NextResponse.json({ error: 'Task not found' }, { status: 404 })
+    }
+
+    const instance = await em.findOne(WorkflowInstance, {
+      id: task.workflowInstanceId,
+      tenantId,
+      ...orgFilter.where,
+    })
+
     return NextResponse.json({
-      data: task,
+      data: {
+        ...task,
+        sourceEntityType: instance?.metadata?.entityType ?? null,
+        sourceEntityId: instance?.metadata?.entityId ?? null,
+        canClaim: canActorClaimTask(task, actor),
+        canComplete: canActorCompleteTask(task, actor),
+      },
     })
   } catch (error) {
     console.error('Error fetching user task:', error)

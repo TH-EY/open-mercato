@@ -6,6 +6,7 @@ import {
   type FeatureDescriptor,
 } from '@open-mercato/shared/security/aclDependencies'
 import { features as workflowsFeatures } from '../acl'
+import { setup } from '../setup'
 
 // All workflows dependencies are intra-module (spec §6.10), so the resolver
 // catalog is just the module's own feature set.
@@ -13,6 +14,15 @@ const workflowsCatalog: FeatureDescriptor[] = workflowsFeatures as FeatureDescri
 const workflowsFeatureIds = workflowsCatalog.map((feature) => feature.id)
 
 describe('workflows ACL dependency declarations', () => {
+  test('default employee grants satisfy both the legacy page guard and task APIs', () => {
+    expect(setup.defaultRoleFeatures?.employee).toEqual(expect.arrayContaining([
+      'workflows.view_tasks',
+      'workflows.tasks.view',
+      'workflows.tasks.claim',
+      'workflows.tasks.complete',
+    ]))
+  })
+
   test('every dependency resolves to a workflows feature (no unknown references)', () => {
     const diagnostics = resolveAclDependencyDiagnostics(workflowsFeatureIds, workflowsCatalog)
     const ownUnknown = diagnostics.unknownReferences.filter((entry) =>
@@ -49,7 +59,7 @@ describe('workflows ACL dependency declarations', () => {
     expect(dependsOnById.get('workflows.instances.cancel')).toEqual(['workflows.instances.view'])
     expect(dependsOnById.get('workflows.instances.retry')).toEqual(['workflows.instances.view'])
     expect(dependsOnById.get('workflows.instances.signal')).toEqual(['workflows.instances.view'])
-    expect(dependsOnById.get('workflows.tasks.view')).toEqual(['workflows.view'])
+    expect(dependsOnById.get('workflows.tasks.view')).toEqual(['workflows.view_tasks'])
     expect(dependsOnById.get('workflows.tasks.claim')).toEqual(['workflows.tasks.view'])
     expect(dependsOnById.get('workflows.tasks.complete')).toEqual(['workflows.tasks.view'])
     expect(dependsOnById.get('workflows.signals.send')).toEqual(['workflows.view'])

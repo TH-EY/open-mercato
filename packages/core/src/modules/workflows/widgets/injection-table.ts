@@ -5,6 +5,19 @@ import type { ModuleInjectionTable } from '@open-mercato/shared/modules/widgets/
  * Maps injection spot IDs to widget IDs for automatic widget injection
  */
 export const injectionTable: ModuleInjectionTable = {
+  'menu:sidebar:main': [
+    {
+      widgetId: 'workflows.injection.my-tasks-menu',
+      priority: 50,
+    },
+  ],
+  'detail:customers.deal:status-badges': [
+    {
+      widgetId: 'workflows.injection.deal-user-task',
+      kind: 'stack',
+      priority: 80,
+    },
+  ],
   // Inject the order approval widget into the sales order detail page
   'sales.document.detail.order:details': [
     {

@@ -108,6 +108,8 @@ export async function POST(
       taskId: params.id,
       formData,
       userId: auth.sub,
+      tenantId,
+      organizationId,
       comments,
     })
 
@@ -137,6 +139,12 @@ export async function POST(
         return NextResponse.json(
           { error: error.message, code: error.code, details: error.details },
           { status: 404 }
+        )
+      }
+      if (error.code === 'TASK_STATE_CONFLICT') {
+        return NextResponse.json(
+          { error: error.message, code: error.code, details: error.details },
+          { status: 409 }
         )
       }
     }

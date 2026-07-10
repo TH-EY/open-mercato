@@ -27,11 +27,20 @@ import { useIsMobile } from '@open-mercato/ui/hooks/useIsMobile'
 import type { UserTaskResponse, UserTaskStatus } from '../../../data/types'
 import { RecordNotFoundState, ErrorMessage } from '@open-mercato/ui/backend/detail'
 import { normalizeUserTaskFormSchema } from '../../../lib/user-task-form-schema'
+import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
+import { useBackendChrome } from '@open-mercato/ui/backend/BackendChromeProvider'
+import { hasFeature } from '@open-mercato/shared/security/features'
 
 export default function UserTaskDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter()
   const t = useT()
   const isMobile = useIsMobile()
+  const { runMutation } = useGuardedMutation({ contextId: `workflows.user_task:${params.id}` })
+  const { payload: chromePayload } = useBackendChrome()
+  const canViewWorkflowInstances = hasFeature(
+    chromePayload?.grantedFeatures ?? [],
+    'workflows.instances.view',
+  )
   const [formData, setFormData] = React.useState<Record<string, string | number | boolean>>({})
   const [comments, setComments] = React.useState('')
   const [submitting, setSubmitting] = React.useState(false)
@@ -40,7 +49,7 @@ export default function UserTaskDetailPage({ params }: { params: { id: string } 
   // `required`, so we enforce constraint validation in JS instead).
   const [invalidField, setInvalidField] = React.useState<string | null>(null)
 
-  const { data: task, isLoading, error } = useQuery({
+  const { data: task, isLoading, error, refetch } = useQuery({
     queryKey: ['workflow-task', params.id],
     queryFn: async () => {
       const result = await apiCall<{ data: UserTaskResponse }>(
@@ -66,6 +75,30 @@ export default function UserTaskDetailPage({ params }: { params: { id: string } 
     }))
     // Clear invalid state once the user touches the offending field.
     if (invalidField === fieldName) setInvalidField(null)
+  }
+
+  const handleClaim = async () => {
+    setSubmitting(true)
+    try {
+      const result = await runMutation({
+        context: { resourceKind: 'workflows.user_task', resourceId: params.id },
+        mutationPayload: { taskId: params.id, operation: 'claim' },
+        operation: () => apiCall(`/api/workflows/tasks/${params.id}/claim`, { method: 'POST' }),
+      })
+      if (!result.ok) {
+        const payload = result.result as { error?: string } | null
+        throw new Error(payload?.error ?? t('workflows.tasks.messages.claimFailed'))
+      }
+      flash(t('workflows.tasks.messages.claimed'), 'success')
+      await refetch()
+    } catch (claimError) {
+      flash(
+        claimError instanceof Error ? claimError.message : t('workflows.tasks.messages.claimFailed'),
+        'error',
+      )
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -100,14 +133,18 @@ export default function UserTaskDetailPage({ params }: { params: { id: string } 
     setSubmitting(true)
 
     try {
-      const result = await apiCall(`/api/workflows/tasks/${params.id}/complete`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          formData,
-          comments: comments || undefined,
+      const result = await runMutation({
+        context: { resourceKind: 'workflows.user_task', resourceId: params.id },
+        mutationPayload: { taskId: params.id, formData, comments },
+        operation: () => apiCall(`/api/workflows/tasks/${params.id}/complete`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            formData,
+            comments: comments || undefined,
+          }),
         }),
       })
 
@@ -394,7 +431,7 @@ export default function UserTaskDetailPage({ params }: { params: { id: string } 
     )
   }
 
-  const isCompletable = task.status === 'PENDING' || task.status === 'IN_PROGRESS'
+  const isCompletable = task.canComplete === true
   const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && isCompletable
   const normalizedFormSchema = normalizeUserTaskFormSchema(task.formSchema) ?? task.formSchema
 
@@ -408,6 +445,11 @@ export default function UserTaskDetailPage({ params }: { params: { id: string } 
               backHref="/backend/tasks"
               backLabel={t('workflows.tasks.backToList', 'Back to tasks')}
             />
+            {task.canClaim && (
+              <Button type="button" disabled={submitting} onClick={() => void handleClaim()}>
+                {t('workflows.tasks.actions.claim')}
+              </Button>
+            )}
             <MobileTaskForm
               task={task}
               formData={formData}
@@ -488,7 +530,18 @@ export default function UserTaskDetailPage({ params }: { params: { id: string } 
                   <span className="ml-2 text-foreground">{task.claimedBy}</span>
                 </div>
               )}
-              <div>
+              {task.sourceEntityType === 'customers.deal' && task.sourceEntityId && (
+                <div>
+                  <span className="text-muted-foreground">{t('workflows.tasks.detail.relatedDeal')}:</span>
+                  <Link
+                    href={`/backend/customers/deals/${task.sourceEntityId}`}
+                    className="ml-2 text-primary hover:underline"
+                  >
+                    {t('workflows.tasks.detail.openDeal')}
+                  </Link>
+                </div>
+              )}
+              {canViewWorkflowInstances && <div>
                 <span className="text-muted-foreground">{t('workflows.tasks.detail.workflowInstance')}:</span>
                 <Link
                   href={`/backend/instances/${task.workflowInstanceId}`}
@@ -496,11 +549,20 @@ export default function UserTaskDetailPage({ params }: { params: { id: string } 
                 >
                   {task.workflowInstanceId.slice(0, 8)}...
                 </Link>
-              </div>
+              </div>}
             </div>
           </div>
 
-          {!isCompletable && (
+          {task.canClaim ? (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-status-warning-border bg-status-warning-bg p-4">
+              <p className="text-sm text-status-warning-text">
+                {t('workflows.tasks.detail.claimBeforeComplete')}
+              </p>
+              <Button type="button" disabled={submitting} onClick={() => void handleClaim()}>
+                {t('workflows.tasks.actions.claim')}
+              </Button>
+            </div>
+          ) : !isCompletable && (
             <div className="bg-status-info-bg border border-status-info-border rounded-lg p-4">
               <p className="text-sm text-status-info-text">
                 {t('workflows.tasks.detail.cannotComplete')}

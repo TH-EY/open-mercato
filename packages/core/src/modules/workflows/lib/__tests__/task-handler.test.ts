@@ -1,4 +1,5 @@
-import { completeUserTask, UserTaskError } from '../task-handler'
+import { LockMode } from '@mikro-orm/core'
+import { claimUserTask, completeUserTask, UserTaskError } from '../task-handler'
 import {
   UserTask,
   WorkflowDefinition,
@@ -34,8 +35,8 @@ describe('task-handler', () => {
         ],
       },
       formData: null,
-      assignedTo: null,
-      assignedToRoles: ['Sales Representative'],
+      assignedTo: 'qa-user',
+      assignedToRoles: null,
       claimedBy: null,
       claimedAt: null,
       dueDate: null,
@@ -74,9 +75,7 @@ describe('task-handler', () => {
       organizationId,
     } as WorkflowDefinition
 
-    return {
-      instance,
-      em: {
+    const em: any = {
         findOne: jest.fn(async (entity: unknown) => {
           if (entity === UserTask) return task
           if (entity === WorkflowInstance) return instance
@@ -87,7 +86,12 @@ describe('task-handler', () => {
         create: jest.fn((_: unknown, payload: unknown) => payload),
         persist: jest.fn(function persist(this: any) { return this }),
         flush: jest.fn(),
-      },
+    }
+    em.transactional = jest.fn(async (callback: (tx: any) => Promise<unknown>) => callback(em))
+
+    return {
+      instance,
+      em,
     }
   }
 
@@ -100,6 +104,8 @@ describe('task-handler', () => {
         taskId,
         formData: {},
         userId: 'qa-user',
+        tenantId,
+        organizationId,
       })
     ).rejects.toMatchObject({
       name: 'UserTaskError',
@@ -119,6 +125,8 @@ describe('task-handler', () => {
       taskId,
       formData: { contact_summary: 'Reached the customer by phone.' },
       userId: 'qa-user',
+      tenantId,
+      organizationId,
       comments: 'Useful first call',
     })
 
@@ -127,5 +135,86 @@ describe('task-handler', () => {
     expect(task.comments).toBe('Useful first call')
     expect(instance.context).toEqual({ contact_summary: 'Reached the customer by phone.' })
     expect(em.flush).toHaveBeenCalled()
+    expect(em.findOne).toHaveBeenCalledWith(
+      UserTask,
+      { id: taskId, tenantId, organizationId },
+      { lockMode: LockMode.PESSIMISTIC_WRITE },
+    )
+  })
+
+  test('hides a directly assigned task from another user on completion', async () => {
+    const task = createPendingTask()
+    const { em } = createEntityManager(task)
+
+    await expect(
+      completeUserTask(em as any, {} as any, {
+        taskId,
+        formData: { contact_summary: 'Should not be accepted.' },
+        userId: 'another-user',
+        tenantId,
+        organizationId,
+      })
+    ).rejects.toMatchObject({ code: 'TASK_NOT_FOUND' })
+
+    expect(task.status).toBe('PENDING')
+  })
+
+  test('allows only a matching role candidate to claim a scoped task', async () => {
+    const task = createPendingTask()
+    task.assignedTo = null
+    task.assignedToRoles = ['Sales Representative']
+    const { em } = createEntityManager(task)
+
+    await claimUserTask(em as any, {
+      taskId,
+      userId: 'qa-user',
+      userRoles: ['Sales Representative'],
+      tenantId,
+      organizationId,
+    })
+
+    expect(task.status).toBe('IN_PROGRESS')
+    expect(task.claimedBy).toBe('qa-user')
+  })
+
+  test('rejects a role queue claim from an unrelated role', async () => {
+    const task = createPendingTask()
+    task.assignedTo = null
+    task.assignedToRoles = ['Sales Representative']
+    const { em } = createEntityManager(task)
+
+    await expect(
+      claimUserTask(em as any, {
+        taskId,
+        userId: 'qa-user',
+        userRoles: ['Support'],
+        tenantId,
+        organizationId,
+      })
+    ).rejects.toMatchObject({ code: 'TASK_NOT_FOUND' })
+
+    expect(task.status).toBe('PENDING')
+  })
+
+  test('hides a task from a role peer after another user claims it', async () => {
+    const task = createPendingTask()
+    task.assignedTo = null
+    task.assignedToRoles = ['Sales Representative']
+    task.status = 'IN_PROGRESS'
+    task.claimedBy = 'first-user'
+    const { em } = createEntityManager(task)
+
+    await expect(
+      claimUserTask(em as any, {
+        taskId,
+        userId: 'second-user',
+        userRoles: ['Sales Representative'],
+        tenantId,
+        organizationId,
+      })
+    ).rejects.toMatchObject({
+      code: 'TASK_NOT_FOUND',
+      details: { taskId },
+    })
   })
 })

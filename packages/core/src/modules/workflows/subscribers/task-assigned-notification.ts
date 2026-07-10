@@ -27,6 +27,23 @@ export default async function handle(payload: TaskAssignedPayload, ctx: Resolver
   if (!payload.assignedUserId) return
 
   try {
+    const rbacService = ctx.resolve<{
+      userHasAllFeatures: (
+        userId: string,
+        features: string[],
+        scope: { tenantId: string | null; organizationId: string | null }
+      ) => Promise<boolean>
+    }>('rbacService')
+    const canOpenTask = await rbacService.userHasAllFeatures(
+      payload.assignedUserId,
+      ['workflows.tasks.view'],
+      {
+        tenantId: payload.tenantId,
+        organizationId: payload.organizationId ?? null,
+      },
+    )
+    if (!canOpenTask) return
+
     const notificationService = resolveNotificationService(ctx)
     const typeDef = notificationTypes.find((type) => type.type === 'workflows.task.assigned')
     if (!typeDef) return
@@ -40,7 +57,7 @@ export default async function handle(payload: TaskAssignedPayload, ctx: Resolver
       },
       sourceEntityType: 'workflows:user_task',
       sourceEntityId: payload.taskId,
-      linkHref: `/backend/workflows/tasks/${payload.taskId}`,
+      linkHref: `/backend/tasks/${payload.taskId}`,
     })
 
     await notificationService.create(notificationInput, {

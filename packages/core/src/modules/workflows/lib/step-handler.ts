@@ -23,6 +23,7 @@ import {
 import { parseDuration } from './duration'
 import { logWorkflowEvent } from './event-logger'
 import { normalizeUserTaskFormSchema } from './user-task-form-schema'
+import { emitWorkflowsEvent } from '../events'
 
 // ============================================================================
 // Types and Interfaces
@@ -555,6 +556,10 @@ async function handleUserTaskStep(
     assignedToRoles = assignedTo
     assignedTo = null
   }
+  if (assignedTo) {
+    // Direct assignment and role candidacy are mutually exclusive.
+    assignedToRoles = null
+  }
 
   // Create user task
   const now = new Date()
@@ -604,6 +609,19 @@ async function handleUserTaskStep(
     instance.updatedAt = now
   }
   await em.flush()
+
+  if (userTask.assignedTo) {
+    await emitWorkflowsEvent('workflows.task.assigned', {
+      taskId: userTask.id,
+      taskName: userTask.taskName,
+      workflowInstanceId: instance.id,
+      workflowName: instance.workflowId,
+      assignedUserId: userTask.assignedTo,
+      dueDate: userTask.dueDate?.toISOString() ?? null,
+      tenantId: instance.tenantId,
+      organizationId: instance.organizationId,
+    })
+  }
 
   return {
     status: 'WAITING',

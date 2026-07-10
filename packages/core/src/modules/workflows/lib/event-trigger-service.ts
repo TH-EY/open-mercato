@@ -639,7 +639,10 @@ export async function processEventTriggers(
           initiatedBy: `trigger:${trigger.id}`,
           // Include entityId and entityType for widget discovery
           entityId: payloadId,
-          entityType: payloadEntityType || trigger.config?.entityType,
+          entityType:
+            payloadEntityType
+            || trigger.config?.entityType
+            || context.eventName.split('.').slice(0, 2).join('.'),
           labels: {
             trigger_id: trigger.id,
             trigger_name: trigger.name,

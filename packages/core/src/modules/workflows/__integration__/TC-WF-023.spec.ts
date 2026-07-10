@@ -24,9 +24,8 @@ import {
  * - `claimUserTask` only matches a PENDING task and requires it to be queued to a role
  *   (assignedToRoles non-empty, assignedTo null). The claimable fixture uses the array form
  *   of `assignedTo` which the step handler stores as a role queue.
- * - Re-claiming an already-claimed (IN_PROGRESS) task throws "Task not found or already
- *   claimed"; the route checks the 'not found' substring before 'already', so the response
- *   is 404 (NOT the 409 the issue assumed).
+ * - Re-claiming an already-claimed (IN_PROGRESS) task is a stale-state conflict and returns
+ *   409 after the scoped row is locked.
  */
 test.describe('TC-WF-023: user task claim and complete API flow (#2462)', () => {
   test('claims a role-queue task, completes it, and resumes the workflow', async ({ request }) => {
@@ -77,14 +76,14 @@ test.describe('TC-WF-023: user task claim and complete API flow (#2462)', () => 
       expect(detailBody?.data?.status).toBe('IN_PROGRESS')
       expect(detailBody?.data?.claimedBy).toBe(userId)
 
-      // Re-claiming an already-claimed task returns 404 (see real-behavior note above).
+      // Re-claiming an already-claimed task is a state conflict.
       const reclaimResponse = await apiRequest(
         request,
         'POST',
         `/api/workflows/tasks/${encodeURIComponent(taskId)}/claim`,
         { token },
       )
-      expect(reclaimResponse.status(), 'claiming an already-claimed task returns 404').toBe(404)
+      expect(reclaimResponse.status(), 'claiming an already-claimed task returns 409').toBe(409)
 
       // COMPLETE — submit valid form data; task moves to COMPLETED.
       const completeResponse = await apiRequest(
