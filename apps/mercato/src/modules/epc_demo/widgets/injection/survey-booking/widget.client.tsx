@@ -21,12 +21,14 @@ import {
   SelectValue,
 } from '@open-mercato/ui/primitives/select'
 import { Spinner } from '@open-mercato/ui/primitives/spinner'
-import { apiCallOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
+import { apiCallOrThrow, withScopedApiRequestHeaders } from '@open-mercato/ui/backend/utils/apiCall'
+import { buildOptimisticLockHeader } from '@open-mercato/ui/backend/utils/optimisticLock'
 import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
 import {
   EPC_SURVEY_BOOKING_ENDPOINT,
   type EpcSurveyBookingDeal,
   type EpcSurveyBookingPostResponse,
+  type EpcSurveyBookingRecord,
   type EpcSurveyBookingSlot,
   type EpcSurveyBookingState,
 } from '../../../lib/surveyBookingTypes'
@@ -36,6 +38,21 @@ export type EpcSurveyBookingWidgetContext = {
 }
 
 type WidgetProps = InjectionWidgetComponentProps<EpcSurveyBookingWidgetContext>
+
+export function submitSurveyBookingRequest(params: {
+  dealId: string
+  slotId: string
+  bookedSurvey: EpcSurveyBookingRecord | null
+}) {
+  const call = () => apiCallOrThrow<EpcSurveyBookingPostResponse>(EPC_SURVEY_BOOKING_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dealId: params.dealId, slotId: params.slotId }),
+  })
+  return params.bookedSurvey
+    ? withScopedApiRequestHeaders(buildOptimisticLockHeader(params.bookedSurvey.updatedAt), call)
+    : call()
+}
 
 export default function EpcSurveyBookingWidget(_props: WidgetProps) {
   const t = useT()
@@ -94,15 +111,11 @@ export default function EpcSurveyBookingWidget(_props: WidgetProps) {
     setError(null)
     try {
       const result = await runMutation({
-        operation: () =>
-          apiCallOrThrow<EpcSurveyBookingPostResponse>(EPC_SURVEY_BOOKING_ENDPOINT, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              dealId: selectedDeal.id,
-              slotId: selectedSlot.id,
-            }),
-          }),
+        operation: () => submitSurveyBookingRequest({
+          dealId: selectedDeal.id,
+          slotId: selectedSlot.id,
+          bookedSurvey: selectedDeal.bookedSurvey,
+        }),
         context: {
           operation: selectedDeal.bookedSurvey ? 'rescheduleSurvey' : 'bookSurvey',
           dealId: selectedDeal.id,

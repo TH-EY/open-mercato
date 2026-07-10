@@ -15,6 +15,7 @@
  */
 import type { CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
+import { attachInternalInteractionWriteTransactionHook } from '../commands/interactionWriteTransaction'
 
 const enforceWithGuardsMock = jest.fn<Promise<void>, [unknown, Record<string, unknown>]>()
 const recordGoneMock = jest.fn()
@@ -59,6 +60,10 @@ const completeInteractionCommand = commandRegistry.get('customers.interactions.c
 if (!completeInteractionCommand) {
   throw new Error('[internal] customers.interactions.complete not registered')
 }
+const updateInteractionCommand = commandRegistry.get('customers.interactions.update')
+if (!updateInteractionCommand) {
+  throw new Error('[internal] customers.interactions.update not registered')
+}
 
 const TENANT_ID = '11111111-1111-4111-8111-111111111111'
 const ORG_ID = '22222222-2222-4222-8222-222222222222'
@@ -83,11 +88,16 @@ function makeCtx() {
   // The interaction `complete` handler forks the EM and runs inside
   // `runInTransaction`; provide a fork that lacks begin/commit/rollback so the
   // op runs directly, with a no-op `flush`.
-  const fork = { flush: jest.fn(async () => undefined) }
+  const fork = {
+    begin: jest.fn(async () => undefined),
+    commit: jest.fn(async () => undefined),
+    rollback: jest.fn(async () => undefined),
+    flush: jest.fn(async () => undefined),
+  }
   const em = { fork: () => fork }
   const dataEngine = {}
   const eventBus = { emitEvent: jest.fn(async () => undefined) }
-  return {
+  const ctx = {
     container: {
       resolve: (key: string) => {
         if (key === 'em') return em
@@ -102,6 +112,7 @@ function makeCtx() {
     organizationIds: [ORG_ID],
     request: new Request('http://localhost/api/customers/todos', { method: 'PUT' }),
   } as unknown as CommandRuntimeContext
+  return { ctx, fork }
 }
 
 beforeEach(() => {
@@ -113,7 +124,7 @@ beforeEach(() => {
 describe('customers.interactions.complete — command guard', () => {
   test('awaits the async seam with the interaction updatedAt before mutating', async () => {
     loadedInteraction = makeInteraction()
-    const ctx = makeCtx()
+    const { ctx } = makeCtx()
 
     await completeInteractionCommand.execute({ id: INTERACTION_ID }, ctx)
 
@@ -129,7 +140,7 @@ describe('customers.interactions.complete — command guard', () => {
 
   test('a seam 409 aborts the write (status not flipped)', async () => {
     loadedInteraction = makeInteraction()
-    const ctx = makeCtx()
+    const { ctx } = makeCtx()
     enforceWithGuardsMock.mockRejectedValueOnce(new CrudHttpError(409, { code: 'record_modified', error: 'conflict' }))
 
     await expect(completeInteractionCommand.execute({ id: INTERACTION_ID }, ctx)).rejects.toMatchObject({ status: 409 })
@@ -138,10 +149,33 @@ describe('customers.interactions.complete — command guard', () => {
 
   test('a missing interaction surfaces gone-as-conflict before the 404 (seam not reached)', async () => {
     loadedInteraction = null
-    const ctx = makeCtx()
+    const { ctx } = makeCtx()
 
     await expect(completeInteractionCommand.execute({ id: INTERACTION_ID }, ctx)).rejects.toMatchObject({ status: 404 })
     expect(recordGoneMock).toHaveBeenCalledTimes(1)
     expect(enforceWithGuardsMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('customers.interactions.update — internal transaction hook', () => {
+  test('runs inside the command transaction and aborts before ordinary persistence', async () => {
+    loadedInteraction = { ...makeInteraction(), title: 'Original title' }
+    const { ctx, fork } = makeCtx()
+    const conflict = new CrudHttpError(409, { error: 'Survey slot unavailable' })
+    const hook = jest.fn(async ({ em }: { em: unknown }) => {
+      expect(em).toBe(fork)
+      throw conflict
+    })
+    attachInternalInteractionWriteTransactionHook(ctx, hook)
+
+    await expect(updateInteractionCommand.execute({ id: INTERACTION_ID, title: 'Changed title' }, ctx))
+      .rejects.toBe(conflict)
+
+    expect(hook).toHaveBeenCalledTimes(1)
+    expect(fork.begin).toHaveBeenCalledTimes(1)
+    expect(fork.rollback).toHaveBeenCalledTimes(1)
+    expect(fork.commit).not.toHaveBeenCalled()
+    expect(fork.flush).not.toHaveBeenCalled()
+    expect((loadedInteraction as { title: string }).title).toBe('Original title')
   })
 })

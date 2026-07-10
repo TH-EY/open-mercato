@@ -17,6 +17,7 @@ export type EpcSurveyBookingRecord = {
   endsAt: string
   durationMinutes: number
   status: string
+  updatedAt: string
 }
 
 export type EpcSurveyBookingSlot = {

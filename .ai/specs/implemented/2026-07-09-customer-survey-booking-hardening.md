@@ -6,6 +6,7 @@
 **Implementation evidence date:** 2026-07-10
 **Deployed commit:** `88d292837308ac61f0b482d1f61be9a779c106f9`
 **Deployment workflow:** EPC preview run `29056356651` completed successfully
+**Final hardening wave:** Implemented and verified locally; deployment and headed QA pending
 
 ## TLDR
 
@@ -26,6 +27,12 @@ The implementation includes self-contained API integration coverage for
 authorization, role filtering, availability, conflict handling, and create and
 reschedule persistence. Deployment, headed portal and backoffice verification,
 and Jira evidence read-back all completed successfully.
+
+The final hardening wave adds a real PostgreSQL serialization boundary for
+concurrent claims, standard optimistic locking for portal reschedules,
+canonical recurring/all-day calendar conflict expansion, and aggregation of
+every active scheduling reference for one Surveyor user. These additions are
+locally verified but are not part of the previously deployed commit above.
 
 ## 1. Problem Statement
 
@@ -161,7 +168,32 @@ The EPC booking service performs these steps:
 8. On POST, recompute state and busy intervals before writing, then create or
    update the interaction through the customer interaction command bus.
 
-### 5.3 Module boundaries
+### 5.3 Transaction-bound claim serialization
+
+The customer interaction create/update commands expose an explicitly internal,
+additive, local-execution-only pre-write hook. The hook is symbol-keyed,
+non-enumerable, and therefore absent from command input, audit payloads, redo
+data, and serialized command context. Ordinary command callers do not attach it
+and retain the previous behavior.
+
+EPC attaches the hook only for survey booking. Inside the interaction command's
+existing PostgreSQL transaction it:
+
+1. acquires sorted transaction advisory locks for the tenant/organization/deal;
+2. acquires sorted locks for every 15-minute bucket covered by the scoped
+   Surveyor time claim;
+3. recomputes customer ownership, Survey-stage eligibility, the canonical
+   active booking, Surveyor availability, and busy intervals using the same
+   transaction-bound entity manager; and
+4. allows the standard interaction command write only when every claim still
+   matches.
+
+All EPC raw SQL passes `EntityManager.getTransactionContext()` to the MikroORM
+connection. This is required for both advisory-lock lifetime and recheck
+visibility. Command-bus guards, optimistic locking, audit/undo, indexing,
+events, cache behavior, and tenant/organization enforcement remain unchanged.
+
+### 5.4 Module boundaries
 
 The EPC module may use public auth, customers, planner, and customer-accounts
 surfaces. It must not import staff entities or issue SQL against staff tables.
@@ -179,6 +211,11 @@ POST /api/epc/portal/survey-booking
 No request or response fields are removed. The observable change is that
 `slots` is empty and `reason` is `no_slots` when no eligible Surveyor has
 explicit planner availability.
+
+`bookedSurvey` and the POST `booking` response add `updatedAt`, sourced from the
+canonical `CustomerInteraction.updatedAt`. Portal reschedule POSTs send that
+version through the standard optimistic-lock request header. A stale version
+returns the unchanged structured `optimistic_lock_conflict` `409` body.
 
 The route keeps these status contracts:
 
@@ -203,6 +240,7 @@ The route keeps these status contracts:
 | Field or association | Create read-back | Reschedule read-back | Omitted/retained behavior |
 | --- | --- | --- | --- |
 | interaction ID | New stable ID returned and readable | Same ID retained | Required |
+| updated timestamp    | Returned from canonical interaction         | Fresh value required and returned    | Used for optimistic locking   |
 | tenant ID | Matches portal auth scope | Unchanged | Required |
 | organization ID | Matches portal auth scope | Unchanged | Required |
 | customer entity ID | Matches owned customer/person | Unchanged | Required |
@@ -232,6 +270,12 @@ API read-back. Mutation status alone is not accepted as persistence proof.
 - Busy interactions remove overlapping slots and preserve exact boundaries.
 - Slot IDs remain opaque and stable.
 - Duplicate customer-facing times are deduplicated.
+- Recurring bases before the requested range expand through the canonical
+  customer calendar recurrence helper and block in-range occurrences.
+- All-day owner and participant interactions use canonical calendar mapping.
+- Multiple active staff scheduling references aggregate into one Surveyor with
+  deterministic, deduplicated availability subjects.
+- Raw SQL receives the active MikroORM transaction context.
 
 Each behavior change follows red-green-refactor: the failing assertion is run
 before production code changes.
@@ -269,6 +313,14 @@ The test must prove:
 12. POST with another available slot updates the same interaction and passes
     the reschedule persistence matrix.
 13. Portal GET reloads into the booked state.
+14. Two concurrent claims for one deal produce exactly one success and one
+    structured `409`, with one active persisted survey interaction.
+15. Two deals concurrently claiming the same Surveyor interval produce exactly
+    one success and one structured `409`, with no overlap persisted.
+16. A stale reschedule header returns `optimistic_lock_conflict` and canonical
+    read-back proves the latest interaction remains unchanged.
+17. Recurring, all-day, and multiple-staff-reference fixtures affect slots
+    through their canonical server paths without duplicate offered times.
 
 ## 10. Manual Verification
 
@@ -325,7 +377,7 @@ separately for upstream contribution after EPC delivery and verification.
 | --- | --- | --- | --- |
 | Existing Surveyors have no availability and lose all slots | Medium | Fail closed by design; expose clear no-slots state and configure availability before release | Operational setup is required |
 | Cross-customer data exposure | High | Scope every lookup by auth tenant/org and customer ownership; integration-test Customer A/B | Low |
-| Double booking under concurrent requests | High | Recompute slot and busy state immediately before command write; test `409` | A database-level exclusion constraint is outside scope |
+| Double booking under concurrent requests                   | High     | Scoped sorted PostgreSQL transaction advisory locks plus same-transaction eligibility/busy/booking recheck; deterministic real-PostgreSQL concurrency tests | Low; direct non-EPC interaction writes do not participate in the EPC claim namespace |
 | Staff module absent | Medium | Soft-resolve the public directory and return no slots | Booking unavailable until staff is enabled |
 | Public DI contract later changes | Medium | Document as stable BC surface | Maintainers must follow deprecation policy |
 
@@ -357,6 +409,7 @@ checks and the final delivery evidence.
 | Focused local verification | Task 5 passed `corepack yarn generate`; staff DI tests (2 suites, 5 tests); survey booking tests (1 suite, 9 tests); core, app, and root `corepack yarn typecheck` (23/23 tasks); `corepack yarn lint` (exit 0; 16 inherited warnings); `corepack yarn build:packages` (23/23 tasks); and `corepack yarn build:app` (1/1 task). The scoped Prettier check also passed. | Passed |
 | Managed integration verification | The managed ephemeral stack initialized successfully, including migrations, generation, package builds, and production application build. `BASE_URL=<managed-ephemeral-base-url> corepack yarn exec playwright test --config .ai/qa/tests/playwright.config.ts apps/mercato/src/modules/epc_demo/__integration__/TC-EPC-SURVEY-001.spec.ts --workers=1 --retries=0` passed: 1 test passed with fixture cleanup. | Passed |
 | Deployment, headed portal QA, and backoffice visibility | `fork/EPC@88d292837308ac61f0b482d1f61be9a779c106f9` deployed through EPC workflow run `29056356651`, completed successfully. Headed agent-browser QA passed explicit availability, no-slots, create, reload persistence, reschedule, 390px mobile layout, stale-slot `409`, deal activity, and global calendar. The final interaction `2ce041a1-6675-4845-9098-bbc0397dc2b8` is planned for `2026-07-10T12:00:00Z`, 60 minutes, with the Surveyor as owner, author, and sole participant, linked to the Survey deal. | Passed; Jira THOM-64 Done |
+| Final hardening wave                                    | Internal interaction transaction hook, scoped deal/time advisory locks, same-transaction rechecks, standard reschedule optimistic locking, canonical recurrence/all-day busy expansion, and all-ref Surveyor aggregation. Focused unit/route/widget tests and the self-contained real-PostgreSQL integration scenario pass.                                                                                                                                                                                                                         | Local verification passed; deployment/headed QA pending |
 
 The forbidden-pattern check
 `rg -n "staff_team_members|staff_team_roles|buildFallbackWorkingWindows" apps/mercato/src/modules/epc_demo`
@@ -396,3 +449,8 @@ in the Done state.
   succeeded; headed portal and backoffice QA passed; ten accepted screenshots
   and the QA comment were read back from Jira THOM-64; the issue was marked
   Done.
+- 2026-07-10: Implemented the final local hardening wave: transaction-bound
+  advisory claim serialization, stale-reschedule optimistic locking,
+  canonical recurrence/all-day conflict expansion, and multi-reference
+  Surveyor availability aggregation. Deployment and headed QA remain the next
+  delivery gate.

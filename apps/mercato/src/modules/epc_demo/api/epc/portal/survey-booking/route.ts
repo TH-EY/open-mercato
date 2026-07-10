@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { runRouteMutationGuards } from '@open-mercato/shared/lib/crud/route-mutation-guard'
+import { isCrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { requireCustomerAuth, requireCustomerFeature } from '@open-mercato/core/modules/customer_accounts/lib/customerAuth'
 import type { CustomerRbacService } from '@open-mercato/core/modules/customer_accounts/services/customerRbacService'
 import '@open-mercato/core/modules/customers/commands'
@@ -100,12 +101,15 @@ export default GET
 
 export const openApi = epcSurveyBookingOpenApi
 
-function handleSurveyBookingError(error: unknown, logMessage: string): NextResponse {
+export function handleSurveyBookingError(error: unknown, logMessage: string): NextResponse {
   if (error instanceof Response) {
     return error as NextResponse
   }
   if (error instanceof SurveyBookingError) {
     return NextResponse.json({ ok: false, error: error.message }, { status: error.status })
+  }
+  if (isCrudHttpError(error)) {
+    return NextResponse.json(error.body, { status: error.status })
   }
   console.error(logMessage, error)
   return NextResponse.json({ ok: false, error: 'Survey booking is unavailable right now.' }, { status: 500 })

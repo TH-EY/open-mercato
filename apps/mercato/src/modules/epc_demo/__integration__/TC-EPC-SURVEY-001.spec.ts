@@ -40,6 +40,7 @@ import {
 const SURVEY_BOOKING_PATH = "/api/epc/portal/survey-booking";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const SURVEY_SOURCE = "epc_demo:survey_booking";
+const OPTIMISTIC_LOCK_HEADER = "x-om-ext-optimistic-lock-expected-updated-at";
 
 type BookingSlot = {
   id: string;
@@ -55,6 +56,7 @@ type BookingRecord = {
   endsAt: string;
   durationMinutes: number;
   status: string;
+  updatedAt: string;
 };
 
 type BookingState = {
@@ -100,8 +102,10 @@ type CleanupDelete = {
 
 type Fixtures = {
   interactionId: string | null;
+  concurrencyInteractionIds: string[];
   busyInteractionId: string | null;
   participantBusyInteractionId: string | null;
+  allDayBusyInteractionId: string | null;
   dealAId: string | null;
   dealBId: string | null;
   nonSurveyDealId: string | null;
@@ -112,12 +116,15 @@ type Fixtures = {
   bookingCustomerRoleId: string | null;
   noFeatureCustomerRoleId: string | null;
   primaryAvailabilityRuleId: string | null;
+  additionalAvailabilityRuleId: string | null;
   secondaryAvailabilityRuleId: string | null;
   nonSurveyorAvailabilityRuleId: string | null;
   primaryAvailabilityRuleSetId: string | null;
+  additionalAvailabilityRuleSetId: string | null;
   secondaryAvailabilityRuleSetId: string | null;
   nonSurveyorAvailabilityRuleSetId: string | null;
   primaryStaffMemberId: string | null;
+  additionalStaffMemberId: string | null;
   secondaryStaffMemberId: string | null;
   noAvailabilityStaffMemberId: string | null;
   nonSurveyorStaffMemberId: string | null;
@@ -136,8 +143,10 @@ type Fixtures = {
 function emptyFixtures(): Fixtures {
   return {
     interactionId: null,
+    concurrencyInteractionIds: [],
     busyInteractionId: null,
     participantBusyInteractionId: null,
+    allDayBusyInteractionId: null,
     dealAId: null,
     dealBId: null,
     nonSurveyDealId: null,
@@ -148,12 +157,15 @@ function emptyFixtures(): Fixtures {
     bookingCustomerRoleId: null,
     noFeatureCustomerRoleId: null,
     primaryAvailabilityRuleId: null,
+    additionalAvailabilityRuleId: null,
     secondaryAvailabilityRuleId: null,
     nonSurveyorAvailabilityRuleId: null,
     primaryAvailabilityRuleSetId: null,
+    additionalAvailabilityRuleSetId: null,
     secondaryAvailabilityRuleSetId: null,
     nonSurveyorAvailabilityRuleSetId: null,
     primaryStaffMemberId: null,
+    additionalStaffMemberId: null,
     secondaryStaffMemberId: null,
     noAvailabilityStaffMemberId: null,
     nonSurveyorStaffMemberId: null,
@@ -223,6 +235,10 @@ async function createBusyInteraction(
       name: string;
     };
     scheduledAt: string;
+    durationMinutes?: number;
+    allDay?: boolean;
+    recurrenceRule?: string;
+    recurrenceEnd?: string;
     suffix: string;
     label: string;
   },
@@ -239,7 +255,12 @@ async function createBusyInteraction(
         title: `EPC ${input.label} ${input.suffix}`,
         status: "planned",
         scheduledAt: input.scheduledAt,
-        durationMinutes: 60,
+        durationMinutes: input.durationMinutes ?? 60,
+        ...(input.allDay !== undefined ? { allDay: input.allDay } : {}),
+        ...(input.recurrenceRule
+          ? { recurrenceRule: input.recurrenceRule }
+          : {}),
+        ...(input.recurrenceEnd ? { recurrenceEnd: input.recurrenceEnd } : {}),
         ownerUserId: input.ownerUserId,
         ...(input.participant
           ? {
@@ -309,11 +330,32 @@ async function postBooking(
   request: APIRequestContext,
   session: PortalSession,
   data: { dealId: string; slotId: string },
+  expectedUpdatedAt?: string,
 ) {
   return request.post(SURVEY_BOOKING_PATH, {
-    headers: portalCookieHeaders(session, JSON_HEADERS),
+    headers: portalCookieHeaders(session, {
+      ...JSON_HEADERS,
+      ...(expectedUpdatedAt
+        ? { [OPTIMISTIC_LOCK_HEADER]: expectedUpdatedAt }
+        : {}),
+    }),
     data,
   });
+}
+
+async function deleteInteractionNow(
+  request: APIRequestContext,
+  token: string,
+  interactionId: string,
+  label: string,
+): Promise<void> {
+  const response = await apiRequest(
+    request,
+    "DELETE",
+    `/api/customers/interactions?id=${encodeURIComponent(interactionId)}`,
+    { token },
+  );
+  expect(response.status(), `${label} should delete cleanly`).toBeLessThan(300);
 }
 
 async function listDealInteractions(
@@ -759,6 +801,33 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
         },
       );
 
+      const additionalWindow = futureUtcWindow(3, 8, 120);
+      const additionalAvailabilityRuleSetId =
+        await createAvailabilityRuleSetFixture(request, adminToken, {
+          name: `EPC Surveyor Additional Schedule ${suffix}`,
+          timezone: "UTC",
+        });
+      fixtures.additionalAvailabilityRuleSetId =
+        additionalAvailabilityRuleSetId;
+      fixtures.additionalStaffMemberId = await createStaffMember(
+        request,
+        adminToken,
+        {
+          displayName: `${surveyorName} Additional Ref`,
+          userId: primarySurveyorUserId,
+          availabilityRuleSetId: additionalAvailabilityRuleSetId,
+        },
+      );
+      fixtures.additionalAvailabilityRuleId =
+        await createAvailabilityRuleFixture(request, adminToken, {
+          subjectType: "ruleset",
+          subjectId: additionalAvailabilityRuleSetId,
+          timezone: "UTC",
+          rrule: plannerRRule(additionalWindow),
+          kind: "availability",
+          note: `EPC primary Surveyor additional ref window ${suffix}`,
+        });
+
       const noAvailabilitySurveyorUserId = await createUserFixture(
         request,
         adminToken,
@@ -863,13 +932,30 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
         customerAState.slots.every((slot) => {
           const startsAt = new Date(slot.startsAt).getTime();
           const endsAt = new Date(slot.endsAt).getTime();
-          return (
+          const inPrimaryWindow =
             startsAt >= primaryWindow.start.getTime() &&
-            endsAt <= primaryWindow.end.getTime()
+            endsAt <= primaryWindow.end.getTime();
+          const inAdditionalWindow =
+            startsAt >= additionalWindow.start.getTime() &&
+            endsAt <= additionalWindow.end.getTime();
+          return inPrimaryWindow || inAdditionalWindow;
+        }),
+        "every exposed slot should stay inside availability from either active staff reference",
+      ).toBe(true);
+      expect(
+        customerAState.slots.some((slot) => {
+          const startsAt = new Date(slot.startsAt).getTime();
+          const endsAt = new Date(slot.endsAt).getTime();
+          return (
+            startsAt >= additionalWindow.start.getTime() &&
+            endsAt <= additionalWindow.end.getTime()
           );
         }),
-        "every exposed slot should stay inside the explicit primary Surveyor window",
+        "the same Surveyor should receive availability from the additional staff reference",
       ).toBe(true);
+      expect(
+        new Set(customerAState.slots.map((slot) => slot.startsAt)).size,
+      ).toBe(customerAState.slots.length);
       expect(
         customerAState.slots.some((slot) => {
           const startsAt = new Date(slot.startsAt).getTime();
@@ -882,15 +968,19 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
       ).toBe(false);
 
       const busySlot = customerAState.slots[0];
+      const recurringBase = new Date(busySlot.startsAt);
+      recurringBase.setUTCDate(recurringBase.getUTCDate() - 7);
       fixtures.busyInteractionId = await createBusyInteraction(
         request,
         adminToken,
         {
           companyId: companyAId,
           ownerUserId: primarySurveyorUserId,
-          scheduledAt: busySlot.startsAt,
+          scheduledAt: recurringBase.toISOString(),
+          recurrenceRule: "FREQ=WEEKLY;COUNT=2",
+          recurrenceEnd: busySlot.startsAt,
           suffix,
-          label: "Surveyor Owner Busy Event",
+          label: "Surveyor Recurring Owner Busy Event",
         },
       );
 
@@ -903,7 +993,7 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
         stateAfterBusyEvent.slots.some(
           (slot) => slot.startsAt === busySlot.startsAt,
         ),
-        "an event with the Surveyor only as owner should remove its overlapping slot",
+        "a recurring event based before the booking range should remove its in-range Surveyor occurrence",
       ).toBe(false);
       expect(
         stateAfterBusyEvent.slots.length,
@@ -942,6 +1032,56 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
         stateAfterParticipantBusyEvent.slots.length,
         "the primary explicit window should retain a slot after both busy events",
       ).toBeGreaterThan(0);
+
+      fixtures.allDayBusyInteractionId = await createBusyInteraction(
+        request,
+        adminToken,
+        {
+          companyId: companyAId,
+          ownerUserId: primarySurveyorUserId,
+          scheduledAt: primaryWindow.start.toISOString(),
+          allDay: true,
+          suffix,
+          label: "Surveyor All-Day Busy Event",
+        },
+      );
+      const stateAfterAllDayBusyEvent = await getBookingState(
+        request,
+        customerASession,
+        "customer A survey state after Surveyor all-day event",
+      );
+      expect(
+        stateAfterAllDayBusyEvent.slots.some((slot) => {
+          const startsAt = new Date(slot.startsAt).getTime();
+          return (
+            startsAt >= primaryWindow.start.getTime() &&
+            startsAt < primaryWindow.end.getTime()
+          );
+        }),
+        "an all-day Surveyor event should remove every overlapping slot on that calendar day",
+      ).toBe(false);
+
+      await deleteInteractionNow(
+        request,
+        adminToken,
+        fixtures.allDayBusyInteractionId,
+        "all-day busy fixture",
+      );
+      fixtures.allDayBusyInteractionId = null;
+      await deleteInteractionNow(
+        request,
+        adminToken,
+        fixtures.participantBusyInteractionId,
+        "participant busy fixture",
+      );
+      fixtures.participantBusyInteractionId = null;
+      await deleteInteractionNow(
+        request,
+        adminToken,
+        fixtures.busyInteractionId,
+        "recurring busy fixture",
+      );
+      fixtures.busyInteractionId = null;
 
       const secondaryWindow = futureUtcWindow(4, 13, 180);
       const secondaryAvailabilityRuleSetId =
@@ -1007,7 +1147,10 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
           const inSecondaryWindow =
             startsAt >= secondaryWindow.start.getTime() &&
             endsAt <= secondaryWindow.end.getTime();
-          return inPrimaryWindow || inSecondaryWindow;
+          const inAdditionalWindow =
+            startsAt >= additionalWindow.start.getTime() &&
+            endsAt <= additionalWindow.end.getTime();
+          return inPrimaryWindow || inAdditionalWindow || inSecondaryWindow;
         }),
         "eligible Surveyor slots should stay inside their explicit disjoint windows",
       ).toBe(true);
@@ -1051,29 +1194,136 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
         "customer A cannot book customer B deal",
       ).toBe(404);
 
-      const createResponse = await postBooking(request, customerASession, {
+      const crossDealResponses = await Promise.all([
+        postBooking(request, customerASession, {
         dealId: dealAId,
         slotId: selectedSlot.id,
-      });
-      const createBody =
-        await readJsonSafe<BookingPostResponse>(createResponse);
+        }),
+        postBooking(request, customerBSession, {
+          dealId: dealBId,
+          slotId: selectedSlot.id,
+        }),
+      ]);
+      const crossDealBodies = await Promise.all(
+        crossDealResponses.map((response) =>
+          readJsonSafe<BookingPostResponse & { error?: string }>(response),
+        ),
+      );
+      fixtures.concurrencyInteractionIds.push(
+        ...crossDealBodies.flatMap((body) =>
+          typeof body?.booking?.id === "string" ? [body.booking.id] : [],
+        ),
+      );
       expect(
-        createResponse.status(),
-        "survey booking create should return 200",
-      ).toBe(200);
+        crossDealResponses.map((response) => response.status()).sort(),
+      ).toEqual([200, 409]);
+      const crossDealSuccess = crossDealResponses.find(
+        (response) => response.status() === 200,
+      );
+      const crossDealConflict = crossDealResponses.find(
+        (response) => response.status() === 409,
+      );
+      expect(crossDealSuccess).toBeTruthy();
+      expect(crossDealConflict).toBeTruthy();
+      const crossDealSuccessBody =
+        crossDealBodies[crossDealResponses.indexOf(crossDealSuccess!)];
+      const crossDealConflictBody =
+        crossDealBodies[crossDealResponses.indexOf(crossDealConflict!)];
+      expect(crossDealConflictBody).toMatchObject({ ok: false });
+      expect(typeof crossDealConflictBody?.error).toBe("string");
+      const temporaryInteractionId = expectId(
+        crossDealSuccessBody?.booking?.id,
+        "cross-deal concurrency winner should create one interaction",
+      );
+      const crossDealPersisted = [
+        ...(await listDealInteractions(request, adminToken, dealAId)),
+        ...(await listDealInteractions(request, adminToken, dealBId)),
+      ].filter(
+        (interaction) =>
+          interaction.source === SURVEY_SOURCE &&
+          interaction.status !== "canceled",
+      );
+      expect(
+        crossDealPersisted,
+        "different deals competing for one Surveyor time should persist exactly one claim",
+      ).toHaveLength(1);
+      await deleteInteractionNow(
+        request,
+        adminToken,
+        temporaryInteractionId,
+        "cross-deal concurrency winner",
+      );
+      fixtures.concurrencyInteractionIds =
+        fixtures.concurrencyInteractionIds.filter(
+          (id) => id !== temporaryInteractionId,
+        );
+
+      const stateAfterCrossDealClaim = await getBookingState(
+        request,
+        customerASession,
+        "customer A state after removing the cross-deal concurrency fixture",
+      );
+      const freshSelectedSlot = stateAfterCrossDealClaim.slots.find(
+        (slot) => slot.id === selectedSlot.id,
+      );
+      expect(freshSelectedSlot).toBeTruthy();
+      if (!freshSelectedSlot) {
+        throw new Error("The released Surveyor slot did not become available");
+      }
+
+      const sameDealResponses = await Promise.all([
+        postBooking(request, customerASession, {
+          dealId: dealAId,
+          slotId: freshSelectedSlot.id,
+        }),
+        postBooking(request, customerASession, {
+          dealId: dealAId,
+          slotId: freshSelectedSlot.id,
+        }),
+      ]);
+      const sameDealBodies = await Promise.all(
+        sameDealResponses.map((response) =>
+          readJsonSafe<BookingPostResponse & { error?: string }>(response),
+        ),
+      );
+      fixtures.concurrencyInteractionIds.push(
+        ...sameDealBodies.flatMap((body) =>
+          typeof body?.booking?.id === "string" ? [body.booking.id] : [],
+        ),
+      );
+      expect(
+        sameDealResponses.map((response) => response.status()).sort(),
+      ).toEqual([200, 409]);
+      const createResponse = sameDealResponses.find(
+        (response) => response.status() === 200,
+      );
+      const sameDealConflict = sameDealResponses.find(
+        (response) => response.status() === 409,
+      );
+      expect(createResponse).toBeTruthy();
+      expect(sameDealConflict).toBeTruthy();
+      const createBody =
+        sameDealBodies[sameDealResponses.indexOf(createResponse!)];
+      const sameDealConflictBody =
+        sameDealBodies[sameDealResponses.indexOf(sameDealConflict!)];
+      expect(sameDealConflictBody).toMatchObject({ ok: false });
+      expect(typeof sameDealConflictBody?.error).toBe("string");
       expect(createBody?.ok).toBe(true);
       const interactionId = expectId(
         createBody?.booking?.id,
         "survey create response should include booking id",
       );
       fixtures.interactionId = interactionId;
+      fixtures.concurrencyInteractionIds =
+        fixtures.concurrencyInteractionIds.filter((id) => id !== interactionId);
       expect(createBody?.booking).toEqual(
         expect.objectContaining({
           id: interactionId,
           dealId: dealAId,
-          scheduledAt: selectedSlot.startsAt,
+          scheduledAt: freshSelectedSlot.startsAt,
           durationMinutes: 60,
           status: "planned",
+          updatedAt: expect.any(String),
         }),
       );
 
@@ -1102,7 +1352,7 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
           companyId: companyAId,
           dealId: dealAId,
           dealTitle: dealATitle,
-          scheduledAt: selectedSlot.startsAt,
+          scheduledAt: freshSelectedSlot.startsAt,
           surveyorUserId: primarySurveyorUserId,
           surveyorName,
           customerDisplayName: customerA.displayName,
@@ -1114,7 +1364,7 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
 
       const conflictResponse = await postBooking(request, customerBSession, {
         dealId: dealBId,
-        slotId: selectedSlot.id,
+        slotId: freshSelectedSlot.id,
       });
       expect(
         conflictResponse.status(),
@@ -1143,12 +1393,12 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
         expect.objectContaining({
           id: interactionId,
           dealId: dealAId,
-          scheduledAt: selectedSlot.startsAt,
+          scheduledAt: freshSelectedSlot.startsAt,
         }),
       );
       expect(
         afterCreateState.slots.some(
-          (slot) => slot.startsAt === selectedSlot.startsAt,
+          (slot) => slot.startsAt === freshSelectedSlot.startsAt,
         ),
       ).toBe(false);
       const secondSlot = afterCreateState.slots.find((slot) => {
@@ -1166,10 +1416,96 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
       if (!secondSlot)
         throw new Error("No secondary Surveyor slot remained for rescheduling");
 
-      const rescheduleResponse = await postBooking(request, customerASession, {
-        dealId: dealAId,
-        slotId: secondSlot.id,
+      const concurrentTitle = `Survey booking concurrently reviewed ${suffix}`;
+      const concurrentUpdate = await request.put(
+        "/api/customers/interactions",
+        {
+          headers: {
+            Authorization: `Bearer ${adminToken}`,
+            ...JSON_HEADERS,
+            [OPTIMISTIC_LOCK_HEADER]: createdUpdatedAt,
+          },
+          data: { id: interactionId, title: concurrentTitle },
+        },
+      );
+      expect(
+        concurrentUpdate.status(),
+        "concurrent admin interaction update should advance updatedAt",
+      ).toBe(200);
+      const afterConcurrentUpdateInteractions = await listDealInteractions(
+        request,
+        adminToken,
+        dealAId,
+      );
+      const latestBeforeStale = afterConcurrentUpdateInteractions.find(
+        (interaction) => interaction.id === interactionId,
+      );
+      expect(latestBeforeStale).toBeTruthy();
+      expect(latestBeforeStale?.updatedAt).not.toBe(createdUpdatedAt);
+      expect(latestBeforeStale?.title).toBe(concurrentTitle);
+
+      const staleRescheduleResponse = await postBooking(
+        request,
+        customerASession,
+        { dealId: dealAId, slotId: secondSlot.id },
+        createdUpdatedAt,
+      );
+      const staleRescheduleBody = await readJsonSafe<{
+        error?: string;
+        code?: string;
+        currentUpdatedAt?: string;
+        expectedUpdatedAt?: string;
+      }>(staleRescheduleResponse);
+      expect(
+        staleRescheduleResponse.status(),
+        "stale survey reschedule should preserve the standard 409",
+      ).toBe(409);
+      expect(staleRescheduleBody).toMatchObject({
+        code: "optimistic_lock_conflict",
+        currentUpdatedAt: latestBeforeStale?.updatedAt,
+        expectedUpdatedAt: createdUpdatedAt,
       });
+
+      const afterStaleInteractions = await listDealInteractions(
+        request,
+        adminToken,
+        dealAId,
+      );
+      const unchangedAfterStale = afterStaleInteractions.find(
+        (interaction) => interaction.id === interactionId,
+      );
+      expect(unchangedAfterStale).toMatchObject({
+        id: interactionId,
+        title: concurrentTitle,
+        scheduledAt: freshSelectedSlot.startsAt,
+        updatedAt: latestBeforeStale?.updatedAt,
+      });
+
+      const stateAfterStale = await getBookingState(
+        request,
+        customerASession,
+        "customer A state after stale reschedule rejection",
+      );
+      const freshBookingVersion = stateAfterStale.deals.find(
+        (deal) => deal.id === dealAId,
+      )?.bookedSurvey?.updatedAt;
+      const freshSecondSlot = stateAfterStale.slots.find(
+        (slot) => slot.id === secondSlot.id,
+      );
+      expect(freshBookingVersion).toBe(latestBeforeStale?.updatedAt);
+      expect(freshSecondSlot).toBeTruthy();
+      if (!freshBookingVersion || !freshSecondSlot) {
+        throw new Error(
+          "Fresh booking version or reschedule slot was unavailable",
+        );
+      }
+
+      const rescheduleResponse = await postBooking(
+        request,
+        customerASession,
+        { dealId: dealAId, slotId: freshSecondSlot.id },
+        freshBookingVersion,
+      );
       const rescheduleBody =
         await readJsonSafe<BookingPostResponse>(rescheduleResponse);
       expect(
@@ -1177,7 +1513,10 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
         "survey booking reschedule should return 200",
       ).toBe(200);
       expect(rescheduleBody?.booking.id).toBe(interactionId);
-      expect(rescheduleBody?.booking.scheduledAt).toBe(secondSlot.startsAt);
+      expect(rescheduleBody?.booking.scheduledAt).toBe(
+        freshSecondSlot.startsAt,
+      );
+      expect(typeof rescheduleBody?.booking.updatedAt).toBe("string");
 
       const afterRescheduleInteractions = await listDealInteractions(
         request,
@@ -1212,7 +1551,7 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
           companyId: companyAId,
           dealId: dealAId,
           dealTitle: dealATitle,
-          scheduledAt: secondSlot.startsAt,
+          scheduledAt: freshSecondSlot.startsAt,
           surveyorUserId: secondarySurveyorUserId,
           surveyorName: secondarySurveyorName,
           customerDisplayName: customerA.displayName,
@@ -1238,7 +1577,7 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
         expect.objectContaining({
           id: interactionId,
           dealId: dealAId,
-          scheduledAt: secondSlot.startsAt,
+          scheduledAt: freshSecondSlot.startsAt,
           durationMinutes: 60,
           status: "planned",
         }),
@@ -1249,6 +1588,17 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
     } finally {
       const cleanupFailures: string[] = [];
 
+      for (const interactionId of fixtures.concurrencyInteractionIds) {
+        await cleanupQueryDelete(
+          request,
+          adminToken,
+          cleanupFailures,
+          "concurrency survey interaction",
+          "/api/customers/interactions",
+          interactionId,
+        );
+      }
+
       await cleanupQueryDelete(
         request,
         adminToken,
@@ -1256,6 +1606,14 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
         "survey booking interaction",
         "/api/customers/interactions",
         fixtures.interactionId,
+      );
+      await cleanupQueryDelete(
+        request,
+        adminToken,
+        cleanupFailures,
+        "all-day busy interaction",
+        "/api/customers/interactions",
+        fixtures.allDayBusyInteractionId,
       );
       await cleanupQueryDelete(
         request,
@@ -1363,6 +1721,14 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
         request,
         adminToken,
         cleanupFailures,
+        "additional Surveyor availability rule",
+        "/api/planner/availability",
+        fixtures.additionalAvailabilityRuleId,
+      );
+      await cleanupQueryDelete(
+        request,
+        adminToken,
+        cleanupFailures,
         "primary Surveyor availability rule",
         "/api/planner/availability",
         fixtures.primaryAvailabilityRuleId,
@@ -1382,6 +1748,14 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
         "secondary Surveyor availability rule set",
         "/api/planner/availability-rule-sets",
         fixtures.secondaryAvailabilityRuleSetId,
+      );
+      await cleanupQueryDelete(
+        request,
+        adminToken,
+        cleanupFailures,
+        "additional Surveyor availability rule set",
+        "/api/planner/availability-rule-sets",
+        fixtures.additionalAvailabilityRuleSetId,
       );
       await cleanupQueryDelete(
         request,
@@ -1415,6 +1789,14 @@ test.describe("TC-EPC-SURVEY-001: self-contained survey booking round trip", () 
         "secondary Surveyor staff member",
         "/api/staff/team-members",
         fixtures.secondaryStaffMemberId,
+      );
+      await cleanupQueryDelete(
+        request,
+        adminToken,
+        cleanupFailures,
+        "additional Surveyor staff member",
+        "/api/staff/team-members",
+        fixtures.additionalStaffMemberId,
       );
       await cleanupQueryDelete(
         request,

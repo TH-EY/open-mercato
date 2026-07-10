@@ -44,6 +44,7 @@ import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import type { CrudIndexerConfig, CrudEventsConfig } from '@open-mercato/shared/lib/crud/types'
 import { recomputeNextInteraction } from '../lib/interactionProjection'
 import { canChangeEmailVisibility } from '../lib/visibilityFilter'
+import { runInternalInteractionWriteTransactionHook } from './interactionWriteTransaction'
 
 const INTERACTION_ENTITY_ID = 'customers:customer_interaction'
 const interactionCrudIndexer: CrudIndexerConfig<CustomerInteraction> = {
@@ -374,6 +375,11 @@ const createInteractionCommand: CommandHandler<InteractionCreateInput, { interac
     const em = (ctx.container.resolve('em') as EntityManager).fork()
     const normalizedAuthor = normalizeAuthorUserId(parsed.authorUserId ?? null, ctx.auth)
     const { interaction, entityId, nextInteractionId } = await runInTransaction(em, async (trx) => {
+      await runInternalInteractionWriteTransactionHook(ctx, {
+        em: trx,
+        operation: 'create',
+        input: parsed,
+      })
       const entity = await requireTimelineParentEntity(trx, parsed.entityId, { tenantId: parsed.tenantId, organizationId: parsed.organizationId })
       ensureTenantScope(ctx, entity.tenantId)
       ensureOrganizationScope(ctx, entity.organizationId)
@@ -631,6 +637,11 @@ const updateInteractionCommand: CommandHandler<InteractionUpdateInput, { interac
     const { parsed, custom } = parseWithCustomFields(interactionUpdateSchema, rawInput)
     const em = (ctx.container.resolve('em') as EntityManager).fork()
     const { interaction, entityId, nextInteractionId } = await runInTransaction(em, async (trx) => {
+      await runInternalInteractionWriteTransactionHook(ctx, {
+        em: trx,
+        operation: 'update',
+        input: parsed,
+      })
       const interaction = await findOneWithDecryption(trx, CustomerInteraction, { id: parsed.id, deletedAt: null })
       if (!interaction) {
         enforceRecordGoneIsConflict({ resourceKind: 'customers.interaction', resourceId: parsed.id, request: ctx.request ?? null })

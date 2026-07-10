@@ -1,13 +1,16 @@
 import { z } from 'zod'
 import { createHmac } from 'node:crypto'
 import type { EntityManager } from '@mikro-orm/postgresql'
-import type { AwilixContainer } from 'awilix'
+import { asValue, type AwilixContainer } from 'awilix'
 import type { OpenApiMethodDoc, OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import type { CommandBus, CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import type { AuthContext } from '@open-mercato/shared/lib/auth/server'
 import { findWithDecryption, findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { CustomerDeal, CustomerInteraction, CustomerPipelineStage } from '@open-mercato/core/modules/customers/data/entities'
 import type { InteractionCreateInput, InteractionUpdateInput } from '@open-mercato/core/modules/customers/data/validators'
+import { attachInternalInteractionWriteTransactionHook } from '@open-mercato/core/modules/customers/commands/interactionWriteTransaction'
+import { mapInteractionToCalendarItem } from '@open-mercato/core/modules/customers/lib/calendar/mapItem'
+import { expandOccurrences } from '@open-mercato/core/modules/customers/lib/calendar/recurrence'
 import { User } from '@open-mercato/core/modules/auth/data/entities'
 import { PlannerAvailabilityRule } from '@open-mercato/core/modules/planner/data/entities'
 import type {
@@ -15,7 +18,10 @@ import type {
   AvailabilityWindow,
   PlannerAvailabilityService,
 } from '@open-mercato/core/modules/planner/services/plannerAvailabilityService'
-import type { StaffMemberDirectory } from '@open-mercato/core/modules/staff/services/staffMemberDirectory'
+import type {
+  StaffMemberDirectory,
+  StaffMemberSchedulingRef,
+} from '@open-mercato/core/modules/staff/services/staffMemberDirectory'
 import type { CustomerAuthContext } from '@open-mercato/core/modules/customer_accounts/lib/customerAuth'
 import {
   EPC_SURVEY_BOOKING_MARKER,
@@ -45,12 +51,11 @@ type DealOwnership = {
   priority: number
 }
 
-type SurveyorCandidate = {
+export type SurveyorCandidate = {
   userId: string
   displayName: string
   email: string | null
-  staffMemberId: string | null
-  availabilityRuleSetId: string | null
+  availabilitySubjectIds: string[]
 }
 
 type SurveyorCandidateLoader = (
@@ -60,7 +65,7 @@ type SurveyorCandidateLoader = (
   roleName: string,
 ) => Promise<SurveyorCandidate[]>
 
-type BusyInterval = {
+export type BusyInterval = {
   userId: string
   start: Date
   end: Date
@@ -78,11 +83,25 @@ type UserIdRow = {
   user_id: string
 }
 
-type BusyRow = {
+export type BusyRow = {
+  id: string
+  interaction_type: string
+  title: string | null
+  status: string
   owner_user_id: string | null
   participants: Array<{ userId?: string | null }> | null
   scheduled_at: Date | string | null
+  occurred_at: Date | string | null
   duration_minutes: number | string | null
+  all_day: boolean | null
+  location: string | null
+  recurrence_rule: string | null
+  recurrence_end: Date | string | null
+  appearance_icon: string | null
+  appearance_color: string | null
+  entity_id: string | null
+  deal_id: string | null
+  updated_at: Date | string | null
 }
 
 export function resolveSurveyorRoleName(env: NodeJS.ProcessEnv = process.env): string {
@@ -133,6 +152,61 @@ export function createSurveyorLookup(loadCandidates: SurveyorCandidateLoader) {
     const surveyors = await loadCandidates(params.container, params.em, params.scope, resolveSurveyorRoleName())
     return surveyors.find((surveyor) => surveyor.userId === params.userId) ?? null
   }
+}
+
+export function aggregateSurveyorCandidates(params: {
+  userIds: string[]
+  users: Array<{ id: string; name?: string | null; email?: string | null }>
+  schedulingRefs: StaffMemberSchedulingRef[]
+}): SurveyorCandidate[] {
+  const usersById = new Map(params.users.map((user) => [user.id, user]))
+  const refsByUserId = new Map<string, StaffMemberSchedulingRef[]>()
+  for (const ref of params.schedulingRefs) {
+    const refs = refsByUserId.get(ref.userId) ?? []
+    refs.push(ref)
+    refsByUserId.set(ref.userId, refs)
+  }
+
+  const candidates: SurveyorCandidate[] = []
+  for (const userId of params.userIds) {
+    const user = usersById.get(userId)
+    const refs = (refsByUserId.get(userId) ?? []).sort((a, b) =>
+      a.displayName.localeCompare(b.displayName) ||
+      a.staffMemberId.localeCompare(b.staffMemberId) ||
+      (a.availabilityRuleSetId ?? '').localeCompare(b.availabilityRuleSetId ?? ''),
+    )
+    if (!user || refs.length === 0) continue
+    const availabilitySubjectIds = Array.from(new Set(refs.flatMap((ref) => [
+      ref.staffMemberId,
+      ...(ref.availabilityRuleSetId ? [ref.availabilityRuleSetId] : []),
+    ])))
+    candidates.push({
+      userId,
+      displayName: user.name?.trim() || refs[0].displayName.trim() || 'Surveyor',
+      email: user.email ?? null,
+      availabilitySubjectIds,
+    })
+  }
+
+  return candidates.sort((a, b) => a.displayName.localeCompare(b.displayName) || a.userId.localeCompare(b.userId))
+}
+
+export function buildSurveyBookingAdvisoryLockKeys(params: {
+  scope: SurveyBookingScope
+  dealId: string
+  surveyorUserId: string
+  startsAt: Date
+  endsAt: Date
+}): string[] {
+  const scopeKey = `${params.scope.tenantId}:${params.scope.organizationId}`
+  const keys = [`epc-survey-booking:${scopeKey}:deal:${params.dealId}`]
+  const bucketMs = 15 * 60_000
+  let bucket = Math.floor(params.startsAt.getTime() / bucketMs) * bucketMs
+  while (bucket < params.endsAt.getTime()) {
+    keys.push(`epc-survey-booking:${scopeKey}:surveyor:${params.surveyorUserId}:bucket:${bucket}`)
+    bucket += bucketMs
+  }
+  return Array.from(new Set(keys)).sort()
 }
 
 export function buildSurveyBookingSlots(params: {
@@ -193,11 +267,12 @@ async function loadSurveyBookingStateInternal(params: {
   container: AwilixContainer
   auth: CustomerAuthContext
   now?: Date
+  em?: EntityManager
 }): Promise<InternalSurveyBookingState> {
   const now = params.now ?? new Date()
   const durationMinutes = resolveSurveyDurationMinutes()
   const scope = { tenantId: params.auth.tenantId, organizationId: params.auth.orgId }
-  const em = (params.container.resolve('em') as EntityManager).fork()
+  const em = params.em ?? (params.container.resolve('em') as EntityManager).fork()
 
   const ownership = await loadCustomerDealOwnership(em, scope, {
     personEntityId: params.auth.personEntityId ?? null,
@@ -314,18 +389,6 @@ export async function bookSurveySlot(params: {
     throw new SurveyBookingError(409, 'This surveyor is no longer available.')
   }
 
-  const stillBusy = await loadBusyIntervals(
-    em,
-    scope,
-    [slot.surveyorUserId],
-    new Date(slot.startsAt),
-    new Date(slot.endsAt),
-    initialState.durationMinutes,
-  )
-  if (stillBusy.some((interval) => intervalsOverlap(new Date(slot.startsAt), new Date(slot.endsAt), interval.start, interval.end))) {
-    throw new SurveyBookingError(409, 'This survey slot is no longer available.')
-  }
-
   const ownership = await loadCustomerDealOwnership(em, scope, {
     personEntityId: params.auth.personEntityId ?? null,
     customerEntityId: params.auth.customerEntityId ?? null,
@@ -347,6 +410,47 @@ export async function bookSurveySlot(params: {
     slot,
     owner,
     durationMinutes: initialState.durationMinutes,
+  })
+
+  attachInternalInteractionWriteTransactionHook(ctx, async ({ em: trx }) => {
+    await acquireSurveyBookingAdvisoryLocks(trx, buildSurveyBookingAdvisoryLockKeys({
+      scope,
+      dealId: deal.id,
+      surveyorUserId: slot.surveyorUserId,
+      startsAt: new Date(slot.startsAt),
+      endsAt: new Date(slot.endsAt),
+    }))
+
+    const transactionContainer = createTransactionScopedContainer(params.container, trx)
+    const currentState = await loadSurveyBookingStateInternal({
+      container: transactionContainer,
+      auth: params.auth,
+      em: trx,
+    })
+    const currentDeal = currentState.deals.find((entry) => entry.id === deal.id)
+    if (!currentDeal || (currentDeal.bookedSurvey?.id ?? null) !== existingBookingId) {
+      throw new SurveyBookingError(409, 'This survey booking has changed. Please refresh and try again.')
+    }
+    const currentSlot = currentState.slots.find((entry) =>
+      entry.id === slot.id &&
+      entry.surveyorUserId === slot.surveyorUserId &&
+      entry.startsAt === slot.startsAt &&
+      entry.endsAt === slot.endsAt,
+    )
+    if (!currentSlot) {
+      throw new SurveyBookingError(409, 'This survey slot is no longer available.')
+    }
+
+    const currentOwnership = await loadCustomerDealOwnership(trx, scope, {
+      personEntityId: params.auth.personEntityId ?? null,
+      customerEntityId: params.auth.customerEntityId ?? null,
+    })
+    const currentEntityId = currentOwnership
+      .filter((entry) => entry.dealId === deal.id)
+      .sort((a, b) => a.priority - b.priority)[0]?.entityId
+    if (currentEntityId !== entityId) {
+      throw new SurveyBookingError(409, 'Survey booking is no longer available for this deal.')
+    }
   })
 
   const interactionId = existingBookingId
@@ -482,7 +586,6 @@ async function loadSurveyors(
     tenantId: scope.tenantId,
     organizationId: scope.organizationId,
   })
-  const schedulingRefsByUserId = new Map(schedulingRefs.map((ref) => [ref.userId, ref]))
 
   const users = await findWithDecryption(
     em,
@@ -494,23 +597,7 @@ async function loadSurveyors(
     undefined,
     scope,
   )
-  const usersById = new Map(users.map((user) => [user.id, user]))
-
-  const candidates: SurveyorCandidate[] = []
-  for (const userId of userIds) {
-    const user = usersById.get(userId)
-    const schedulingRef = schedulingRefsByUserId.get(userId)
-    if (!user || !schedulingRef) continue
-    candidates.push({
-      userId,
-      displayName: user.name?.trim() || schedulingRef.displayName.trim() || 'Surveyor',
-      email: user.email ?? null,
-      staffMemberId: schedulingRef.staffMemberId,
-      availabilityRuleSetId: schedulingRef.availabilityRuleSetId,
-    })
-  }
-
-  return candidates.sort((a, b) => a.displayName.localeCompare(b.displayName) || a.userId.localeCompare(b.userId))
+  return aggregateSurveyorCandidates({ userIds, users, schedulingRefs })
 }
 
 const loadSurveyorByUserId = createSurveyorLookup(loadSurveyors)
@@ -552,9 +639,7 @@ async function loadAvailabilityWindows(
   rangeStart: Date,
   rangeEnd: Date,
 ): Promise<Map<string, AvailabilityWindow[]>> {
-  const subjectIds = Array.from(new Set(
-    surveyors.flatMap((surveyor) => [surveyor.staffMemberId, surveyor.availabilityRuleSetId]).filter((id): id is string => Boolean(id)),
-  ))
+  const subjectIds = Array.from(new Set(surveyors.flatMap((surveyor) => surveyor.availabilitySubjectIds)))
   const rules = subjectIds.length > 0
     ? await findWithDecryption(
         em,
@@ -581,10 +666,9 @@ async function loadAvailabilityWindows(
   })
   const result = new Map<string, AvailabilityWindow[]>()
   for (const surveyor of surveyors) {
-    const surveyorRules = [
-      ...(surveyor.availabilityRuleSetId ? rulesBySubject.get(surveyor.availabilityRuleSetId) ?? [] : []),
-      ...(surveyor.staffMemberId ? rulesBySubject.get(surveyor.staffMemberId) ?? [] : []),
-    ]
+    const surveyorRules = surveyor.availabilitySubjectIds.flatMap(
+      (subjectId) => rulesBySubject.get(subjectId) ?? [],
+    )
     const windows = resolveSurveyorAvailabilityWindows({
       service,
       rules: surveyorRules.map((rule) => ({
@@ -601,6 +685,83 @@ async function loadAvailabilityWindows(
   return result
 }
 
+export function mapBusyRowsToIntervals(params: {
+  rows: BusyRow[]
+  surveyorUserIds: string[]
+  rangeStart: Date
+  rangeEnd: Date
+  defaultDurationMinutes: number
+}): BusyInterval[] {
+  const surveyorIds = new Set(params.surveyorUserIds)
+  const intervals = new Map<string, BusyInterval>()
+
+  for (const row of params.rows) {
+    const scheduledAt = parseDate(row.scheduled_at)?.toISOString() ?? null
+    const occurredAt = parseDate(row.occurred_at)?.toISOString() ?? null
+    const updatedAt = parseDate(row.updated_at)?.toISOString() ?? null
+    const recurrenceEnd = parseDate(row.recurrence_end)?.toISOString() ?? null
+    const duration = Number(row.duration_minutes ?? params.defaultDurationMinutes)
+    const participants = (row.participants ?? []).flatMap((participant) =>
+      typeof participant?.userId === 'string'
+        ? [{ ...participant, userId: participant.userId }]
+        : [],
+    )
+    const item = mapInteractionToCalendarItem(
+      {
+        id: row.id,
+        interactionType: row.interaction_type,
+        title: row.title,
+        status: row.status,
+        scheduledAt,
+        occurredAt,
+        durationMinutes: Number.isFinite(duration) ? Math.max(1, duration) : params.defaultDurationMinutes,
+        allDay: row.all_day,
+        location: row.location,
+        participants,
+        recurrenceRule: row.recurrence_rule,
+        recurrenceEnd,
+        appearanceIcon: row.appearance_icon,
+        appearanceColor: row.appearance_color,
+        ownerUserId: row.owner_user_id,
+        entityId: row.entity_id,
+        dealId: row.deal_id,
+        updatedAt,
+      },
+      {},
+    )
+    if (!item) continue
+
+    const matchingUserIds = new Set<string>()
+    if (item.ownerUserId && surveyorIds.has(item.ownerUserId)) matchingUserIds.add(item.ownerUserId)
+    for (const participant of participants) {
+      if (surveyorIds.has(participant.userId)) matchingUserIds.add(participant.userId)
+    }
+    if (matchingUserIds.size === 0) continue
+
+    const occurrences = expandOccurrences(item, {
+      from: params.rangeStart,
+      to: params.rangeEnd,
+    })
+    for (const occurrence of occurrences) {
+      if (!intervalsOverlap(params.rangeStart, params.rangeEnd, occurrence.start, occurrence.end)) continue
+      for (const userId of matchingUserIds) {
+        const key = `${row.id}:${occurrence.start.toISOString()}:${userId}`
+        intervals.set(key, {
+          userId,
+          start: occurrence.start,
+          end: occurrence.end,
+        })
+      }
+    }
+  }
+
+  return Array.from(intervals.values()).sort((a, b) =>
+    a.start.getTime() - b.start.getTime()
+    || a.end.getTime() - b.end.getTime()
+    || a.userId.localeCompare(b.userId),
+  )
+}
+
 async function loadBusyIntervals(
   em: EntityManager,
   scope: SurveyBookingScope,
@@ -613,12 +774,30 @@ async function loadBusyIntervals(
   const participantChecks = surveyorUserIds.map(() => 'participants @> ?::jsonb').join(' or ')
   const rows = await executeRows<BusyRow>(
     em,
-    `select owner_user_id as "owner_user_id", participants, scheduled_at as "scheduled_at", duration_minutes as "duration_minutes"
+    `select id, interaction_type as "interaction_type", title, status,
+            owner_user_id as "owner_user_id", participants,
+            scheduled_at as "scheduled_at", occurred_at as "occurred_at",
+            duration_minutes as "duration_minutes", all_day as "all_day", location,
+            recurrence_rule as "recurrence_rule", recurrence_end as "recurrence_end",
+            appearance_icon as "appearance_icon", appearance_color as "appearance_color",
+            entity_id as "entity_id", deal_id as "deal_id", updated_at as "updated_at"
      from customer_interactions
      where tenant_id = ? and organization_id = ? and deleted_at is null and status <> 'canceled'
-       and scheduled_at is not null
-       and scheduled_at < ?
-       and (scheduled_at + (coalesce(duration_minutes, ?) * interval '1 minute')) > ?
+       and coalesce(occurred_at, scheduled_at) is not null
+       and coalesce(occurred_at, scheduled_at) < ?
+       and (
+         (
+           nullif(trim(recurrence_rule), '') is not null
+           and (recurrence_end is null or recurrence_end >= (?::timestamptz - interval '1 day'))
+         )
+         or (
+           nullif(trim(recurrence_rule), '') is null
+           and (
+             (all_day is true and coalesce(occurred_at, scheduled_at) >= (?::timestamptz - interval '1 day'))
+             or (coalesce(occurred_at, scheduled_at) + (coalesce(duration_minutes, ?) * interval '1 minute')) > ?
+           )
+         )
+       )
        and (
          owner_user_id in (${placeholders(surveyorUserIds.length)})
          ${participantChecks ? `or ${participantChecks}` : ''}
@@ -627,30 +806,33 @@ async function loadBusyIntervals(
       scope.tenantId,
       scope.organizationId,
       rangeEnd,
+      rangeStart,
+      rangeStart,
       defaultDurationMinutes,
       rangeStart,
       ...surveyorUserIds,
       ...surveyorUserIds.map((userId) => JSON.stringify([{ userId }])),
     ],
   )
+  return mapBusyRowsToIntervals({
+    rows,
+    surveyorUserIds,
+    rangeStart,
+    rangeEnd,
+    defaultDurationMinutes,
+  })
+}
 
-  const result: BusyInterval[] = []
-  for (const row of rows) {
-    const start = parseDate(row.scheduled_at)
-    if (!start) continue
-    const duration = Number(row.duration_minutes ?? defaultDurationMinutes)
-    const end = new Date(start.getTime() + Math.max(1, duration) * 60_000)
-    if (row.owner_user_id && surveyorUserIds.includes(row.owner_user_id)) {
-      result.push({ userId: row.owner_user_id, start, end })
-    }
-    for (const participant of row.participants ?? []) {
-      const participantUserId = typeof participant?.userId === 'string' ? participant.userId : null
-      if (participantUserId && surveyorUserIds.includes(participantUserId)) {
-        result.push({ userId: participantUserId, start, end })
-      }
-    }
+function createTransactionScopedContainer(container: AwilixContainer, em: EntityManager): AwilixContainer {
+  const scoped = container.createScope()
+  scoped.register({ em: asValue(em) })
+  return scoped
+}
+
+async function acquireSurveyBookingAdvisoryLocks(em: EntityManager, keys: string[]): Promise<void> {
+  for (const key of keys) {
+    await executeRows(em, 'select pg_advisory_xact_lock(hashtextextended(?, 0))', [key])
   }
-  return result
 }
 
 function buildInteractionPayload(params: {
@@ -761,6 +943,7 @@ function toBookingRecord(
     endsAt: endsAt.toISOString(),
     durationMinutes,
     status: interaction.status,
+    updatedAt: interaction.updatedAt.toISOString(),
   }
 }
 
@@ -810,8 +993,8 @@ function placeholders(count: number): string {
   return Array.from({ length: count }, () => '?').join(', ')
 }
 
-async function executeRows<T>(em: EntityManager, sql: string, params: unknown[]): Promise<T[]> {
-  const rows = await em.getConnection().execute(sql, params)
+export async function executeRows<T>(em: EntityManager, sql: string, params: unknown[]): Promise<T[]> {
+  const rows = await em.getConnection().execute(sql, params, 'all', em.getTransactionContext())
   return Array.isArray(rows) ? rows as T[] : []
 }
 
@@ -822,6 +1005,7 @@ const surveyBookingRecordSchema = z.object({
   endsAt: z.string().datetime(),
   durationMinutes: z.number().int(),
   status: z.string(),
+  updatedAt: z.string().datetime(),
 })
 
 const surveyBookingStateSchema = z.object({
