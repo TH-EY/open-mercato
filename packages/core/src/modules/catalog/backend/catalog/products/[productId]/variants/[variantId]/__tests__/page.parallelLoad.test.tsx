@@ -19,6 +19,7 @@ function createDeferred<T>(): Deferred<T> {
 const mockTranslate = (_key: string, fallback?: string) => fallback ?? _key
 
 let latestCrudFormProps: Record<string, unknown> | null = null
+let priceKindsPayload: { items: Array<Record<string, unknown>> }
 
 jest.mock('@open-mercato/ui/backend/CrudForm', () => ({
   CrudForm: (props: Record<string, unknown>) => {
@@ -68,6 +69,9 @@ describe('EditVariantPage — parallel form loaders (#3180)', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     latestCrudFormProps = null
+    priceKindsPayload = {
+      items: [{ id: 'pk-1', code: 'regular', title: 'Regular', display_mode: 'including-tax' }],
+    }
     attachments = createDeferred()
     prices = createDeferred()
     product = createDeferred()
@@ -96,9 +100,7 @@ describe('EditVariantPage — parallel form loaders (#3180)', () => {
     })
     readApiResultOrThrowMock.mockImplementation((url: string) => {
       if (url.includes('/api/catalog/price-kinds')) {
-        return Promise.resolve({
-          items: [{ id: 'pk-1', code: 'regular', title: 'Regular', display_mode: 'including-tax' }],
-        })
+        return Promise.resolve(priceKindsPayload)
       }
       return Promise.resolve({ items: [] })
     })
@@ -112,5 +114,27 @@ describe('EditVariantPage — parallel form loaders (#3180)', () => {
     await waitFor(() => expect(callsTo('/api/attachments')).toBe(1))
     expect(callsTo('/api/catalog/prices?variantId=')).toBe(1)
     expect(callsTo('/api/catalog/products?id=')).toBe(1)
+  })
+
+  it('loads the variant form when the organization has no price kinds', async () => {
+    priceKindsPayload = { items: [] }
+
+    render(<EditVariantPage params={{ productId: 'prod-1', variantId: 'v-1' }} />)
+
+    await waitFor(() => expect(callsTo('/api/catalog/variants?id=')).toBe(1))
+
+    attachments.resolve({ ok: true, result: { items: [] } })
+    prices.resolve({ ok: true, result: { items: [] } })
+    product.resolve({
+      ok: true,
+      result: { items: [{ id: 'prod-1', title: 'Product 1', metadata: {} }] },
+    })
+
+    await waitFor(() => {
+      expect(latestCrudFormProps).toMatchObject({
+        isLoading: false,
+        initialValues: expect.objectContaining({ id: 'v-1', name: 'Variant 1' }),
+      })
+    })
   })
 })
