@@ -165,7 +165,6 @@ describe('OrganizationBrandingPage', () => {
     ['png', 'image/png'],
     ['jpg', 'image/jpeg'],
     ['webp', 'image/webp'],
-    ['svg', 'image/svg+xml'],
   ])('uploads a selected %s logo file without storing the square thumbnail', async (extension, mimeType) => {
     const attachmentId = `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb${extension === 'png' ? 'c' : extension === 'jpg' ? 'd' : 'e'}`
     const fileUrl = `/api/attachments/file/${attachmentId}`

@@ -178,6 +178,14 @@ describe('/api/directory/organization-branding', () => {
     }))
 
     expect(response.status).toBe(200)
+    expect(validateMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutationPayload: {
+          logoUrl: 'https://example.com/logo.svg',
+          logoPreserveAspectRatio: true,
+        },
+      }),
+    )
     expect(commandBusExecute).toHaveBeenCalledWith(
       'directory.organizations.update',
       expect.objectContaining({

@@ -211,7 +211,12 @@ export async function PUT(req: Request) {
       operation: 'update',
       requestMethod: req.method,
       requestHeaders: req.headers,
-      mutationPayload: { logoUrl: parsed.data.logoUrl ?? null },
+      mutationPayload: {
+        logoUrl: parsed.data.logoUrl ?? null,
+        ...(parsed.data.logoPreserveAspectRatio !== undefined
+          ? { logoPreserveAspectRatio: parsed.data.logoPreserveAspectRatio }
+          : {}),
+      },
     })
     if (guardResult && !guardResult.ok) {
       return NextResponse.json(guardResult.body, { status: guardResult.status })
