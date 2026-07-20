@@ -1,8 +1,15 @@
 import { registerCommand } from '@open-mercato/shared/lib/commands'
 import type { CommandHandler } from '@open-mercato/shared/lib/commands'
-import { requireId, emitCrudSideEffects, emitCrudUndoSideEffects } from '@open-mercato/shared/lib/commands/helpers'
+import {
+  requireId,
+  parseWithCustomFields,
+  setCustomFieldsIfAny,
+  emitCrudSideEffects,
+  emitCrudUndoSideEffects,
+} from '@open-mercato/shared/lib/commands/helpers'
+import { buildCustomFieldResetMap, loadCustomFieldSnapshot } from '@open-mercato/shared/lib/commands/customFieldSnapshots'
 import { withAtomicFlush } from '@open-mercato/shared/lib/commands/flush'
-import type { EntityManager } from '@mikro-orm/postgresql'
+import type { EntityManager, FilterQuery } from '@mikro-orm/postgresql'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { resolveTranslations } from '@open-mercato/shared/lib/i18n/server'
 import type { CrudEventsConfig, CrudIndexerConfig } from '@open-mercato/shared/lib/crud/types'
@@ -22,7 +29,8 @@ import {
   type ServiceUpdateInput,
   type ServiceWorkRequirementInput,
 } from '../data/validators'
-import { ensureOrganizationScope, ensureTenantScope, extractUndoPayload, toNumericString } from './shared'
+import { commandActorScope, ensureOrganizationScope, ensureTenantScope, extractUndoPayload, toNumericString } from './shared'
+import { E } from '#generated/entities.ids.generated'
 
 type ServiceMediaSnapshot = {
   id: string
@@ -65,6 +73,7 @@ type ServiceSnapshot = {
   deletedAt: string | null
   media: ServiceMediaSnapshot[]
   workRequirements: ServiceWorkRequirementSnapshot[]
+  custom: Record<string, unknown> | null
 }
 
 type ServiceUndoPayload = {
@@ -85,19 +94,37 @@ const serviceCrudEvents: CrudEventsConfig<CatalogService> = {
 }
 
 const serviceCrudIndexer: CrudIndexerConfig<CatalogService> = {
-  entityType: 'catalog:service',
+  entityType: E.catalog.catalog_service,
   buildUpsertPayload: (ctx) => ({
-    entityType: 'catalog:service',
+    entityType: E.catalog.catalog_service,
     recordId: ctx.identifiers.id,
     tenantId: ctx.identifiers.tenantId,
     organizationId: ctx.identifiers.organizationId,
   }),
   buildDeletePayload: (ctx) => ({
-    entityType: 'catalog:service',
+    entityType: E.catalog.catalog_service,
     recordId: ctx.identifiers.id,
     tenantId: ctx.identifiers.tenantId,
     organizationId: ctx.identifiers.organizationId,
   }),
+}
+
+type ServiceLookupScope = {
+  organizationId: string | null
+  tenantId: string | null
+}
+
+function serviceWhere(
+  id: string,
+  scope: ServiceLookupScope,
+  extra: Record<string, unknown> = {},
+): FilterQuery<CatalogService> {
+  return {
+    id,
+    ...(scope.organizationId ? { organizationId: scope.organizationId } : {}),
+    ...(scope.tenantId ? { tenantId: scope.tenantId } : {}),
+    ...extra,
+  } as FilterQuery<CatalogService>
 }
 
 function trimNullable(value: string | null | undefined): string | null {
@@ -218,12 +245,30 @@ async function syncWorkRequirements(
   })
 }
 
-async function loadServiceSnapshot(em: EntityManager, id: string): Promise<ServiceSnapshot | null> {
-  const record = await em.findOne(CatalogService, { id }, { populate: ['category'] })
+async function loadServiceSnapshot(
+  em: EntityManager,
+  id: string,
+  actorScope: ServiceLookupScope,
+): Promise<ServiceSnapshot | null> {
+  const record = await em.findOne(CatalogService, serviceWhere(id, actorScope), { populate: ['category'] })
   if (!record) return null
-  const [media, requirements] = await Promise.all([
-    em.find(CatalogServiceMedia, { service: record }, { orderBy: { sortOrder: 'asc', createdAt: 'asc' } }),
-    em.find(CatalogServiceWorkRequirement, { service: record }, { orderBy: { sortOrder: 'asc', createdAt: 'asc' } }),
+  const [media, requirements, custom] = await Promise.all([
+    em.find(CatalogServiceMedia, {
+      service: record,
+      organizationId: record.organizationId,
+      tenantId: record.tenantId,
+    }, { orderBy: { sortOrder: 'asc', createdAt: 'asc' } }),
+    em.find(CatalogServiceWorkRequirement, {
+      service: record,
+      organizationId: record.organizationId,
+      tenantId: record.tenantId,
+    }, { orderBy: { sortOrder: 'asc', createdAt: 'asc' } }),
+    loadCustomFieldSnapshot(em, {
+      entityId: E.catalog.catalog_service,
+      recordId: record.id,
+      tenantId: record.tenantId,
+      organizationId: record.organizationId,
+    }),
   ])
   return {
     id: record.id,
@@ -262,6 +307,7 @@ async function loadServiceSnapshot(em: EntityManager, id: string): Promise<Servi
       sortOrder: item.sortOrder,
       metadata: cloneMetadata(item.metadata),
     })),
+    custom: custom && Object.keys(custom).length ? custom : null,
   }
 }
 
@@ -329,7 +375,7 @@ async function restoreServiceChildren(
 const createServiceCommand: CommandHandler<ServiceCreateInput, { serviceId: string }> = {
   id: 'catalog.services.create',
   async execute(input, ctx) {
-    const parsed = serviceCreateSchema.parse(input)
+    const { parsed, custom } = parseWithCustomFields(serviceCreateSchema, input)
     ensureTenantScope(ctx, parsed.tenantId)
     ensureOrganizationScope(ctx, parsed.organizationId)
     const em = (ctx.container.resolve('em') as EntityManager).fork()
@@ -365,12 +411,20 @@ const createServiceCommand: CommandHandler<ServiceCreateInput, { serviceId: stri
       { transaction: true },
     )
     const dataEngine = ctx.container.resolve('dataEngine') as DataEngine
+    await setCustomFieldsIfAny({
+      dataEngine,
+      entityId: E.catalog.catalog_service,
+      recordId: record.id,
+      organizationId: record.organizationId,
+      tenantId: record.tenantId,
+      values: custom,
+    })
     await emitServiceChange({ dataEngine, action: 'created', service: record })
     return { serviceId: record.id }
   },
   captureAfter: async (_input, result, ctx) => {
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    return loadServiceSnapshot(em, result.serviceId)
+    return loadServiceSnapshot(em, result.serviceId, commandActorScope(ctx))
   },
   buildLog: async ({ snapshots }) => {
     const after = snapshots.after as ServiceSnapshot | undefined
@@ -390,15 +444,24 @@ const createServiceCommand: CommandHandler<ServiceCreateInput, { serviceId: stri
     const payload = extractUndoPayload<ServiceUndoPayload>(logEntry)
     const after = payload?.after
     if (!after) return
+    ensureTenantScope(ctx, after.tenantId)
+    ensureOrganizationScope(ctx, after.organizationId)
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    const record = await em.findOne(CatalogService, { id: after.id })
+    const record = await em.findOne(CatalogService, serviceWhere(after.id, commandActorScope(ctx)))
     if (!record) return
-    ensureTenantScope(ctx, record.tenantId)
-    ensureOrganizationScope(ctx, record.organizationId)
     record.deletedAt = new Date()
     record.isActive = false
     await em.flush()
     const dataEngine = ctx.container.resolve('dataEngine') as DataEngine
+    const resetValues = buildCustomFieldResetMap(undefined, after.custom ?? undefined)
+    await setCustomFieldsIfAny({
+      dataEngine,
+      entityId: E.catalog.catalog_service,
+      recordId: after.id,
+      organizationId: after.organizationId,
+      tenantId: after.tenantId,
+      values: resetValues,
+    })
     await emitServiceUndoChange({ dataEngine, action: 'deleted', service: record })
   },
 }
@@ -408,13 +471,16 @@ const updateServiceCommand: CommandHandler<ServiceUpdateInput, { serviceId: stri
   prepare: async (input, ctx) => {
     const id = requireId(input, 'Service id is required')
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    const before = await loadServiceSnapshot(em, id)
+    const before = await loadServiceSnapshot(em, id, commandActorScope(ctx))
     return before ? { before } : {}
   },
   async execute(input, ctx) {
-    const parsed = serviceUpdateSchema.parse(input)
+    const { parsed, custom } = parseWithCustomFields(serviceUpdateSchema, input)
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    const record = await em.findOne(CatalogService, { id: parsed.id, deletedAt: null })
+    const record = await em.findOne(
+      CatalogService,
+      serviceWhere(parsed.id, commandActorScope(ctx), { deletedAt: null }),
+    )
     if (!record) throw new CrudHttpError(404, { error: 'Catalog service not found' })
     ensureTenantScope(ctx, record.tenantId)
     ensureOrganizationScope(ctx, record.organizationId)
@@ -450,12 +516,20 @@ const updateServiceCommand: CommandHandler<ServiceUpdateInput, { serviceId: stri
       { transaction: true },
     )
     const dataEngine = ctx.container.resolve('dataEngine') as DataEngine
+    await setCustomFieldsIfAny({
+      dataEngine,
+      entityId: E.catalog.catalog_service,
+      recordId: record.id,
+      organizationId: record.organizationId,
+      tenantId: record.tenantId,
+      values: custom,
+    })
     await emitServiceChange({ dataEngine, action: 'updated', service: record })
     return { serviceId: record.id }
   },
   captureAfter: async (_input, result, ctx) => {
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    return loadServiceSnapshot(em, result.serviceId)
+    return loadServiceSnapshot(em, result.serviceId, commandActorScope(ctx))
   },
   buildLog: async ({ snapshots }) => {
     const before = snapshots.before as ServiceSnapshot | undefined
@@ -476,8 +550,10 @@ const updateServiceCommand: CommandHandler<ServiceUpdateInput, { serviceId: stri
   undo: async ({ logEntry, ctx }) => {
     const before = extractUndoPayload<ServiceUndoPayload>(logEntry)?.before
     if (!before) return
+    ensureTenantScope(ctx, before.tenantId)
+    ensureOrganizationScope(ctx, before.organizationId)
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    let record = await em.findOne(CatalogService, { id: before.id })
+    let record = await em.findOne(CatalogService, serviceWhere(before.id, commandActorScope(ctx)))
     if (!record) {
       record = await restoreCreatedRow(em, CatalogService, before.id, () => ({
         id: before.id,
@@ -486,8 +562,6 @@ const updateServiceCommand: CommandHandler<ServiceUpdateInput, { serviceId: stri
         title: before.title,
       }))
     }
-    ensureTenantScope(ctx, before.tenantId)
-    ensureOrganizationScope(ctx, before.organizationId)
     applyServiceSnapshot(em, record, before)
     await withAtomicFlush(
       em,
@@ -499,6 +573,16 @@ const updateServiceCommand: CommandHandler<ServiceUpdateInput, { serviceId: stri
       { transaction: true },
     )
     const dataEngine = ctx.container.resolve('dataEngine') as DataEngine
+    const after = extractUndoPayload<ServiceUndoPayload>(logEntry)?.after
+    const resetValues = buildCustomFieldResetMap(after?.custom ?? undefined, before.custom ?? undefined)
+    await setCustomFieldsIfAny({
+      dataEngine,
+      entityId: E.catalog.catalog_service,
+      recordId: before.id,
+      organizationId: before.organizationId,
+      tenantId: before.tenantId,
+      values: resetValues,
+    })
     await emitServiceUndoChange({ dataEngine, action: 'updated', service: record })
   },
 }
@@ -508,13 +592,16 @@ const deleteServiceCommand: CommandHandler<{ id: string }, { serviceId: string }
   prepare: async (input, ctx) => {
     const id = requireId(input, 'Service id is required')
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    const before = await loadServiceSnapshot(em, id)
+    const before = await loadServiceSnapshot(em, id, commandActorScope(ctx))
     return before ? { before } : {}
   },
   async execute(input, ctx) {
     const id = requireId(input, 'Service id is required')
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    const record = await em.findOne(CatalogService, { id, deletedAt: null })
+    const record = await em.findOne(
+      CatalogService,
+      serviceWhere(id, commandActorScope(ctx), { deletedAt: null }),
+    )
     if (!record) throw new CrudHttpError(404, { error: 'Catalog service not found' })
     ensureTenantScope(ctx, record.tenantId)
     ensureOrganizationScope(ctx, record.organizationId)
@@ -522,6 +609,21 @@ const deleteServiceCommand: CommandHandler<{ id: string }, { serviceId: string }
     record.isActive = false
     await em.flush()
     const dataEngine = ctx.container.resolve('dataEngine') as DataEngine
+    const custom = await loadCustomFieldSnapshot(em, {
+      entityId: E.catalog.catalog_service,
+      recordId: record.id,
+      tenantId: record.tenantId,
+      organizationId: record.organizationId,
+    })
+    const resetValues = buildCustomFieldResetMap(custom ?? undefined, undefined)
+    await setCustomFieldsIfAny({
+      dataEngine,
+      entityId: E.catalog.catalog_service,
+      recordId: record.id,
+      organizationId: record.organizationId,
+      tenantId: record.tenantId,
+      values: resetValues,
+    })
     await emitServiceChange({ dataEngine, action: 'deleted', service: record })
     return { serviceId: record.id }
   },
@@ -542,8 +644,10 @@ const deleteServiceCommand: CommandHandler<{ id: string }, { serviceId: string }
   undo: async ({ logEntry, ctx }) => {
     const before = extractUndoPayload<ServiceUndoPayload>(logEntry)?.before
     if (!before) return
+    ensureTenantScope(ctx, before.tenantId)
+    ensureOrganizationScope(ctx, before.organizationId)
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    let record = await em.findOne(CatalogService, { id: before.id })
+    let record = await em.findOne(CatalogService, serviceWhere(before.id, commandActorScope(ctx)))
     if (!record) {
       record = await restoreCreatedRow(em, CatalogService, before.id, () => ({
         id: before.id,
@@ -552,8 +656,6 @@ const deleteServiceCommand: CommandHandler<{ id: string }, { serviceId: string }
         title: before.title,
       }))
     }
-    ensureTenantScope(ctx, before.tenantId)
-    ensureOrganizationScope(ctx, before.organizationId)
     applyServiceSnapshot(em, record, before)
     await withAtomicFlush(
       em,
@@ -565,6 +667,14 @@ const deleteServiceCommand: CommandHandler<{ id: string }, { serviceId: string }
       { transaction: true },
     )
     const dataEngine = ctx.container.resolve('dataEngine') as DataEngine
+    await setCustomFieldsIfAny({
+      dataEngine,
+      entityId: E.catalog.catalog_service,
+      recordId: before.id,
+      organizationId: before.organizationId,
+      tenantId: before.tenantId,
+      values: before.custom ?? {},
+    })
     await emitServiceUndoChange({ dataEngine, action: 'created', service: record })
   },
 }

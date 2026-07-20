@@ -5,6 +5,7 @@ import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { resolveTranslations } from '@open-mercato/shared/lib/i18n/server'
 import { escapeLikePattern } from '@open-mercato/shared/lib/db/escapeLikePattern'
 import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { E } from '#generated/entities.ids.generated'
 import {
   CatalogProductCategory,
   CatalogService,
@@ -232,11 +233,11 @@ const crud = makeCrudRoute({
     softDeleteField: 'deletedAt',
   },
   indexer: {
-    entityType: 'catalog:service',
+    entityType: E.catalog.catalog_service,
   },
   list: {
     schema: listSchema,
-    entityId: 'catalog:catalog_service',
+    entityId: E.catalog.catalog_service,
     fields: [
       'id',
       'organization_id',

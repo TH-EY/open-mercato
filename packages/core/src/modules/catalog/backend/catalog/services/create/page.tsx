@@ -2,9 +2,11 @@
 
 import * as React from 'react'
 import { Page, PageBody } from '@open-mercato/ui/backend/Page'
+import { apiCall } from '@open-mercato/ui/backend/utils/apiCall'
 import { createCrud } from '@open-mercato/ui/backend/utils/crud'
 import { createCrudFormError } from '@open-mercato/ui/backend/utils/serverErrors'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
+import { E } from '#generated/entities.ids.generated'
 import {
   buildServicePayload,
   createServiceInitialValues,
@@ -32,6 +34,28 @@ export default function CreateCatalogServicePage() {
             const { result } = await createCrud<{ id?: string }>('catalog/services', payload)
             if (!result?.id) {
               throw createCrudFormError(t('catalog.services.form.errors.create', 'Service was created but no identifier was returned.'))
+            }
+            const attachmentIds = values.mediaItems
+              .map((item) => item.id)
+              .filter((id): id is string => typeof id === 'string' && id.length > 0)
+            if (values.mediaDraftId && attachmentIds.length) {
+              const transfer = await apiCall<{ ok?: boolean; error?: string }>(
+                '/api/attachments/transfer',
+                {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({
+                    entityId: E.catalog.catalog_service,
+                    attachmentIds,
+                    fromRecordId: values.mediaDraftId,
+                    toRecordId: result.id,
+                  }),
+                },
+                { fallback: null },
+              )
+              if (!transfer.ok) {
+                console.error('attachments.transfer.failed', transfer.result?.error)
+              }
             }
           }}
         />
