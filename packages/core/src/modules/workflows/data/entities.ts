@@ -404,6 +404,10 @@ export class WorkflowBranchInstance {
 @Index({ name: 'step_instances_workflow_instance_idx', properties: ['workflowInstanceId', 'status'] })
 @Index({ name: 'step_instances_step_id_idx', properties: ['stepId', 'status'] })
 @Index({ name: 'step_instances_tenant_org_idx', properties: ['tenantId', 'organizationId'] })
+@Index({
+  name: 'step_instances_correlated_wait_idx',
+  properties: ['tenantId', 'organizationId', 'status', 'waitSignalName', 'waitCorrelationKey'],
+})
 export class StepInstance {
   [OptionalProps]?: 'retryCount' | 'createdAt' | 'updatedAt'
 
@@ -428,6 +432,15 @@ export class StepInstance {
 
   @Property({ name: 'status', type: 'varchar', length: 20 })
   status!: StepInstanceStatus
+
+  @Property({ name: 'wait_signal_name', type: 'varchar', length: 255, nullable: true })
+  waitSignalName?: string | null
+
+  @Property({ name: 'wait_correlation_key', type: 'varchar', length: 255, nullable: true })
+  waitCorrelationKey?: string | null
+
+  @Property({ name: 'wait_payload_path', type: 'varchar', length: 500, nullable: true })
+  waitPayloadPath?: string | null
 
   @Property({ name: 'input_data', type: 'jsonb', nullable: true })
   inputData?: any | null

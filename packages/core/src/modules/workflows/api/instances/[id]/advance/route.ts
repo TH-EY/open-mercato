@@ -217,7 +217,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
       instance,
       selectedTransition.fromStepId,
       selectedTransition.toStepId,
-      execContext
+      execContext,
+      selectedTransition.transitionId,
     )
 
     if (!transitionResult.success) {

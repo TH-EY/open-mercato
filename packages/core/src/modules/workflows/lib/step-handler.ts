@@ -24,6 +24,7 @@ import { parseDuration } from './duration'
 import { logWorkflowEvent } from './event-logger'
 import { normalizeUserTaskFormSchema } from './user-task-form-schema'
 import { emitWorkflowsEvent } from '../events'
+import { readCorrelationScalar } from './signal-correlation'
 
 // ============================================================================
 // Types and Interfaces
@@ -449,7 +450,7 @@ async function handleAutomatedStep(
   }
 
   // Import activity executor
-  const { executeActivities } = await import('./activity-executor')
+  const { buildActivityOutputWrites, executeActivities } = await import('./activity-executor')
 
   try {
     // Execute activities with proper context
@@ -506,6 +507,14 @@ async function handleAutomatedStep(
         },
       }
     }
+
+    const activityContextWrites = buildActivityOutputWrites(results, context.workflowContext)
+    if (branch) {
+      branch.contextNamespace = { ...(branch.contextNamespace || {}), ...activityContextWrites }
+    } else {
+      instance.context = { ...(instance.context || {}), ...activityContextWrites }
+    }
+    context.workflowContext = { ...context.workflowContext, ...activityContextWrites }
 
     // All activities completed successfully
     const activityOutputs = results.reduce((acc, r) => {
@@ -788,6 +797,22 @@ async function handleWaitForSignalStep(
   const signalConfig = stepDef.signalConfig || {}
   const signalName = signalConfig.signalName || stepDef.stepId
   const timeout = signalConfig.timeout ? parseDuration(signalConfig.timeout) : null
+  const correlation = signalConfig.correlation
+
+  if (correlation) {
+    const correlationKey = readCorrelationScalar(context.workflowContext, correlation.contextPath)
+    if (correlationKey === null) {
+      throw new StepExecutionError(
+        `WAIT_FOR_SIGNAL correlation value is missing or not a supported scalar at "${correlation.contextPath}"`,
+        'SIGNAL_CORRELATION_VALUE_INVALID',
+        { stepId: stepDef.stepId, contextPath: correlation.contextPath },
+      )
+    }
+
+    stepInstance.waitSignalName = signalName
+    stepInstance.waitCorrelationKey = correlationKey
+    stepInstance.waitPayloadPath = correlation.payloadPath
+  }
 
   const now = new Date()
 
@@ -800,6 +825,10 @@ async function handleWaitForSignalStep(
     eventData: {
       signalName,
       timeout,
+      correlation: correlation ? {
+        contextPath: correlation.contextPath,
+        payloadPath: correlation.payloadPath,
+      } : undefined,
       description: stepDef.description,
     },
     userId: context.userId,
@@ -826,6 +855,10 @@ async function handleWaitForSignalStep(
       signalName,
       timeout,
       awaitingSince: now,
+      correlation: correlation ? {
+        contextPath: correlation.contextPath,
+        payloadPath: correlation.payloadPath,
+      } : undefined,
     },
   }
 }

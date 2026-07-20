@@ -16,6 +16,7 @@ import { WorkflowSelectorField } from './fields/WorkflowSelectorField'
 import { StartPreConditionsEditor } from './fields/StartPreConditionsEditor'
 import { nodeToFormValues, formValuesToNodeUpdates, isJsonSchemaFormat, type NodeFormValues } from '../lib/nodeFormTransforms'
 import { sanitizeId } from '../lib/graph-utils'
+import { useT } from '@open-mercato/shared/lib/i18n/context'
 
 /**
  * JsonConfigEditor - Custom field wrapper for JsonBuilder
@@ -57,6 +58,7 @@ export interface NodeEditDialogCrudFormProps {
  * - decision: Basic fields only
  */
 export function NodeEditDialogCrudForm({ node, isOpen, onClose, onSave, onDelete }: NodeEditDialogCrudFormProps) {
+  const t = useT()
   const [initialValues, setInitialValues] = useState<Partial<NodeFormValues>>({})
   const [showJsonSchemaWarning, setShowJsonSchemaWarning] = useState(false)
 
@@ -71,6 +73,18 @@ export function NodeEditDialogCrudForm({ node, isOpen, onClose, onSave, onDelete
 
   const handleSubmit = useCallback(async (values: Record<string, unknown>) => {
     if (!node) return
+
+    if (node.type === 'waitForSignal') {
+      const contextPath = typeof values.signalCorrelationContextPath === 'string'
+        ? values.signalCorrelationContextPath.trim()
+        : ''
+      const payloadPath = typeof values.signalCorrelationPayloadPath === 'string'
+        ? values.signalCorrelationPayloadPath.trim()
+        : ''
+      if (Boolean(contextPath) !== Boolean(payloadPath)) {
+        throw new Error(t('workflows.validation.signalCorrelationPairRequired'))
+      }
+    }
 
     // Validate and sanitize step ID
     const sanitizedId = sanitizeId(node.id)
@@ -90,7 +104,7 @@ export function NodeEditDialogCrudForm({ node, isOpen, onClose, onSave, onDelete
       // Error will be displayed in form (e.g., invalid JSON)
       throw error
     }
-  }, [node, onSave, onClose])
+  }, [node, onSave, onClose, t])
 
   const handleDelete = useCallback(() => {
     if (!node || !onDelete) return
@@ -246,9 +260,14 @@ export function NodeEditDialogCrudForm({ node, isOpen, onClose, onSave, onDelete
         ...baseGroups,
         {
           id: 'signal',
-          title: 'Signal Configuration',
+          title: t('workflows.form.signalConfig'),
           column: 1,
-          fields: ['signalName', 'signalTimeout'],
+          fields: [
+            'signalName',
+            'signalCorrelationContextPath',
+            'signalCorrelationPayloadPath',
+            'signalTimeout',
+          ],
         },
         {
           id: 'advanced',
@@ -271,7 +290,7 @@ export function NodeEditDialogCrudForm({ node, isOpen, onClose, onSave, onDelete
         fields: ['advancedConfig'],
       },
     ]
-  }, [node])
+  }, [node, t])
 
   // Define all possible form fields (only relevant ones are used based on groups)
   const fields: CrudField[] = useMemo(() => [
@@ -420,6 +439,20 @@ export function NodeEditDialogCrudForm({ node, isOpen, onClose, onSave, onDelete
       placeholder: 'PT5M',
       description: 'How long to wait for the signal (ISO 8601 duration)',
     },
+    {
+      id: 'signalCorrelationContextPath',
+      label: t('workflows.form.signalCorrelationContextPath'),
+      type: 'text',
+      placeholder: t('workflows.form.placeholders.signalCorrelationContextPath'),
+      description: t('workflows.form.descriptions.signalCorrelationContextPath'),
+    },
+    {
+      id: 'signalCorrelationPayloadPath',
+      label: t('workflows.form.signalCorrelationPayloadPath'),
+      type: 'text',
+      placeholder: t('workflows.form.placeholders.signalCorrelationPayloadPath'),
+      description: t('workflows.form.descriptions.signalCorrelationPayloadPath'),
+    },
 
     // Advanced configuration
     {
@@ -438,7 +471,7 @@ export function NodeEditDialogCrudForm({ node, isOpen, onClose, onSave, onDelete
       description: 'Business rules that must pass before the workflow can start',
       component: (props) => <StartPreConditionsEditor {...props} value={props.value as any} />,
     },
-  ], [showJsonSchemaWarning])
+  ], [showJsonSchemaWarning, t])
 
   if (!isOpen || !node) return null
 

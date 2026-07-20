@@ -557,6 +557,153 @@ describe('Step Handler (Unit Tests)', () => {
   })
 
   // ============================================================================
+  // executeStep() Tests - Correlated signals
+  // ============================================================================
+
+  describe('executeStep - correlated WAIT_FOR_SIGNAL', () => {
+    const correlatedDefinition = {
+      ...mockDefinition,
+      definition: {
+        steps: [
+          {
+            stepId: 'wait-for-task',
+            stepName: 'Wait for task',
+            stepType: 'WAIT_FOR_SIGNAL',
+            signalConfig: {
+              signalName: 'customers.interaction.completed',
+              correlation: {
+                contextPath: 'activities.create_customer_task.body.id',
+                payloadPath: 'id',
+              },
+            },
+          },
+        ],
+        transitions: [],
+      },
+    } as WorkflowDefinition
+
+    test('persists a resolved root subscription before pausing', async () => {
+      const instance = { ...mockInstance, status: 'RUNNING' } as WorkflowInstance
+      const stepInstance = {
+        id: 'step-instance-signal',
+        workflowInstanceId: testInstanceId,
+        stepId: 'wait-for-task',
+        stepName: 'Wait for task',
+        stepType: 'WAIT_FOR_SIGNAL',
+        status: 'ACTIVE',
+        tenantId: testTenantId,
+        organizationId: testOrgId,
+      } as StepInstance
+
+      mockEm.findOne
+        .mockResolvedValueOnce(correlatedDefinition)
+        .mockResolvedValueOnce(correlatedDefinition)
+      mockEm.create
+        .mockReturnValueOnce(stepInstance)
+        .mockReturnValue({} as any)
+
+      const result = await stepHandler.executeStep(
+        mockEm,
+        instance,
+        'wait-for-task',
+        {
+          workflowContext: {
+            activities: {
+              create_customer_task: { body: { id: 'task-123' } },
+            },
+          },
+        },
+      )
+
+      expect(result.status).toBe('WAITING')
+      expect(instance.status).toBe('PAUSED')
+      expect(stepInstance).toMatchObject({
+        waitSignalName: 'customers.interaction.completed',
+        waitCorrelationKey: 'task-123',
+        waitPayloadPath: 'id',
+      })
+    })
+
+    test('persists and pauses only the provided branch', async () => {
+      const instance = { ...mockInstance, status: 'FORKED' } as WorkflowInstance
+      const branch = {
+        id: 'branch-1',
+        workflowInstanceId: testInstanceId,
+        currentStepId: 'wait-for-task',
+        status: 'ACTIVE',
+        tenantId: testTenantId,
+        organizationId: testOrgId,
+      } as any
+      const stepInstance = {
+        id: 'step-instance-branch-signal',
+        branchInstanceId: branch.id,
+        status: 'ACTIVE',
+      } as StepInstance
+
+      mockEm.findOne
+        .mockResolvedValueOnce(correlatedDefinition)
+        .mockResolvedValueOnce(correlatedDefinition)
+      mockEm.create
+        .mockReturnValueOnce(stepInstance)
+        .mockReturnValue({} as any)
+
+      const result = await stepHandler.executeStep(
+        mockEm,
+        instance,
+        'wait-for-task',
+        {
+          workflowContext: {
+            activities: {
+              create_customer_task: { body: { id: 'branch-task-123' } },
+            },
+          },
+        },
+        undefined,
+        branch,
+      )
+
+      expect(result.status).toBe('WAITING')
+      expect(instance.status).toBe('FORKED')
+      expect(branch.status).toBe('PAUSED')
+      expect(stepInstance.waitCorrelationKey).toBe('branch-task-123')
+    })
+
+    test('fails the step instead of registering a broad wait when context is missing', async () => {
+      const instance = { ...mockInstance, status: 'RUNNING' } as WorkflowInstance
+      const stepInstance = {
+        id: 'step-instance-invalid-signal',
+        workflowInstanceId: testInstanceId,
+        stepId: 'wait-for-task',
+        status: 'ACTIVE',
+        tenantId: testTenantId,
+        organizationId: testOrgId,
+      } as StepInstance
+
+      mockEm.findOne
+        .mockResolvedValueOnce(correlatedDefinition)
+        .mockResolvedValueOnce(correlatedDefinition)
+        .mockResolvedValueOnce(stepInstance)
+      mockEm.create
+        .mockReturnValueOnce(stepInstance)
+        .mockReturnValue({} as any)
+
+      const result = await stepHandler.executeStep(
+        mockEm,
+        instance,
+        'wait-for-task',
+        { workflowContext: {} },
+      )
+
+      expect(result).toMatchObject({
+        status: 'FAILED',
+        error: expect.stringMatching(/correlation value is missing/i),
+      })
+      expect(stepInstance.status).toBe('FAILED')
+      expect(instance.status).toBe('RUNNING')
+    })
+  })
+
+  // ============================================================================
   // executeStep() Tests - Error Handling
   // ============================================================================
 

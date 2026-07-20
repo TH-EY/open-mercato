@@ -107,7 +107,8 @@ export async function evaluateTransition(
   instance: WorkflowInstance,
   fromStepId: string,
   toStepId: string | undefined,
-  context: TransitionEvaluationContext
+  context: TransitionEvaluationContext,
+  transitionId?: string,
 ): Promise<TransitionEvaluationResult> {
   const startTime = Date.now()
 
@@ -129,7 +130,22 @@ export async function evaluateTransition(
     const transitions = definition.definition.transitions || []
     let transition: any
 
-    if (toStepId) {
+    if (transitionId) {
+      transition = transitions.find(
+        (t: any) =>
+          t.transitionId === transitionId &&
+          t.fromStepId === fromStepId &&
+          (toStepId === undefined || t.toStepId === toStepId),
+      )
+
+      if (!transition) {
+        return {
+          isValid: false,
+          reason: `Transition not found: ${transitionId}`,
+          evaluationTime: Date.now() - startTime,
+        }
+      }
+    } else if (toStepId) {
       // Find specific transition
       transition = transitions.find(
         (t: any) => t.fromStepId === fromStepId && t.toStepId === toStepId
@@ -247,7 +263,8 @@ export async function findValidTransitions(
         instance,
         fromStepId,
         transition.toStepId,
-        context
+        context,
+        transition.transitionId,
       )
 
       if (!conditionResult.isValid) {
@@ -321,11 +338,12 @@ export async function executeTransition(
   instance: WorkflowInstance,
   fromStepId: string,
   toStepId: string,
-  context: TransitionExecutionContext
+  context: TransitionExecutionContext,
+  transitionId?: string,
 ): Promise<TransitionExecutionResult> {
   // Public DI signature preserved: the root token adapts the instance, so the
   // single-token path is behaviourally unchanged.
-  return executeTransitionForToken(em, container, rootToken(instance), fromStepId, toStepId, context)
+  return executeTransitionForToken(em, container, rootToken(instance), fromStepId, toStepId, context, transitionId)
 }
 
 /**
@@ -340,7 +358,8 @@ export async function executeTransitionForToken(
   token: ExecutionToken,
   fromStepId: string,
   toStepId: string,
-  context: TransitionExecutionContext
+  context: TransitionExecutionContext,
+  transitionId?: string,
 ): Promise<TransitionExecutionResult> {
   const instance = token.instance
   const branch = token.kind === 'branch' ? token.branch : null
@@ -359,7 +378,8 @@ export async function executeTransitionForToken(
       instance,
       fromStepId,
       toStepId,
-      context
+      context,
+      transitionId,
     )
 
     if (!evaluation.isValid) {
@@ -484,13 +504,10 @@ export async function executeTransitionForToken(
         }
       }
 
-      // Collect activity outputs for context update
-      results.forEach(result => {
-        if (result.success && result.output) {
-          const key = result.activityName || result.activityType
-          activityOutputs[key] = result.output
-        }
-      })
+      activityOutputs = activityExecutor.buildActivityOutputWrites(
+        results,
+        { ...tokenReadContext(token), ...context.workflowContext },
+      )
     }
 
     // Check if any activities are async - if so, pause before executing step

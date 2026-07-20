@@ -222,6 +222,75 @@ describe('Workflows Validators', () => {
       expect(result.retryPolicy?.backoffMs).toBe(1000)
     })
 
+    describe('WAIT_FOR_SIGNAL correlation', () => {
+      const baseSignalStep = {
+        stepId: 'wait-for-task',
+        stepName: 'Wait for task completion',
+        stepType: 'WAIT_FOR_SIGNAL' as const,
+        signalConfig: {
+          signalName: 'customers.interaction.completed',
+        },
+      }
+
+      test('accepts a complete correlation path pair', () => {
+        const result = workflowStepSchema.parse({
+          ...baseSignalStep,
+          signalConfig: {
+            ...baseSignalStep.signalConfig,
+            correlation: {
+              contextPath: 'activities.create_customer_task.body.id',
+              payloadPath: 'id',
+            },
+          },
+        })
+
+        expect(result.signalConfig?.correlation).toEqual({
+          contextPath: 'activities.create_customer_task.body.id',
+          payloadPath: 'id',
+        })
+      })
+
+      test.each([
+        { contextPath: 'activities.create_customer_task.body.id' },
+        { payloadPath: 'id' },
+        { contextPath: '', payloadPath: 'id' },
+        { contextPath: 'activities.create_customer_task.body.id', payloadPath: '' },
+        { contextPath: 'activities[0].body.id', payloadPath: 'id' },
+        { contextPath: 'activities.__proto__.id', payloadPath: 'id' },
+      ])('rejects incomplete or unsafe correlation paths: %p', (correlation) => {
+        expect(() => workflowStepSchema.parse({
+          ...baseSignalStep,
+          signalConfig: {
+            ...baseSignalStep.signalConfig,
+            correlation,
+          },
+        })).toThrow()
+      })
+
+      test('keeps uncorrelated signal waits valid', () => {
+        expect(() => workflowStepSchema.parse(baseSignalStep)).not.toThrow()
+      })
+
+      test('limits only correlated signal names to the routing column width', () => {
+        const longSignalName = 'x'.repeat(256)
+        expect(() => workflowStepSchema.parse({
+          ...baseSignalStep,
+          signalConfig: {
+            signalName: longSignalName,
+            correlation: {
+              contextPath: 'activities.create_customer_task.body.id',
+              payloadPath: 'id',
+            },
+          },
+        })).toThrow(/at most 255/i)
+
+        expect(() => workflowStepSchema.parse({
+          ...baseSignalStep,
+          signalConfig: { signalName: longSignalName },
+        })).not.toThrow()
+      })
+    })
+
     describe('WAIT_FOR_TIMER step config', () => {
       const baseTimerStep = {
         stepId: 'wait-for-timer',

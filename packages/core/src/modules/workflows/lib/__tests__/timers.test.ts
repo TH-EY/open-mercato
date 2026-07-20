@@ -105,7 +105,7 @@ describe('WAIT_FOR_TIMER step', () => {
     mockLogWorkflowEvent = jest.fn().mockResolvedValue({} as any)
     mockExitStep = jest.fn().mockResolvedValue(undefined)
     mockFindValidTransitions = jest.fn().mockResolvedValue([
-      { transition: { toStepId: 'end', fromStepId: 'timer_step', trigger: 'auto' }, isValid: true },
+      { transition: { transitionId: 't1', toStepId: 'end', fromStepId: 'timer_step', trigger: 'auto' }, isValid: true },
     ])
     mockExecuteTransition = jest.fn().mockResolvedValue({ success: true })
     mockExecuteWorkflow = jest.fn().mockResolvedValue({} as any)
@@ -313,7 +313,8 @@ describe('WAIT_FOR_TIMER step', () => {
         expect.objectContaining({ id: instanceId }),
         'timer_step',
         'end',
-        expect.any(Object)
+        expect.any(Object),
+        't1',
       )
 
       expect(mockExecuteWorkflow).toHaveBeenCalled()

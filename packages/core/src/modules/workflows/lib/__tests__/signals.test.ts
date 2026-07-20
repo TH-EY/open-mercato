@@ -8,15 +8,20 @@ jest.mock('@open-mercato/shared/lib/encryption/find', () => ({
   findOneWithDecryption: jest.fn(),
   findWithDecryption: jest.fn(),
 }))
+jest.mock('../parallel-handler', () => ({
+  resumeBranch: jest.fn(),
+}))
 
 import {
   findOneWithDecryption,
   findWithDecryption,
 } from '@open-mercato/shared/lib/encryption/find'
 import { sendSignal, sendSignalByCorrelationKey, SignalError } from '../signal-handler'
+import { resumeBranch } from '../parallel-handler'
 
 const mockFindOneWithDecryption = findOneWithDecryption as jest.MockedFunction<typeof findOneWithDecryption>
 const mockFindWithDecryption = findWithDecryption as jest.MockedFunction<typeof findWithDecryption>
+const mockResumeBranch = resumeBranch as jest.MockedFunction<typeof resumeBranch>
 
 describe('Workflow Signals - Phase 9.1', () => {
   // Test data
@@ -110,11 +115,12 @@ describe('Workflow Signals - Phase 9.1', () => {
     mockExecuteWorkflow.mockResolvedValue({} as any)
     mockFindValidTransitions.mockResolvedValue([
       {
-        transition: { toStepId: 'process', fromStepId: 'wait_approval', trigger: 'auto' },
+        transition: { transitionId: 't2', toStepId: 'process', fromStepId: 'wait_approval', trigger: 'auto' },
         isValid: true,
       },
     ])
     mockExecuteTransition.mockResolvedValue({ success: true })
+    mockResumeBranch.mockResolvedValue(true)
   })
 
   describe('Basic Signal Sending', () => {
@@ -165,6 +171,15 @@ describe('Workflow Signals - Phase 9.1', () => {
         mockContainer,
         instanceId,
         expect.objectContaining({ userId })
+      )
+      expect(mockExecuteTransition).toHaveBeenCalledWith(
+        mockEm,
+        mockContainer,
+        expect.objectContaining({ id: instanceId }),
+        'wait_approval',
+        'process',
+        expect.any(Object),
+        't2',
       )
     })
 
@@ -221,6 +236,84 @@ describe('Workflow Signals - Phase 9.1', () => {
 
       // Should work without errors
       expect(mockExecuteWorkflow).toHaveBeenCalled()
+    })
+  })
+
+  describe('Parallel branch signals', () => {
+    const branch = {
+      id: 'branch-123',
+      workflowInstanceId: instanceId,
+      currentStepId: 'wait_approval',
+      status: 'PAUSED',
+      contextNamespace: { branchValue: true },
+    }
+
+    beforeEach(() => {
+      mockEm.find = jest.fn().mockResolvedValue([branch])
+      mockEm.findOne = jest.fn().mockResolvedValue(mockStepInstance)
+    })
+
+    it('keeps a branch paused when signal transition conditions reject the candidate context', async () => {
+      mockFindOneWithDecryption
+        .mockResolvedValueOnce({ ...mockInstance, status: 'FORKED' } as any)
+        .mockResolvedValueOnce({ ...mockDefinition } as any)
+      mockFindValidTransitions.mockResolvedValueOnce([
+        {
+          transition: { fromStepId: 'wait_approval', toStepId: 'process', trigger: 'auto' },
+          isValid: false,
+        },
+      ])
+
+      await sendSignal(mockEm, mockContainer, {
+        instanceId,
+        signalName: 'approval_granted',
+        payload: { approved: false },
+        userId,
+        tenantId,
+        organizationId,
+      })
+
+      expect(mockResumeBranch).not.toHaveBeenCalled()
+      expect(mockLogWorkflowEvent).toHaveBeenCalledWith(
+        mockEm,
+        expect.objectContaining({ eventType: 'SIGNAL_IGNORED', branchInstanceId: branch.id }),
+      )
+    })
+
+    it('resumes a branch only after an automatic transition accepts the payload', async () => {
+      mockFindOneWithDecryption
+        .mockResolvedValueOnce({ ...mockInstance, status: 'FORKED' } as any)
+        .mockResolvedValueOnce({ ...mockDefinition } as any)
+
+      await sendSignal(mockEm, mockContainer, {
+        instanceId,
+        signalName: 'approval_granted',
+        payload: { approved: true },
+        userId,
+        tenantId,
+        organizationId,
+      })
+
+      expect(mockFindValidTransitions).toHaveBeenCalledWith(
+        mockEm,
+        expect.objectContaining({ id: instanceId }),
+        'wait_approval',
+        expect.objectContaining({
+          workflowContext: expect.objectContaining({ branchValue: true, approved: true }),
+          userId,
+        }),
+      )
+      expect(mockResumeBranch).toHaveBeenCalledWith(
+        mockEm,
+        expect.objectContaining({
+          branchInstanceId: branch.id,
+          contextMerge: expect.objectContaining({
+            approved: true,
+            signal_approval_granted_payload: { approved: true },
+          }),
+        }),
+      )
+      expect(mockExecuteWorkflow).toHaveBeenCalledWith(mockEm, mockContainer, instanceId, { userId })
     })
   })
 
@@ -547,7 +640,8 @@ describe('Workflow Signals - Phase 9.1', () => {
         expect.objectContaining({ id: instanceId }),
         'wait_approval',
         'process',
-        expect.any(Object)
+        expect.any(Object),
+        't2',
       )
     })
 
@@ -564,7 +658,6 @@ describe('Workflow Signals - Phase 9.1', () => {
       mockFindOneWithDecryption
         .mockResolvedValueOnce(testInstance as any)
         .mockResolvedValueOnce(definitionNoTransitions as any)
-        .mockResolvedValueOnce({ ...mockStepInstance } as any)
 
       await sendSignal(mockEm, mockContainer, {
         instanceId,
@@ -574,8 +667,9 @@ describe('Workflow Signals - Phase 9.1', () => {
         organizationId,
       })
 
-      // Should mark as RUNNING but not execute transitions
-      expect(testInstance.status).toBe('RUNNING')
+      // A signal without a consumable transition must leave the wait active.
+      expect(testInstance.status).toBe('PAUSED')
+      expect(mockExitStep).not.toHaveBeenCalled()
       expect(mockExecuteWorkflow).not.toHaveBeenCalled()
     })
 
@@ -584,7 +678,6 @@ describe('Workflow Signals - Phase 9.1', () => {
       mockFindOneWithDecryption
         .mockResolvedValueOnce(testInstance as any)
         .mockResolvedValueOnce({ ...mockDefinition } as any)
-        .mockResolvedValueOnce({ ...mockStepInstance } as any)
 
       mockFindValidTransitions.mockResolvedValueOnce([
         { transition: null, isValid: false }, // No valid transitions
@@ -598,8 +691,9 @@ describe('Workflow Signals - Phase 9.1', () => {
         organizationId,
       })
 
-      // Should mark as RUNNING but not execute transitions
-      expect(testInstance.status).toBe('RUNNING')
+      // Rejected conditions must not consume the active wait.
+      expect(testInstance.status).toBe('PAUSED')
+      expect(mockExitStep).not.toHaveBeenCalled()
       expect(mockExecuteTransition).not.toHaveBeenCalled()
     })
   })

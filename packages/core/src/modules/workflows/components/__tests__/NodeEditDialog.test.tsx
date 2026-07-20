@@ -24,6 +24,85 @@ if (typeof window !== 'undefined') {
 }
 
 describe('NodeEditDialog', () => {
+  it('loads and saves correlated signal paths', async () => {
+    const onSave = jest.fn()
+
+    renderWithProviders(
+      <NodeEditDialog
+        node={{
+          id: 'wait_for_customer_task',
+          type: 'waitForSignal',
+          data: {
+            label: 'Wait for customer task',
+            signalConfig: {
+              signalName: 'customers.interaction.completed',
+              timeout: 'P1D',
+              correlation: {
+                contextPath: 'activities.create_customer_task.body.id',
+                payloadPath: 'id',
+              },
+            },
+          },
+        } as any}
+        isOpen
+        onClose={jest.fn()}
+        onSave={onSave}
+        onDelete={jest.fn()}
+      />,
+    )
+
+    expect(screen.getByDisplayValue('activities.create_customer_task.body.id')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('id')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'workflows.actions.saveChanges' }))
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith(
+        'wait_for_customer_task',
+        expect.objectContaining({
+          signalConfig: {
+            signalName: 'customers.interaction.completed',
+            timeout: 'P1D',
+            correlation: {
+              contextPath: 'activities.create_customer_task.body.id',
+              payloadPath: 'id',
+            },
+          },
+        }),
+      )
+    })
+  })
+
+  it('requires both correlated signal paths before saving', async () => {
+    const onSave = jest.fn()
+
+    renderWithProviders(
+      <NodeEditDialog
+        node={{
+          id: 'wait_for_customer_task',
+          type: 'waitForSignal',
+          data: {
+            label: 'Wait for customer task',
+            signalConfig: {
+              signalName: 'customers.interaction.completed',
+            },
+          },
+        } as any}
+        isOpen
+        onClose={jest.fn()}
+        onSave={onSave}
+      />,
+    )
+
+    fireEvent.change(screen.getByPlaceholderText('workflows.form.placeholders.signalCorrelationContextPath'), {
+      target: { value: 'activities.create_customer_task.body.id' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'workflows.actions.saveChanges' }))
+
+    expect((await screen.findAllByText('workflows.validation.signalCorrelationPairRequired')).length).toBeGreaterThan(0)
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
   it('submits user task form config without stale advanced config overwriting it', async () => {
     const onSave = jest.fn()
 

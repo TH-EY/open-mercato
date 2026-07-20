@@ -146,6 +146,47 @@ export interface ActivityExecutionResult {
   jobId?: string // Queue job ID for async activities
 }
 
+export function buildActivityOutputWrites(
+  results: Array<Pick<ActivityExecutionResult, 'activityId' | 'activityName' | 'activityType' | 'success' | 'output'>>,
+  currentContext: Record<string, any>,
+  legacyKeyFor: (result: Pick<ActivityExecutionResult, 'activityId' | 'activityName' | 'activityType'>) => string =
+    (result) => result.activityName || result.activityType,
+): Record<string, any> {
+  const currentActivities = currentContext.activities
+  const isObjectRecord = (value: unknown): value is Record<string, any> =>
+    Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+  const activities = {
+    ...(isObjectRecord(currentActivities) ? currentActivities : {}),
+  }
+  const writes: Record<string, any> = {}
+  let hasOutput = false
+  let preserveLegacyActivitiesValue = currentActivities !== undefined && !isObjectRecord(currentActivities)
+
+  for (const result of results) {
+    if (!result.success || result.output === undefined) continue
+    const legacyKey = legacyKeyFor(result)
+    if (legacyKey === 'activities') {
+      if (isObjectRecord(result.output)) {
+        Object.assign(activities, result.output)
+        preserveLegacyActivitiesValue = false
+      } else {
+        // A scalar legacy alias cannot also be an object namespace. Preserve the
+        // pre-existing legacy contract explicitly and omit stable writes for this
+        // batch rather than silently changing the scalar's type.
+        writes.activities = result.output
+        preserveLegacyActivitiesValue = true
+      }
+    } else {
+      writes[legacyKey] = result.output
+    }
+    activities[result.activityId] = result.output
+    hasOutput = true
+  }
+
+  if (hasOutput && !preserveLegacyActivitiesValue) writes.activities = activities
+  return writes
+}
+
 export class ActivityExecutionError extends Error {
   constructor(
     message: string,
@@ -433,11 +474,10 @@ export async function executeActivities(
       }
 
       // Update workflow context with activity output
-      if (result.output && typeof result.output === 'object') {
-        const key = activity.activityName || activity.activityType
+      if (result.output !== undefined) {
         context.workflowContext = {
           ...context.workflowContext,
-          [key]: result.output,
+          ...buildActivityOutputWrites([result], context.workflowContext),
         }
       }
     }

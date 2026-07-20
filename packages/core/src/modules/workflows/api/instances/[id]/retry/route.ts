@@ -100,7 +100,11 @@ export async function POST(
     const previousErrorMessage = instance.errorMessage
     const previousErrorDetails = instance.errorDetails
 
-    instance.status = 'RUNNING'
+    const retryStatus = instance.errorDetails?.code === 'CORRELATED_SIGNAL_CONTINUATION_FAILED'
+      && instance.errorDetails?.resumeStatus === 'FORKED'
+      ? 'FORKED'
+      : 'RUNNING'
+    instance.status = retryStatus
     instance.retryCount = (instance.retryCount || 0) + 1
     instance.errorMessage = null
     instance.errorDetails = null

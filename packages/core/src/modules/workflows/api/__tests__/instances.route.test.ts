@@ -713,6 +713,49 @@ describe('Workflow Instances API', () => {
       expect(workflowExecutor.executeWorkflow).toHaveBeenCalledWith(mockEm, mockContainer, testInstanceId)
     })
 
+    test('restores a failed correlated branch continuation to FORKED before retrying', async () => {
+      const mockInstance = {
+        id: testInstanceId,
+        workflowId: 'parallel-approval',
+        status: 'FAILED',
+        retryCount: 0,
+        tenantId: testTenantId,
+        organizationId: testOrgId,
+        errorMessage: 'automatic continuation failed',
+        errorDetails: {
+          code: 'CORRELATED_SIGNAL_CONTINUATION_FAILED',
+          resumeStatus: 'FORKED',
+          branchInstanceId: 'branch-1',
+        },
+        definitionId: 'def-1',
+        version: 1,
+        currentStepId: 'fork',
+        context: {},
+        startedAt: new Date(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }
+      mockEm.findOne.mockResolvedValue(mockInstance)
+      ;(workflowExecutor.executeWorkflow as jest.Mock).mockImplementation(async () => {
+        expect(mockInstance.status).toBe('FORKED')
+        return {
+          status: 'RUNNING',
+          currentStep: 'fork',
+          context: {},
+          events: [],
+          executionTime: 10,
+        }
+      })
+
+      const request = new NextRequest(`http://localhost/api/workflows/instances/${testInstanceId}/retry`, {
+        method: 'POST',
+      })
+      const response = await retryInstance(request, { params: Promise.resolve({ id: testInstanceId }) })
+
+      expect(response.status).toBe(200)
+      expect(workflowExecutor.executeWorkflow).toHaveBeenCalledWith(mockEm, mockContainer, testInstanceId)
+    })
+
     test('should require retry permission', async () => {
       mockRbacService.userHasAllFeatures.mockResolvedValue(false)
 

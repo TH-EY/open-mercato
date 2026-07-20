@@ -1981,6 +1981,12 @@ describe('Activity Executor (Unit Tests)', () => {
       const mockFunction = jest.fn().mockResolvedValue({ calculated: 100 })
 
       mockContainer.resolve.mockReturnValue(mockFunction)
+      mockContext.workflowContext = {
+        ...mockContext.workflowContext,
+        activities: {
+          existing_activity: { preserved: true },
+        },
+      }
 
       const activities: ActivityDefinition[] = [
         {
@@ -2008,6 +2014,43 @@ describe('Activity Executor (Unit Tests)', () => {
       // Context should have outputs from both activities (keyed by activityName)
       expect(mockContext.workflowContext['Calculate']).toBeDefined()
       expect(mockContext.workflowContext['Calculate Again']).toBeDefined()
+      expect(mockContext.workflowContext.activities).toEqual(expect.objectContaining({
+        existing_activity: { preserved: true },
+        'activity-33': expect.any(Object),
+        'activity-34': expect.any(Object),
+      }))
+    })
+
+    test('preserves an object-valued legacy "activities" alias while adding the stable id key', () => {
+      const output = { body: { id: 'task-1' }, status: 201 }
+      const writes = activityExecutor.buildActivityOutputWrites([
+        {
+          activityId: 'create_customer_task',
+          activityName: 'activities',
+          activityType: 'CALL_API',
+          success: true,
+          output,
+        },
+      ], {})
+
+      expect(writes.activities).toEqual({
+        ...output,
+        create_customer_task: output,
+      })
+    })
+
+    test('preserves a scalar legacy "activities" alias instead of silently changing its type', () => {
+      const writes = activityExecutor.buildActivityOutputWrites([
+        {
+          activityId: 'legacy_scalar',
+          activityName: 'activities',
+          activityType: 'EXECUTE_FUNCTION',
+          success: true,
+          output: 'legacy-value',
+        },
+      ], {})
+
+      expect(writes.activities).toBe('legacy-value')
     })
   })
 

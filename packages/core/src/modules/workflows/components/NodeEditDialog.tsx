@@ -85,6 +85,8 @@ export function NodeEditDialog({ node, isOpen, onClose, onSave, onDelete }: Node
   // Wait for signal configuration fields
   const [signalName, setSignalName] = useState('')
   const [signalTimeout, setSignalTimeout] = useState('')
+  const [signalCorrelationContextPath, setSignalCorrelationContextPath] = useState('')
+  const [signalCorrelationPayloadPath, setSignalCorrelationPayloadPath] = useState('')
 
   // Wait for timer configuration fields
   const [timerDuration, setTimerDuration] = useState('')
@@ -218,9 +220,13 @@ export function NodeEditDialog({ node, isOpen, onClose, onSave, onDelete }: Node
       if (node.type === 'waitForSignal' && nodeData?.signalConfig) {
         setSignalName(nodeData.signalConfig.signalName || '')
         setSignalTimeout(nodeData.signalConfig.timeout || 'PT5M')
+        setSignalCorrelationContextPath(nodeData.signalConfig.correlation?.contextPath || '')
+        setSignalCorrelationPayloadPath(nodeData.signalConfig.correlation?.payloadPath || '')
       } else {
         setSignalName('')
         setSignalTimeout('')
+        setSignalCorrelationContextPath('')
+        setSignalCorrelationPayloadPath('')
       }
 
       // Load timer configuration
@@ -349,8 +355,15 @@ export function NodeEditDialog({ node, isOpen, onClose, onSave, onDelete }: Node
       }
     }
 
-    if (node.type === 'waitForSignal' && signalTimeout && !isValidDurationString(signalTimeout)) {
-      errors.signalTimeout = t('workflows.validation.invalidDuration')
+    if (node.type === 'waitForSignal') {
+      if (signalTimeout && !isValidDurationString(signalTimeout)) {
+        errors.signalTimeout = t('workflows.validation.invalidDuration')
+      }
+      if (Boolean(signalCorrelationContextPath.trim()) !== Boolean(signalCorrelationPayloadPath.trim())) {
+        const message = t('workflows.validation.signalCorrelationPairRequired')
+        errors.signalCorrelationContextPath = message
+        errors.signalCorrelationPayloadPath = message
+      }
     }
 
     if (Object.keys(errors).length > 0) {
@@ -446,6 +459,13 @@ export function NodeEditDialog({ node, isOpen, onClose, onSave, onDelete }: Node
 
       if (signalTimeout) {
         config.timeout = signalTimeout
+      }
+
+      if (signalCorrelationContextPath.trim() && signalCorrelationPayloadPath.trim()) {
+        config.correlation = {
+          contextPath: signalCorrelationContextPath.trim(),
+          payloadPath: signalCorrelationPayloadPath.trim(),
+        }
       }
 
       if (Object.keys(config).length > 0) {
@@ -1425,6 +1445,66 @@ export function NodeEditDialog({ node, isOpen, onClose, onSave, onDelete }: Node
                     <p className="text-xs text-muted-foreground mt-1">
                       {t('workflows.form.descriptions.signalName')}
                     </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-1">
+                      {t('workflows.form.signalCorrelationContextPath')}
+                    </label>
+                    <Input
+                      type="text"
+                      value={signalCorrelationContextPath}
+                      onChange={(e) => {
+                        setSignalCorrelationContextPath(e.target.value)
+                        if (fieldErrors.signalCorrelationContextPath || fieldErrors.signalCorrelationPayloadPath) {
+                          const next = { ...fieldErrors }
+                          delete next.signalCorrelationContextPath
+                          delete next.signalCorrelationPayloadPath
+                          setFieldErrors(next)
+                        }
+                      }}
+                      placeholder={t('workflows.form.placeholders.signalCorrelationContextPath')}
+                      aria-invalid={fieldErrors.signalCorrelationContextPath ? true : undefined}
+                    />
+                    {fieldErrors.signalCorrelationContextPath ? (
+                      <p className="text-xs text-destructive mt-1">
+                        {fieldErrors.signalCorrelationContextPath}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {t('workflows.form.descriptions.signalCorrelationContextPath')}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-1">
+                      {t('workflows.form.signalCorrelationPayloadPath')}
+                    </label>
+                    <Input
+                      type="text"
+                      value={signalCorrelationPayloadPath}
+                      onChange={(e) => {
+                        setSignalCorrelationPayloadPath(e.target.value)
+                        if (fieldErrors.signalCorrelationContextPath || fieldErrors.signalCorrelationPayloadPath) {
+                          const next = { ...fieldErrors }
+                          delete next.signalCorrelationContextPath
+                          delete next.signalCorrelationPayloadPath
+                          setFieldErrors(next)
+                        }
+                      }}
+                      placeholder={t('workflows.form.placeholders.signalCorrelationPayloadPath')}
+                      aria-invalid={fieldErrors.signalCorrelationPayloadPath ? true : undefined}
+                    />
+                    {fieldErrors.signalCorrelationPayloadPath ? (
+                      <p className="text-xs text-destructive mt-1">
+                        {fieldErrors.signalCorrelationPayloadPath}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {t('workflows.form.descriptions.signalCorrelationPayloadPath')}
+                      </p>
+                    )}
                   </div>
 
                   <div>

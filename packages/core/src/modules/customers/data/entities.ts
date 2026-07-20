@@ -558,7 +558,7 @@ export class CustomerActivity {
     `create index "customer_interactions_email_visibility_idx" on "customer_interactions" ("entity_id", "interaction_type", "visibility", "author_user_id") where "interaction_type" = 'email' and "deleted_at" is null`,
 })
 export class CustomerInteraction {
-  [OptionalProps]?: 'status' | 'pinned' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'durationMinutes' | 'location' | 'allDay' | 'recurrenceRule' | 'recurrenceEnd' | 'participants' | 'reminderMinutes' | 'visibility' | 'linkedEntities' | 'guestPermissions' | 'externalMessageId' | 'channelProviderKey'
+  [OptionalProps]?: 'status' | 'pinned' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'durationMinutes' | 'location' | 'allDay' | 'recurrenceRule' | 'recurrenceEnd' | 'participants' | 'reminderMinutes' | 'visibility' | 'linkedEntities' | 'guestPermissions' | 'externalMessageId' | 'channelProviderKey' | 'completionEventEmittedAt'
 
   @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
   id!: string
@@ -604,6 +604,9 @@ export class CustomerInteraction {
 
   @Property({ name: 'occurred_at', type: Date, nullable: true })
   occurredAt?: Date | null
+
+  @Property({ name: 'completion_event_emitted_at', type: Date, nullable: true, hidden: true })
+  completionEventEmittedAt?: Date | null
 
   @Property({ name: 'priority', type: 'int', nullable: true })
   priority?: number | null

@@ -1,5 +1,5 @@
 import { describe, test, expect } from '@jest/globals'
-import { openFork } from '../parallel-handler'
+import { openFork, resumeBranchAfterActivities } from '../parallel-handler'
 import { WorkflowBranchInstance } from '../../data/entities'
 
 /**
@@ -108,5 +108,52 @@ describe('openFork', () => {
     const badFork = { stepId: 'fork', stepName: 'Fork', stepType: 'PARALLEL_FORK', config: {} }
 
     await expect(openFork(em, instance, definition, badFork)).rejects.toThrow(/joinStepId/)
+  })
+})
+
+describe('resumeBranchAfterActivities', () => {
+  test('persists async output under the stable activity id and the legacy result key', async () => {
+    const branch = {
+      id: 'branch-1',
+      workflowInstanceId: 'instance-1',
+      status: 'WAITING_FOR_ACTIVITIES',
+      contextNamespace: {
+        _pendingAsyncActivities: ['job-1'],
+        activities: { existing_activity: { preserved: true } },
+      },
+      pendingTransition: null,
+      updatedAt: new Date(),
+    } as any
+    const completedEvent = {
+      eventData: {
+        async: true,
+        activityId: 'create_customer_task',
+        activityName: 'Create customer task',
+        activityType: 'CALL_API',
+        output: { body: { id: 'task-123' } },
+      },
+    }
+    const em: any = {
+      findOne: jest.fn().mockResolvedValue(branch),
+      find: jest.fn().mockResolvedValue([completedEvent]),
+      count: jest.fn().mockResolvedValue(0),
+      flush: jest.fn().mockResolvedValue(undefined),
+    }
+
+    const result = await resumeBranchAfterActivities(
+      em,
+      { resolve: jest.fn() } as any,
+      'instance-1',
+      'branch-1',
+    )
+
+    expect(result).toEqual({ continueExecution: true })
+    expect(branch.contextNamespace).toEqual({
+      create_customer_task_result: { body: { id: 'task-123' } },
+      activities: {
+        existing_activity: { preserved: true },
+        create_customer_task: { body: { id: 'task-123' } },
+      },
+    })
   })
 })

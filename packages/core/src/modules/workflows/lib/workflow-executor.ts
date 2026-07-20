@@ -44,6 +44,8 @@ export interface ExecutionContext {
   userId?: string
   dryRun?: boolean
   timeout?: number
+  /** Internal: abort the execution transaction instead of committing failure side effects. */
+  rollbackOnFailure?: boolean
 }
 
 export interface ExecutionResult {
@@ -315,9 +317,17 @@ export async function executeWorkflow(
           }
 
           if (branchResult.outcome === 'failed') {
-            errors.push(branchResult.error || 'Parallel branch failed')
+            const branchError = branchResult.error || 'Parallel branch failed'
+            if (context?.rollbackOnFailure) {
+              throw new WorkflowExecutionError(
+                branchError,
+                'CONTINUATION_FAILED',
+                { instanceId, token: 'branch' },
+              )
+            }
+            errors.push(branchError)
             await completeWorkflow(trx, container, instanceId, 'FAILED', {
-              error: branchResult.error || 'Parallel branch failed',
+              error: branchError,
             })
             return {
               status: 'FAILED',
@@ -425,11 +435,19 @@ export async function executeWorkflow(
             currentInstance,
             selectedTransition.fromStepId,
             selectedTransition.toStepId,
-            evalContext
+            evalContext,
+            selectedTransition.transitionId,
           )
 
           if (!transitionResult.success) {
             const rejectionMessage = transitionResult.error || 'Transition failed'
+            if (context?.rollbackOnFailure) {
+              throw new WorkflowExecutionError(
+                rejectionMessage,
+                'CONTINUATION_FAILED',
+                { instanceId, token: 'root', transitionId: selectedTransition.transitionId },
+              )
+            }
             console.error(`[WORKFLOW] Transition rejected (instance: ${currentInstance.id}, workflow: ${currentInstance.workflowId}, step: ${currentInstance.currentStepId} → ${selectedTransition.toStepId}): ${rejectionMessage}`)
             errors.push(rejectionMessage)
 
@@ -495,6 +513,7 @@ export async function executeWorkflow(
 
           await trx.flush()
         } catch (error) {
+          if (context?.rollbackOnFailure) throw error
           const errorMessage = error instanceof Error ? error.message : String(error)
           console.error(`[WORKFLOW] Transition execution failed (instance: ${currentInstance.id}, workflow: ${currentInstance.workflowId}, step: ${currentInstance.currentStepId} → ${selectedTransition.toStepId}):`, error)
           console.error('[WORKFLOW] Error stack:', error instanceof Error ? error.stack : 'No stack trace')
@@ -786,11 +805,20 @@ export async function resumeWorkflowAfterActivities(
       eventData: { async: true },
     })
 
+    const { buildActivityOutputWrites } = await import('./activity-executor')
     for (const event of completedEvents) {
-      if (event.eventData.output) {
+      if (event.eventData.output !== undefined) {
         instance.context = {
           ...instance.context,
-          [`${event.eventData.activityId}_result`]: event.eventData.output,
+          ...buildActivityOutputWrites([
+            {
+              activityId: event.eventData.activityId,
+              activityName: event.eventData.activityName,
+              activityType: event.eventData.activityType,
+              success: true,
+              output: event.eventData.output,
+            },
+          ], instance.context, (activity) => `${activity.activityId}_result`),
         }
       }
     }

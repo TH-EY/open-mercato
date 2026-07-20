@@ -11,6 +11,7 @@ import {
 } from '@open-mercato/shared/lib/commands/helpers'
 import { DefaultDataEngine, type DataEngine } from '@open-mercato/shared/lib/data/engine'
 import type { EntityManager } from '@mikro-orm/postgresql'
+import { LockMode } from '@mikro-orm/core'
 import type { CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import { CustomerInteraction, CustomerEntity } from '../data/entities'
 import {
@@ -191,22 +192,64 @@ async function setInteractionCustomFields(
 async function emitLifecycleEvent(
   ctx: CommandRuntimeContext,
   eventId: string,
-  payload: Record<string, unknown>
+  scope: { tenantId: string; organizationId: string },
+  payload: Record<string, unknown>,
+  options?: { required?: boolean },
 ): Promise<void> {
-  let bus: { emitEvent(event: string, payload: unknown, options?: unknown): Promise<void> } | null = null
   try {
-    bus = ctx.container.resolve('eventBus')
-  } catch (err) {
-    console.warn('[customers.commands.interactions] eventBus resolve failed; skipping emit', eventId, err)
-    bus = null
-  }
-  if (!bus) return
-  await bus
-    .emitEvent(eventId, payload, { persistent: true })
-    .catch((err) => {
-      console.warn('[customers.commands.interactions] emit failed', eventId, err)
-      return undefined
+    const bus = ctx.container.resolve<{
+      emitEvent(event: string, payload: unknown, options?: unknown): Promise<void>
+    }>('eventBus')
+    await bus.emitEvent(eventId, payload, {
+      persistent: true,
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
     })
+  } catch (error) {
+    if (options?.required) throw error
+    console.warn('[customers.commands.interactions] lifecycle event emit failed', eventId, error)
+  }
+}
+
+async function emitInteractionCompletedEventOnce(
+  ctx: CommandRuntimeContext,
+  em: EntityManager,
+  interactionId: string,
+  scope: { tenantId: string; organizationId: string },
+): Promise<boolean> {
+  return runInTransaction(em, async (trx) => {
+    const interaction = await findOneWithDecryption(trx, CustomerInteraction, {
+      id: interactionId,
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      deletedAt: null,
+    }, { lockMode: LockMode.PESSIMISTIC_WRITE, refresh: true })
+    if (!interaction) throw new CrudHttpError(404, { error: 'Interaction not found' })
+    if (interaction.completionEventEmittedAt) return false
+
+    const entityId = typeof interaction.entity === 'string' ? interaction.entity : interaction.entity.id
+    const identifiers = {
+      id: interaction.id,
+      organizationId: interaction.organizationId,
+      tenantId: interaction.tenantId,
+    }
+    await emitLifecycleEvent(ctx, 'customers.interaction.completed', {
+      tenantId: identifiers.tenantId,
+      organizationId: identifiers.organizationId,
+    }, {
+      ...identifiers,
+      entityId,
+      interactionType: interaction.interactionType,
+      status: interaction.status,
+      source: interaction.source ?? null,
+      occurredAt: interaction.occurredAt?.toISOString() ?? null,
+      ...(ctx.syncOrigin ? { syncOrigin: ctx.syncOrigin } : {}),
+    }, { required: true })
+    await trx.nativeUpdate(CustomerInteraction, { id: interaction.id }, {
+      completionEventEmittedAt: new Date(),
+    })
+    return true
+  })
 }
 
 async function emitInteractionRevertedEvent(
@@ -214,6 +257,9 @@ async function emitInteractionRevertedEvent(
   interaction: InteractionSnapshot['interaction'],
 ): Promise<void> {
   await emitLifecycleEvent(ctx, 'customers.interaction.reverted', {
+    tenantId: interaction.tenantId,
+    organizationId: interaction.organizationId,
+  }, {
     id: interaction.id,
     organizationId: interaction.organizationId,
     tenantId: interaction.tenantId,
@@ -288,6 +334,9 @@ async function emitNextInteractionUpdatedEvent(
     tenantId: identifiers.tenantId,
   }])
   await emitLifecycleEvent(ctx, 'customers.next_interaction.updated', {
+    tenantId: identifiers.tenantId,
+    organizationId: identifiers.organizationId,
+  }, {
     id: projection.entityId,
     entityId: projection.entityId,
     nextInteractionId: projection.nextInteractionId,
@@ -914,7 +963,7 @@ const completeInteractionCommand: CommandHandler<InteractionCompleteInput, { int
   async execute(rawInput, ctx) {
     const parsed = interactionCompleteSchema.parse(rawInput)
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    const { interaction, entityId, nextInteractionId } = await runInTransaction(em, async (trx) => {
+    const { interaction, entityId, nextInteractionId, alreadyCompleted } = await runInTransaction(em, async (trx) => {
       const interaction = await findOneWithDecryption(trx, CustomerInteraction, { id: parsed.id, deletedAt: null })
       if (!interaction) {
         enforceRecordGoneIsConflict({ resourceKind: 'customers.interaction', resourceId: parsed.id, request: ctx.request ?? null })
@@ -922,6 +971,11 @@ const completeInteractionCommand: CommandHandler<InteractionCompleteInput, { int
       }
       ensureTenantScope(ctx, interaction.tenantId)
       ensureOrganizationScope(ctx, interaction.organizationId)
+
+      const entityId = typeof interaction.entity === 'string' ? interaction.entity : interaction.entity.id
+      if (interaction.status === 'done') {
+        return { interaction, entityId, nextInteractionId: null, alreadyCompleted: true }
+      }
 
       await enforceCommandOptimisticLockWithGuards(ctx.container, {
         resourceKind: 'customers.interaction',
@@ -934,9 +988,8 @@ const completeInteractionCommand: CommandHandler<InteractionCompleteInput, { int
       interaction.occurredAt = parsed.occurredAt ?? new Date()
       await trx.flush()
 
-      const entityId = typeof interaction.entity === 'string' ? interaction.entity : interaction.entity.id
       const projection = await recomputeNextInteraction(trx, entityId)
-      return { interaction, entityId, nextInteractionId: projection.nextInteractionId }
+      return { interaction, entityId, nextInteractionId: projection.nextInteractionId, alreadyCompleted: false }
     })
 
     const identifiers = {
@@ -944,6 +997,11 @@ const completeInteractionCommand: CommandHandler<InteractionCompleteInput, { int
       organizationId: interaction.organizationId,
       tenantId: interaction.tenantId,
     }
+    if (alreadyCompleted) {
+      await emitInteractionCompletedEventOnce(ctx, em, interaction.id, identifiers)
+      return { interactionId: interaction.id }
+    }
+
     const de = (ctx.container.resolve('dataEngine') as DataEngine)
     await emitCrudSideEffects({
       dataEngine: de,
@@ -954,15 +1012,7 @@ const completeInteractionCommand: CommandHandler<InteractionCompleteInput, { int
       indexer: interactionCrudIndexer,
       events: interactionCrudEvents,
     })
-    await emitLifecycleEvent(ctx, 'customers.interaction.completed', {
-      ...identifiers,
-      entityId,
-      interactionType: interaction.interactionType,
-      status: interaction.status,
-      source: interaction.source ?? null,
-      occurredAt: interaction.occurredAt?.toISOString() ?? null,
-      ...(ctx.syncOrigin ? { syncOrigin: ctx.syncOrigin } : {}),
-    })
+    await emitInteractionCompletedEventOnce(ctx, em, interaction.id, identifiers)
     await emitNextInteractionUpdatedEvent(ctx, { entityId, nextInteractionId }, identifiers)
 
     return { interactionId: interaction.id }
@@ -1094,6 +1144,9 @@ const cancelInteractionCommand: CommandHandler<InteractionCancelInput, { interac
       events: interactionCrudEvents,
     })
     await emitLifecycleEvent(ctx, 'customers.interaction.canceled', {
+      tenantId: identifiers.tenantId,
+      organizationId: identifiers.organizationId,
+    }, {
       ...identifiers,
       entityId,
       interactionType: interaction.interactionType,

@@ -45,6 +45,8 @@ export interface NodeFormValues {
   // WaitForSignal fields
   signalName?: string
   signalTimeout?: string
+  signalCorrelationContextPath?: string
+  signalCorrelationPayloadPath?: string
 
   // Start node pre-conditions
   preConditions?: StartPreCondition[]
@@ -197,6 +199,8 @@ export function nodeToFormValues(node: Node): NodeFormValues {
   if (node.type === 'waitForSignal' && nodeData?.signalConfig) {
     values.signalName = nodeData.signalConfig.signalName || ''
     values.signalTimeout = nodeData.signalConfig.timeout || 'PT5M'
+    values.signalCorrelationContextPath = nodeData.signalConfig.correlation?.contextPath || ''
+    values.signalCorrelationPayloadPath = nodeData.signalConfig.correlation?.payloadPath || ''
   }
 
   // Start node pre-conditions
@@ -321,6 +325,15 @@ export function formValuesToNodeUpdates(
 
     if (values.signalTimeout) {
       config.timeout = values.signalTimeout
+    }
+
+    const contextPath = values.signalCorrelationContextPath?.trim()
+    const payloadPath = values.signalCorrelationPayloadPath?.trim()
+    if (contextPath || payloadPath) {
+      if (!contextPath || !payloadPath) {
+        throw new Error('Both correlation paths are required')
+      }
+      config.correlation = { contextPath, payloadPath }
     }
 
     if (Object.keys(config).length > 0) {

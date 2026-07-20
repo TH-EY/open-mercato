@@ -225,9 +225,18 @@ export async function resumeBranchAfterActivities(
   }
 
   const mergedNamespace: Record<string, any> = { ...namespace }
+  const { buildActivityOutputWrites } = await import('./activity-executor')
   for (const event of completedEvents) {
-    if (event.eventData?.output) {
-      mergedNamespace[`${event.eventData.activityId}_result`] = event.eventData.output
+    if (event.eventData?.output !== undefined) {
+      Object.assign(mergedNamespace, buildActivityOutputWrites([
+        {
+          activityId: event.eventData.activityId,
+          activityName: event.eventData.activityName,
+          activityType: event.eventData.activityType,
+          success: true,
+          output: event.eventData.output,
+        },
+      ], mergedNamespace, (activity) => `${activity.activityId}_result`))
     }
   }
   delete mergedNamespace._pendingAsyncActivities
@@ -383,6 +392,7 @@ async function advanceOneBranch(
       selected.fromStepId,
       selected.toStepId,
       evalContext,
+      selected.transitionId,
     )
 
     if (!transitionResult.success) {

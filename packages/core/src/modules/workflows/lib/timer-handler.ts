@@ -227,7 +227,8 @@ export async function fireTimer(
     instance,
     instance.currentStepId,
     firstValidTransition.transition.toStepId,
-    transitionContext
+    transitionContext,
+    firstValidTransition.transition.transitionId,
   )
 
   if (!transitionResult.success) {

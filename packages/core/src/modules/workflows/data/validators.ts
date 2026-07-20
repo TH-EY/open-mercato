@@ -280,6 +280,18 @@ export const startPreConditionSchema = z.object({
 export type StartPreCondition = z.infer<typeof startPreConditionSchema>
 
 // Step definition
+const correlationPathSchema = z.string()
+  .min(1)
+  .max(500)
+  .regex(
+    /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/,
+    'Correlation path must use dot-separated object keys',
+  )
+  .refine(
+    (path) => path.split('.').every((segment) => !['__proto__', 'prototype', 'constructor'].includes(segment)),
+    'Correlation path contains an unsafe object key',
+  )
+
 export const workflowStepSchema = z.object({
   stepId: z.string().min(1).max(100).regex(/^[a-z0-9_-]+$/, 'Step ID must contain only lowercase letters, numbers, hyphens, and underscores'),
   stepName: z.string().min(1).max(255),
@@ -291,6 +303,10 @@ export const workflowStepSchema = z.object({
   signalConfig: z.object({
     signalName: z.string().min(1),
     timeout: z.string().optional(),
+    correlation: z.object({
+      contextPath: correlationPathSchema,
+      payloadPath: correlationPathSchema,
+    }).optional(),
   }).optional(),
   activities: z.array(activityDefinitionSchema).optional(),
   timeout: z.string().optional(), // ISO 8601 duration
@@ -298,6 +314,14 @@ export const workflowStepSchema = z.object({
   // Pre-conditions for START step (business rules to validate before workflow can be started)
   preConditions: z.array(startPreConditionSchema).optional(),
 }).superRefine((step, ctx) => {
+  if (step.signalConfig?.correlation && step.signalConfig.signalName.length > 255) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['signalConfig', 'signalName'],
+      message: 'Correlated signal name must be at most 255 characters',
+    })
+  }
+
   if (step.stepType !== 'WAIT_FOR_TIMER') return
   const config = step.config || {}
   const hasDuration = config.duration != null && config.duration !== ''

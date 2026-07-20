@@ -124,6 +124,36 @@ describe('Transition Handler (Unit Tests)', () => {
       expect(result.transition.toStepId).toBe('step-2')
     })
 
+    test('selects the requested transition id when multiple transitions share endpoints', async () => {
+      mockDefinition.definition.transitions = [
+        {
+          transitionId: 'manual-path',
+          fromStepId: 'step-1',
+          toStepId: 'step-2',
+          trigger: 'manual',
+        },
+        {
+          transitionId: 'automatic-path',
+          fromStepId: 'step-1',
+          toStepId: 'step-2',
+          trigger: 'auto',
+        },
+      ] as any
+      mockEm.findOne.mockResolvedValue(mockDefinition)
+
+      const result = await transitionHandler.evaluateTransition(
+        mockEm,
+        mockInstance,
+        'step-1',
+        'step-2',
+        { workflowContext: {} },
+        'automatic-path',
+      )
+
+      expect(result.isValid).toBe(true)
+      expect(result.transition?.transitionId).toBe('automatic-path')
+    })
+
     test('should return false if workflow definition not found', async () => {
       mockEm.findOne.mockResolvedValue(null)
 

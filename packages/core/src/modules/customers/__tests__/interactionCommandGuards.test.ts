@@ -93,6 +93,10 @@ function makeCtx() {
     commit: jest.fn(async () => undefined),
     rollback: jest.fn(async () => undefined),
     flush: jest.fn(async () => undefined),
+    nativeUpdate: jest.fn(async (_entity: unknown, _where: unknown, values: Record<string, unknown>) => {
+      if (loadedInteraction) Object.assign(loadedInteraction, values)
+      return 1
+    }),
   }
   const em = { fork: () => fork }
   const dataEngine = {}
@@ -112,7 +116,7 @@ function makeCtx() {
     organizationIds: [ORG_ID],
     request: new Request('http://localhost/api/customers/todos', { method: 'PUT' }),
   } as unknown as CommandRuntimeContext
-  return { ctx, fork }
+  return { ctx, fork, eventBus }
 }
 
 beforeEach(() => {
@@ -124,7 +128,7 @@ beforeEach(() => {
 describe('customers.interactions.complete — command guard', () => {
   test('awaits the async seam with the interaction updatedAt before mutating', async () => {
     loadedInteraction = makeInteraction()
-    const { ctx } = makeCtx()
+    const { ctx, eventBus } = makeCtx()
 
     await completeInteractionCommand.execute({ id: INTERACTION_ID }, ctx)
 
@@ -136,6 +140,15 @@ describe('customers.interactions.complete — command guard', () => {
       current: UPDATED_AT,
     })
     expect((loadedInteraction as { status: string }).status).toBe('done')
+    expect(eventBus.emitEvent).toHaveBeenCalledWith(
+      'customers.interaction.completed',
+      expect.objectContaining({ id: INTERACTION_ID }),
+      {
+        persistent: true,
+        tenantId: TENANT_ID,
+        organizationId: ORG_ID,
+      },
+    )
   })
 
   test('a seam 409 aborts the write (status not flipped)', async () => {
@@ -154,6 +167,25 @@ describe('customers.interactions.complete — command guard', () => {
     await expect(completeInteractionCommand.execute({ id: INTERACTION_ID }, ctx)).rejects.toMatchObject({ status: 404 })
     expect(recordGoneMock).toHaveBeenCalledTimes(1)
     expect(enforceWithGuardsMock).not.toHaveBeenCalled()
+  })
+
+  test('surfaces enqueue failure and permits an idempotent completion retry to re-emit', async () => {
+    loadedInteraction = makeInteraction()
+    const { ctx, eventBus } = makeCtx()
+    eventBus.emitEvent.mockRejectedValueOnce(new Error('queue unavailable'))
+
+    await expect(completeInteractionCommand.execute({ id: INTERACTION_ID }, ctx))
+      .rejects.toThrow('queue unavailable')
+    expect((loadedInteraction as { status: string }).status).toBe('done')
+
+    await expect(completeInteractionCommand.execute({ id: INTERACTION_ID }, ctx))
+      .resolves.toEqual({ interactionId: INTERACTION_ID })
+    expect(eventBus.emitEvent).toHaveBeenCalledTimes(2)
+    expect(enforceWithGuardsMock).toHaveBeenCalledTimes(1)
+
+    await expect(completeInteractionCommand.execute({ id: INTERACTION_ID }, ctx))
+      .resolves.toEqual({ interactionId: INTERACTION_ID })
+    expect(eventBus.emitEvent).toHaveBeenCalledTimes(2)
   })
 })
 

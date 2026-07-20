@@ -17,6 +17,10 @@ jest.mock('../compensation-handler', () => ({
   compensateWorkflow: jest.fn(),
 }))
 
+jest.mock('../parallel-handler', () => ({
+  advanceBranches: jest.fn(),
+}))
+
 describe('Workflow Executor (Unit Tests)', () => {
   let mockEm: jest.Mocked<EntityManager>
   let mockContainer: jest.Mocked<AwilixContainer>
@@ -543,6 +547,47 @@ describe('Workflow Executor (Unit Tests)', () => {
       expect(result.executionTime).toBe(0)
     })
 
+    test('rolls a branch continuation failure out of the execution transaction', async () => {
+      const mockInstance = {
+        id: testInstanceId,
+        definitionId: testDefinitionId,
+        workflowId: 'parallel-workflow',
+        version: 1,
+        status: 'FORKED',
+        currentStepId: 'fork',
+        context: {},
+        tenantId: testTenantId,
+        organizationId: testOrgId,
+        startedAt: new Date(),
+        retryCount: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as WorkflowInstance
+      const parallelHandler = jest.requireMock('../parallel-handler') as {
+        advanceBranches: jest.Mock
+      }
+      parallelHandler.advanceBranches.mockResolvedValue({
+        outcome: 'failed',
+        error: 'branch activity failed',
+      })
+      mockEm.findOne.mockImplementation(async (_entity: unknown, where: unknown) => {
+        if ((where as Record<string, unknown>)?.id === testInstanceId) return mockInstance
+        if ((where as Record<string, unknown>)?.id === testDefinitionId) return mockDefinition as WorkflowDefinition
+        return null
+      })
+
+      await expect(workflowExecutor.executeWorkflow(
+        mockEm,
+        mockContainer,
+        testInstanceId,
+        { rollbackOnFailure: true },
+      )).rejects.toMatchObject({
+        code: 'CONTINUATION_FAILED',
+      })
+
+      expect(mockInstance.status).toBe('FORKED')
+    })
+
     test('should throw error for cancelled workflow', async () => {
       const mockInstance = {
         id: testInstanceId,
@@ -915,7 +960,10 @@ describe('Workflow Executor (Unit Tests)', () => {
         version: 1,
         status: 'WAITING_FOR_ACTIVITIES',
         currentStepId: 'step1',
-        context: { _pendingAsyncActivities: ['job-1'] },
+        context: {
+          _pendingAsyncActivities: ['job-1'],
+          activities: { existing_activity: { preserved: true } },
+        },
         pendingTransition: null,
         tenantId: testTenantId,
         organizationId: testOrgId,
@@ -949,7 +997,17 @@ describe('Workflow Executor (Unit Tests)', () => {
       ;(mockEm as any).count = jest.fn()
         .mockResolvedValueOnce(1)  // completedActivities
         .mockResolvedValueOnce(0)  // failedActivities
-      ;(mockEm as any).find = jest.fn().mockResolvedValue([])
+      ;(mockEm as any).find = jest.fn().mockResolvedValue([
+        {
+          eventData: {
+            async: true,
+            activityId: 'create_customer_task',
+            activityName: 'Create customer task',
+            activityType: 'CALL_API',
+            output: { body: { id: 'task-123' } },
+          },
+        },
+      ])
 
       await workflowExecutor.resumeWorkflowAfterActivities(mockEm, mockContainer, testInstanceId)
 
@@ -958,6 +1016,14 @@ describe('Workflow Executor (Unit Tests)', () => {
       const lockOption = findOneOptions.find(opt => opt.lockMode !== undefined)
       expect(lockOption).toBeDefined()
       expect(lockOption!.lockMode).toBe(LockMode.PESSIMISTIC_WRITE)
+      expect(mockInstance.context).toEqual(expect.objectContaining({
+        create_customer_task_result: { body: { id: 'task-123' } },
+        activities: {
+          existing_activity: { preserved: true },
+          create_customer_task: { body: { id: 'task-123' } },
+        },
+      }))
+      expect(mockInstance.context._pendingAsyncActivities).toBeUndefined()
     })
 
     test('should reject resume when instance is no longer WAITING_FOR_ACTIVITIES under lock', async () => {
