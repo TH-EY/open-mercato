@@ -3,8 +3,7 @@ import type { InjectionMenuItemWidget } from '@open-mercato/shared/modules/widge
 const widget: InjectionMenuItemWidget = {
   metadata: {
     id: 'workflows.injection.my-tasks-menu',
-    title: 'My workflow tasks navigation item',
-    features: ['workflows.tasks.view'],
+    title: 'Workflow task navigation items',
   },
   menuItems: [
     {
@@ -14,6 +13,19 @@ const widget: InjectionMenuItemWidget = {
       icon: 'ClipboardCheck',
       href: '/backend/tasks',
       features: ['workflows.tasks.view'],
+    },
+    {
+      id: 'workflows-user-tasks-admin',
+      labelKey: 'workflows.tasks.title',
+      label: 'User Tasks',
+      icon: 'ClipboardCheck',
+      href: '/backend/tasks',
+      // The destination needs the page and API read grants, while manage keeps
+      // dependency-complete operational roles out of workflow administration.
+      features: ['workflows.manage', 'workflows.view_tasks', 'workflows.tasks.view'],
+      groupId: 'workflows.module.name',
+      groupLabelKey: 'workflows.module.name',
+      groupLabel: 'Workflows',
     },
   ],
 }

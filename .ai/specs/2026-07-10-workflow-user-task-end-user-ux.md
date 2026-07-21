@@ -236,6 +236,8 @@ No user-facing string or status color is hard-coded. Existing status translation
 ### My Tasks
 
 - Add a top-level injected navigation item `My tasks` linking to `/backend/tasks`, feature-gated by `workflows.tasks.view`.
+- Preserve a separate `User Tasks` item inside the Workflows administrative group for actors who have `workflows.manage`, the frozen `workflows.view_tasks` page grant, and `workflows.tasks.view` for the task API. The generated page route remains `navHidden` so task execution grants and their dependencies cannot recreate the administrative group for operational employees.
+- Operational employees receive only the top-level personal inbox. Workflow managers receive the permission-gated administrative destination; neither route nor API contracts change.
 - The list starts in personal mode and sends `myTasks=true` on every initial/filter/pagination request unless the user explicitly chooses the administrator-only all-tasks view.
 - Show total results from the API. Use the existing task table, semantic status components, loading/error/empty states, and existing row actions.
 - A user without broad task administration does not see an `All tasks` escape hatch.
@@ -287,6 +289,7 @@ Budgets and guardrails:
 - No database migration.
 - Keep frozen ACL IDs, routes, event IDs, entity fields, and notification type ID.
 - Preserve `workflows.view_tasks` as the page-level compatibility feature. Make `workflows.tasks.view` depend on `workflows.view_tasks`, so any role that sees the injected navigation item can open the page; make operational defaults receive the current view/claim/complete features.
+- Do not treat global `navHidden` as the complete navigation policy. It suppresses the generated route entry only; the static task navigation widget owns the distinct personal and administrative destinations with their own feature gates.
 - Keep `workflows.tasks.view/claim/complete` explicit. Do not make `workflows.view_tasks` imply mutation rights.
 - Existing tenant roles require the standard ACL synchronization command after deployment.
 - Existing administrative list calls without `myTasks=true` keep broad organization-scoped behavior.
@@ -310,6 +313,13 @@ Budgets and guardrails:
 3. Add source filters/fields to task list/detail.
 4. Add the injected top-level My Tasks item.
 5. Add the compact deal task widget and localized text.
+
+### Phase 2a: Correct administrative task navigation
+
+1. Keep the task page route hidden from automatic navigation generation so the frozen employee compatibility grant cannot create an administrative group.
+2. Add a grouped `User Tasks` injection requiring workflow management, the legacy task-page grant, and the current task API read grant.
+3. Prove separately that a dependency-complete operational employee sees exactly the top-level inbox and a workflow manager sees the grouped administrative destination.
+4. Deploy and verify this corrective delta without ACL synchronization unless the release diff changes grants or dependencies.
 
 ### Phase 3: Integration coverage and private delivery
 
@@ -357,6 +367,8 @@ Expected areas (exact files may be consolidated during implementation):
 | deal widget desktop/narrow | claim then complete fieldless task | CTA transitions and disappears after workflow advances |
 | deal widget desktop/narrow | form-required task | CTA opens task detail form; no invalid direct completion request |
 | navigation/inbox | operational user | My Tasks visible without definition/instance admin access |
+| navigation/administration | workflow manager | User Tasks visible inside the Workflows group with the legacy route guard preserved |
+| navigation/deduplication | operational user with compatibility grant | exactly one task destination; no Workflows group is introduced by task execution rights |
 
 ## Risks & Impact Review
 
@@ -457,13 +469,19 @@ Expected areas (exact files may be consolidated during implementation):
 
 ### Non-compliant items
 
-None identified in the proposed design. Implementation evidence and exact commands are pending execution.
+None identified in the proposed design. The original THOM-67 delivery evidence is recorded in Jira; the THOM-75 corrective delta has local red-green, typecheck, generation, and lint evidence, while its exact commit, deployment, headed QA, and Jira attachment read-back remain pending.
 
 ### Verdict
 
 Ready for EPC implementation. Security and concurrency behavior are mandatory release gates, not follow-up work.
 
 ## Changelog
+
+### 2026-07-21
+
+- Corrected the navigation contract after THOM-75 exposed that globally hiding the generated task route also removed the administrative destination.
+- Preserved the top-level personal inbox for operators and added a separate grouped destination gated by workflow management plus the existing page and API read grants.
+- Added explicit coverage for a dependency-complete operational role, a workflow manager, wildcard administration, and the frozen route guard; deployment evidence remains pending.
 
 ### 2026-07-10
 
