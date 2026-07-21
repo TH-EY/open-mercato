@@ -511,11 +511,26 @@ if [[ "$deploy_mode" == "config-restart" ]]; then
   fi
   if [[ "$branch" == "fork/manoj" ]]; then
     existing_manoj_app="$(compose ps -q app 2>/dev/null || true)"
-    if [[ -z "$existing_manoj_app" ]] || ! docker exec "$existing_manoj_app" sh -lc \
-      'grep -q -- "--password-env" packages/core/src/modules/auth/cli.ts && grep -q -- "transactionalEm.nativeDelete(Session" packages/core/src/modules/auth/cli.ts'; then
+    if [[ -z "$existing_manoj_app" ]]; then
+      echo "Manoj config restart requires the existing app container." >&2
+      exit 1
+    fi
+    capability_status=0
+    capability_output="$(
+      docker exec "$existing_manoj_app" \
+        corepack yarn mercato auth set-password \
+          --email capability-check.invalid \
+          --user-id 00000000-0000-4000-8000-000000000001 \
+          --tenant-id 00000000-0000-4000-8000-000000000002 \
+          --password-env OM_MISSING_CAPABILITY_PASSWORD 2>&1
+    )" || capability_status=$?
+    if [[ "$capability_status" == "0" || \
+          "$capability_output" != *"--user-id <userId> --tenant-id <tenantId>"* || \
+          "$capability_output" != *"--password-env <environmentVariable>"* ]]; then
       echo "Manoj config restart requires an image with the secure scoped password-rotation CLI; run a full deploy first." >&2
       exit 1
     fi
+    unset capability_output capability_status
   fi
   sync_persistent_postgres_password
   compose up -d --no-deps --no-build --force-recreate app

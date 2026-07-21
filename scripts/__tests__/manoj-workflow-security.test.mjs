@@ -51,6 +51,8 @@ test('Manoj config restart refreshes deployment tooling while preserving .env', 
   assert.match(deployScript, /git -C "\$workdir" clean -fdx -e \.env/)
   assert.match(deployScript, /if \[\[ "\$branch" == "fork\/manoj" \]\]; then\n\s+render_runtime_env/)
   assert.match(deployScript, /secure scoped password-rotation CLI; run a full deploy first/)
+  assert.match(deployScript, /--password-env OM_MISSING_CAPABILITY_PASSWORD/)
+  assert.match(deployScript, /capability_output/)
 })
 
 test('Manoj target is quiesced during recreation and restored on failure', () => {
