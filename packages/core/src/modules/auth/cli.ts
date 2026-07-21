@@ -736,20 +736,32 @@ const setPassword: ModuleCli = {
   command: 'set-password',
   async run(rest) {
     const args: Record<string, string> = {}
-    for (let i = 0; i < rest.length; i += 2) {
-      const k = rest[i]?.replace(/^--/, '')
-      const v = rest[i + 1]
-      if (k) args[k] = v
+    for (let i = 0; i < rest.length; i++) {
+      const token = rest[i]
+      if (!token?.startsWith('--')) continue
+      const key = token.replace(/^--/, '')
+      const next = rest[i + 1]
+      if (next && !next.startsWith('--')) {
+        args[key] = next
+        i++
+      }
     }
 
     const email = args.email
-    const password = args.password
+    const passwordEnv = args['password-env']
+    if (args.password && passwordEnv) {
+      throw new Error('Use only one of --password or --password-env')
+    }
+    const password = passwordEnv ? process.env[passwordEnv] : args.password
 
     if (!email || !password) {
-      console.error('Usage: mercato auth set-password --email <email> --password <newPassword>')
-      return
+      throw new Error(
+        'Usage: mercato auth set-password --email <email> (--password <newPassword> | --password-env <environmentVariable>)',
+      )
     }
-    if (!ensurePasswordPolicy(password)) return
+    if (!ensurePasswordPolicy(password)) {
+      throw new Error('Password does not satisfy the configured password policy')
+    }
 
     const { resolve } = await createRequestContainer()
     const em = resolve('em') as any
@@ -762,8 +774,7 @@ const setPassword: ModuleCli = {
     )
 
     if (!user) {
-      console.error(`User with email "${email}" not found`)
-      return
+      throw new Error(`User with email "${email}" not found`)
     }
 
     user.passwordHash = await hash(password, 10)

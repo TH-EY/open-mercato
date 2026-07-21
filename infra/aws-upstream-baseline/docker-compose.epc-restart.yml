@@ -1,3 +1,5 @@
 services:
   app:
     restart: unless-stopped
+    environment:
+      OM_INIT_SUPERADMIN_PASSWORD: ''
