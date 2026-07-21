@@ -530,6 +530,27 @@
         "customFields": false
       },
       {
+        "id": "catalog:catalog_service",
+        "class": "CatalogService",
+        "table": "catalog_services",
+        "editable": true,
+        "customFields": false
+      },
+      {
+        "id": "catalog:catalog_service_media",
+        "class": "CatalogServiceMedia",
+        "table": "catalog_service_media",
+        "editable": true,
+        "customFields": false
+      },
+      {
+        "id": "catalog:catalog_service_work_requirement",
+        "class": "CatalogServiceWorkRequirement",
+        "table": "catalog_service_work_requirements",
+        "editable": true,
+        "customFields": false
+      },
+      {
         "id": "catalog:catalog_product_unit_conversion",
         "class": "CatalogProductUnitConversion",
         "table": "catalog_product_unit_conversions",
@@ -617,6 +638,21 @@
         "entity": "product"
       },
       {
+        "id": "catalog.service.created",
+        "category": "crud",
+        "entity": "service"
+      },
+      {
+        "id": "catalog.service.updated",
+        "category": "crud",
+        "entity": "service"
+      },
+      {
+        "id": "catalog.service.deleted",
+        "category": "crud",
+        "entity": "service"
+      },
+      {
         "id": "catalog.product_unit_conversion.created",
         "category": "crud",
         "entity": "product_unit_conversion"
@@ -690,6 +726,8 @@
     "aclFeatures": [
       "catalog.products.view",
       "catalog.products.manage",
+      "catalog.services.view",
+      "catalog.services.manage",
       "catalog.categories.view",
       "catalog.categories.manage",
       "catalog.variants.manage",
@@ -971,6 +1009,62 @@
         }
       },
       {
+        "path": "/catalog/services",
+        "methods": [
+          "GET",
+          "POST",
+          "PUT",
+          "DELETE"
+        ],
+        "auth": {
+          "GET": {
+            "requireAuth": true,
+            "requireFeatures": [
+              "catalog.services.view"
+            ]
+          },
+          "POST": {
+            "requireAuth": true,
+            "requireFeatures": [
+              "catalog.services.manage"
+            ]
+          },
+          "PUT": {
+            "requireAuth": true,
+            "requireFeatures": [
+              "catalog.services.manage"
+            ]
+          },
+          "DELETE": {
+            "requireAuth": true,
+            "requireFeatures": [
+              "catalog.services.manage"
+            ]
+          }
+        }
+      },
+      {
+        "path": "/catalog/settings",
+        "methods": [
+          "GET",
+          "PUT"
+        ],
+        "auth": {
+          "GET": {
+            "requireAuth": true,
+            "requireFeatures": [
+              "catalog.products.view"
+            ]
+          },
+          "PUT": {
+            "requireAuth": true,
+            "requireFeatures": [
+              "catalog.settings.manage"
+            ]
+          }
+        }
+      },
+      {
         "path": "/catalog/tags",
         "methods": [
           "GET"
@@ -1039,6 +1133,7 @@
     ],
     "searchEntities": [
       "catalog:catalog_product",
+      "catalog:catalog_service",
       "catalog:catalog_product_variant",
       "catalog:catalog_product_category",
       "catalog:catalog_offer",
@@ -2558,6 +2653,21 @@
             "requireAuth": true,
             "requireFeatures": [
               "customers.deals.manage"
+            ]
+          }
+        }
+      },
+      {
+        "path": "/customers/deals/map",
+        "methods": [
+          "GET"
+        ],
+        "auth": {
+          "GET": {
+            "requireAuth": true,
+            "requireFeatures": [
+              "customers.deals.view",
+              "customers.activities.view"
             ]
           }
         }
@@ -5057,6 +5167,98 @@
         }
       },
       {
+        "path": "/sales/invoices/[id]",
+        "methods": [
+          "GET"
+        ],
+        "auth": {
+          "GET": {
+            "requireAuth": true,
+            "requireFeatures": [
+              "sales.invoices.manage"
+            ]
+          }
+        }
+      },
+      {
+        "path": "/sales/portal/orders/[id]/attachments/[attachmentId]",
+        "methods": [
+          "GET"
+        ],
+        "auth": {}
+      },
+      {
+        "path": "/sales/portal/orders/[id]/attachments",
+        "methods": [
+          "GET"
+        ],
+        "auth": {}
+      },
+      {
+        "path": "/sales/portal/orders/[id]/pdf",
+        "methods": [
+          "GET"
+        ],
+        "auth": {}
+      },
+      {
+        "path": "/sales/portal/orders/[id]",
+        "methods": [
+          "GET"
+        ],
+        "auth": {}
+      },
+      {
+        "path": "/sales/portal/orders/[id]/timeline",
+        "methods": [
+          "GET"
+        ],
+        "auth": {}
+      },
+      {
+        "path": "/sales/portal/quotes/[id]/accept",
+        "methods": [
+          "POST"
+        ],
+        "auth": {}
+      },
+      {
+        "path": "/sales/portal/quotes/[id]/attachments/[attachmentId]",
+        "methods": [
+          "GET"
+        ],
+        "auth": {}
+      },
+      {
+        "path": "/sales/portal/quotes/[id]/attachments",
+        "methods": [
+          "GET"
+        ],
+        "auth": {}
+      },
+      {
+        "path": "/sales/portal/quotes/[id]/comments",
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "auth": {}
+      },
+      {
+        "path": "/sales/portal/quotes/[id]/pdf",
+        "methods": [
+          "GET"
+        ],
+        "auth": {}
+      },
+      {
+        "path": "/sales/portal/quotes/[id]",
+        "methods": [
+          "GET"
+        ],
+        "auth": {}
+      },
+      {
         "path": "/sales/quotes/public/[token]",
         "methods": [
           "GET"
@@ -5080,6 +5282,20 @@
             ]
           }
         }
+      },
+      {
+        "path": "/sales/portal/orders",
+        "methods": [
+          "GET"
+        ],
+        "auth": {}
+      },
+      {
+        "path": "/sales/portal/quotes",
+        "methods": [
+          "GET"
+        ],
+        "auth": {}
       }
     ],
     "diTokens": [
@@ -5126,6 +5342,7 @@
       "seed-tax-rates",
       "seed-statuses",
       "seed-adjustment-kinds",
+      "backfill-deal-loss-reasons",
       "seed-shipping-methods",
       "seed-payment-methods",
       "seed-examples"
@@ -5271,6 +5488,11 @@
         "id": "workflows.activity.failed",
         "category": "lifecycle",
         "entity": null
+      },
+      {
+        "id": "workflows.task.assigned",
+        "category": "lifecycle",
+        "entity": "task"
       },
       {
         "id": "workflows.trigger.created",
