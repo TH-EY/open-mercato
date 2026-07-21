@@ -17,6 +17,7 @@ import { StartPreConditionsEditor } from './fields/StartPreConditionsEditor'
 import { nodeToFormValues, formValuesToNodeUpdates, isJsonSchemaFormat, type NodeFormValues } from '../lib/nodeFormTransforms'
 import { sanitizeId } from '../lib/graph-utils'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
+import { EventPatternInput } from '@open-mercato/ui/backend/inputs/EventPatternInput'
 
 /**
  * JsonConfigEditor - Custom field wrapper for JsonBuilder
@@ -26,6 +27,18 @@ function JsonConfigEditor({ value, setValue, disabled }: CrudCustomFieldRenderPr
     <JsonBuilder
       value={value || {}}
       onChange={setValue}
+      disabled={disabled}
+    />
+  )
+}
+
+function SignalEventInput({ value, setValue, disabled }: CrudCustomFieldRenderProps) {
+  const t = useT()
+  return (
+    <EventPatternInput
+      value={typeof value === 'string' ? value : ''}
+      onChange={setValue}
+      placeholder={t('workflows.form.placeholders.signalName')}
       disabled={disabled}
     />
   )
@@ -427,10 +440,10 @@ export function NodeEditDialogCrudForm({ node, isOpen, onClose, onSave, onDelete
     // WaitForSignal fields
     {
       id: 'signalName',
-      label: 'Signal Name',
-      type: 'text',
-      placeholder: 'approval_received',
-      description: 'Name of the signal to wait for',
+      label: t('workflows.form.signalName'),
+      type: 'custom',
+      component: SignalEventInput,
+      description: t('workflows.form.descriptions.signalName'),
     },
     {
       id: 'signalTimeout',

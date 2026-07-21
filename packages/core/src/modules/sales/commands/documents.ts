@@ -127,6 +127,7 @@ import {
 } from "../lib/types";
 import { resolveDictionaryEntryValue } from "../lib/dictionaries";
 import { resolveStatusEntryIdByValue } from "../lib/statusHelpers";
+import { emitQuoteStatusChanged } from "../lib/quoteStatusEvents";
 import { SalesDocumentNumberGenerator } from "../services/salesDocumentNumberGenerator";
 import { loadSalesSettings } from "./settings";
 import { notificationTypes } from "../notifications";
@@ -3830,7 +3831,11 @@ function applyOrderSnapshot(
 async function restoreQuoteGraph(
   em: EntityManager,
   snapshot: QuoteGraphSnapshot,
-): Promise<SalesQuote> {
+): Promise<{
+  quote: SalesQuote;
+  previousStatus: string | null;
+  restoredExistingQuote: boolean;
+}> {
   let quote = await findOneWithDecryption(
     em,
     SalesQuote,
@@ -3841,6 +3846,8 @@ async function restoreQuoteGraph(
       organizationId: snapshot.quote.organizationId,
     },
   );
+  const restoredExistingQuote = Boolean(quote);
+  const previousStatus = quote?.status ?? null;
   if (!quote) {
     quote = em.create(SalesQuote, {
       id: snapshot.quote.id,
@@ -4126,7 +4133,24 @@ async function restoreQuoteGraph(
     });
   }
 
-  return quote;
+  return { quote, previousStatus, restoredExistingQuote };
+}
+
+async function restoreQuoteGraphWithStatusEvent(
+  em: EntityManager,
+  snapshot: QuoteGraphSnapshot,
+  container: Parameters<typeof emitQuoteStatusChanged>[0],
+): Promise<SalesQuote> {
+  const restoration = await restoreQuoteGraph(em, snapshot);
+  await em.flush();
+  if (restoration.restoredExistingQuote) {
+    await emitQuoteStatusChanged(
+      container,
+      restoration.quote,
+      restoration.previousStatus,
+    );
+  }
+  return restoration.quote;
 }
 
 async function restoreOrderGraph(
@@ -4982,8 +5006,7 @@ const deleteQuoteCommand: CommandHandler<
     if (!before) return;
     const em = (ctx.container.resolve("em") as EntityManager).fork();
     ensureQuoteScope(ctx, before.quote.organizationId, before.quote.tenantId);
-    await restoreQuoteGraph(em, before);
-    await em.flush();
+    await restoreQuoteGraphWithStatusEvent(em, before, ctx.container);
   },
 };
 
@@ -5016,6 +5039,7 @@ const updateQuoteCommand: CommandHandler<
       throw new CrudHttpError(404, { error: "Sales quote not found" });
     ensureQuoteScope(ctx, quote.organizationId, quote.tenantId);
     await enforceSalesDocumentOptimisticLock(ctx, quote, SALES_RESOURCE_KIND_QUOTE);
+    const previousStatus = quote.status ?? null;
     const shouldInvalidateSentToken = (quote.status ?? null) === "sent";
     if (shouldInvalidateSentToken) {
       quote.acceptanceToken = null;
@@ -5155,6 +5179,7 @@ const updateQuoteCommand: CommandHandler<
       ],
       { transaction: true },
     );
+    await emitQuoteStatusChanged(ctx.container, quote, previousStatus);
     const resourceKind =
       deriveResourceFromCommandId(updateQuoteCommand.id) ?? "sales.quote";
     await invalidateCrudCache(
@@ -5214,8 +5239,7 @@ const updateQuoteCommand: CommandHandler<
     if (!before) return;
     const em = (ctx.container.resolve("em") as EntityManager).fork();
     ensureQuoteScope(ctx, before.quote.organizationId, before.quote.tenantId);
-    await restoreQuoteGraph(em, before);
-    await em.flush();
+    await restoreQuoteGraphWithStatusEvent(em, before, ctx.container);
   },
 };
 
@@ -6506,8 +6530,7 @@ const convertQuoteToOrderCommand: CommandHandler<
     if (noteIds.length) {
       await em.nativeDelete(SalesNote, { id: { $in: noteIds } });
     }
-    await restoreQuoteGraph(em, quoteSnapshot);
-    await em.flush();
+    await restoreQuoteGraphWithStatusEvent(em, quoteSnapshot, ctx.container);
   },
 };
 
@@ -7377,8 +7400,7 @@ const quoteLineUpsertCommand: CommandHandler<
     if (!before) return;
     const em = (ctx.container.resolve("em") as EntityManager).fork();
     ensureQuoteScope(ctx, before.quote.organizationId, before.quote.tenantId);
-    await restoreQuoteGraph(em, before);
-    await em.flush();
+    await restoreQuoteGraphWithStatusEvent(em, before, ctx.container);
   },
 };
 
@@ -7531,8 +7553,7 @@ const quoteLineDeleteCommand: CommandHandler<
     if (!before) return;
     const em = (ctx.container.resolve("em") as EntityManager).fork();
     ensureQuoteScope(ctx, before.quote.organizationId, before.quote.tenantId);
-    await restoreQuoteGraph(em, before);
-    await em.flush();
+    await restoreQuoteGraphWithStatusEvent(em, before, ctx.container);
   },
 };
 
@@ -8282,8 +8303,7 @@ const quoteAdjustmentUpsertCommand: CommandHandler<
     if (!before) return;
     const em = (ctx.container.resolve("em") as EntityManager).fork();
     ensureQuoteScope(ctx, before.quote.organizationId, before.quote.tenantId);
-    await restoreQuoteGraph(em, before);
-    await em.flush();
+    await restoreQuoteGraphWithStatusEvent(em, before, ctx.container);
   },
 };
 
@@ -8446,8 +8466,7 @@ const quoteAdjustmentDeleteCommand: CommandHandler<
     if (!before) return;
     const em = (ctx.container.resolve("em") as EntityManager).fork();
     ensureQuoteScope(ctx, before.quote.organizationId, before.quote.tenantId);
-    await restoreQuoteGraph(em, before);
-    await em.flush();
+    await restoreQuoteGraphWithStatusEvent(em, before, ctx.container);
   },
 };
 

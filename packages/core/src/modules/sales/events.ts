@@ -15,6 +15,7 @@ const events = [
   { id: 'sales.quote.created', label: 'Quote Created', entity: 'quote', category: 'crud' },
   { id: 'sales.quote.updated', label: 'Quote Updated', entity: 'quote', category: 'crud' },
   { id: 'sales.quote.deleted', label: 'Quote Deleted', entity: 'quote', category: 'crud' },
+  { id: 'sales.quote.status_changed', label: 'Quote Status Changed', entity: 'quote', category: 'lifecycle' },
 
   // Invoices
   { id: 'sales.invoice.created', label: 'Invoice Created', entity: 'invoice', category: 'crud' },

@@ -4221,6 +4221,11 @@
         "entity": "quote"
       },
       {
+        "id": "sales.quote.status_changed",
+        "category": "lifecycle",
+        "entity": "quote"
+      },
+      {
         "id": "sales.invoice.created",
         "category": "crud",
         "entity": "invoice"

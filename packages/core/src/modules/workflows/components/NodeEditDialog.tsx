@@ -26,6 +26,7 @@ import {useDialogKeyHandler} from '@open-mercato/ui/hooks/useDialogKeyHandler'
 import {useConfirmDialog} from '@open-mercato/ui/backend/confirm-dialog'
 import {isFutureIsoDateString, isValidDurationString} from '../data/validators'
 import {mergeAdvancedNodeConfig} from '../lib/nodeConfigMerge'
+import {EventPatternInput} from '@open-mercato/ui/backend/inputs/EventPatternInput'
 
 export interface NodeEditDialogProps {
   node: Node | null
@@ -1436,10 +1437,9 @@ export function NodeEditDialog({ node, isOpen, onClose, onSave, onDelete }: Node
                     <label className="block text-sm font-medium text-foreground mb-1">
                       {t('workflows.form.signalName')} *
                     </label>
-                    <Input
-                      type="text"
+                    <EventPatternInput
                       value={signalName}
-                      onChange={(e) => setSignalName(e.target.value)}
+                      onChange={setSignalName}
                       placeholder={t('workflows.form.placeholders.signalName')}
                     />
                     <p className="text-xs text-muted-foreground mt-1">

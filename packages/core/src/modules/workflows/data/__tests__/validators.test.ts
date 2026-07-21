@@ -417,6 +417,21 @@ describe('Workflows Validators', () => {
       expect(result.preConditions?.[0].ruleId).toBe('check-inventory')
     })
 
+    test('should preserve a safe inline transition condition', () => {
+      const condition = {
+        field: 'signals.wait_for_quote_status.payload.status',
+        operator: '=',
+        value: 'confirmed',
+      }
+
+      const result = workflowTransitionSchema.parse({
+        ...validTransition,
+        condition,
+      })
+
+      expect(result.condition).toEqual(condition)
+    })
+
     test('should validate transition with activities', () => {
       const withActivities = {
         ...validTransition,

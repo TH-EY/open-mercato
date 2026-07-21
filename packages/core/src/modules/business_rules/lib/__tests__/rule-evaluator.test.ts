@@ -1,4 +1,4 @@
-import { describe, test, expect } from '@jest/globals'
+import { describe, test, expect, jest } from '@jest/globals'
 import {
   evaluate,
   evaluateSingleRule,
@@ -176,6 +176,26 @@ describe('RuleEvaluatorService', () => {
       const result = await evaluateConditions(conditions, { status: 'ACTIVE' }, {})
 
       expect(result).toBe(true)
+    })
+
+    test('does not log resolved or expected condition values', async () => {
+      const actualSecret = 'customer@example.test'
+      const expectedSecret = 'operator-probe-value'
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined)
+
+      try {
+        await evaluateConditions(
+          { field: 'customer.email', operator: '=', value: expectedSecret },
+          { customer: { email: actualSecret } },
+          {},
+        )
+
+        const serializedLogs = JSON.stringify(logSpy.mock.calls)
+        expect(serializedLogs).not.toContain(actualSecret)
+        expect(serializedLogs).not.toContain(expectedSecret)
+      } finally {
+        logSpy.mockRestore()
+      }
     })
 
     test('should evaluate group conditions', async () => {

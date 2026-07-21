@@ -10,12 +10,17 @@ import { commandRegistry } from '@open-mercato/shared/lib/commands/registry'
 
 const mockCommandBus = { execute: jest.fn() }
 const mockRateLimiterService = { trustProxyDepth: 1, consume: jest.fn() }
+const mockEventBus = { emitEvent: jest.fn().mockResolvedValue(undefined) }
 const mockEm: Record<string, jest.Mock> = {
   fork: jest.fn(),
   findOne: jest.fn(),
   find: jest.fn(),
   persist: jest.fn(),
   flush: jest.fn(),
+  nativeDelete: jest.fn(),
+  getReference: jest.fn(),
+  create: jest.fn((_entity, data) => data),
+  getUnitOfWork: jest.fn(() => ({ unsetIdentity: jest.fn() })),
   begin: jest.fn().mockResolvedValue(undefined),
   commit: jest.fn().mockResolvedValue(undefined),
   rollback: jest.fn().mockResolvedValue(undefined),
@@ -31,6 +36,7 @@ jest.mock('@open-mercato/shared/lib/di/container', () => ({
     resolve: (token: string) => {
       if (token === 'commandBus') return mockCommandBus
       if (token === 'em') return mockEm
+      if (token === 'eventBus') return mockEventBus
       if (token === 'accessLogService') return null
       return null
     },
@@ -79,6 +85,7 @@ describe('quote send + accept flow', () => {
   beforeEach(async () => {
     jest.clearAllMocks()
     mockEm.fork.mockReturnValue(mockEm)
+    mockEm.transactional.mockImplementation(async (callback: (trx: any) => Promise<unknown>) => callback(mockEm))
     mockRateLimiterService.consume.mockResolvedValue({ allowed: true, remainingPoints: 9, msBeforeNext: 0 })
     const { getAuthFromRequest } = await import('@open-mercato/shared/lib/auth/server')
     const { getCachedRateLimiterService } = await import('@open-mercato/core/bootstrap')
@@ -133,6 +140,80 @@ describe('quote send + accept flow', () => {
     // Send-state is now persisted inside em.transactional (committed before the email), not via a bare em.flush.
     expect(mockEm.transactional).toHaveBeenCalled()
     expect(mockEm.persist).toHaveBeenCalledWith(quote)
+    expect(mockEventBus.emitEvent).toHaveBeenCalledWith(
+      'sales.quote.status_changed',
+      expect.objectContaining({
+        id: quote.id,
+        previousStatus: 'draft',
+        status: 'sent',
+      }),
+      {
+        persistent: true,
+        tenantId: quote.tenantId,
+        organizationId: quote.organizationId,
+      },
+    )
+  })
+
+  test('concurrent sends publish the draft-to-sent transition only once', async () => {
+    const quote = {
+      id: '22222222-2222-4222-8222-222222222223',
+      tenantId: '00000000-0000-4000-8000-000000000000',
+      organizationId: '11111111-1111-4111-8111-111111111111',
+      quoteNumber: 'SQ-2',
+      currencyCode: 'USD',
+      grandTotalGrossAmount: '10',
+      status: 'draft',
+      statusEntryId: null,
+      customerSnapshot: { customer: { primaryEmail: 'test@example.com' } },
+      metadata: null,
+      updatedAt: new Date(),
+      validUntil: null,
+      sentAt: null,
+      acceptanceToken: null,
+    }
+
+    mockEm.findOne.mockImplementation(async (cls: any, where: any) => {
+      if (cls === SalesQuote) return where?.id === quote.id ? quote : null
+      if (cls === Dictionary) return { id: 'dict-1' }
+      if (cls === DictionaryEntry) return { id: 'entry-sent' }
+      return null
+    })
+
+    const pendingTransactions: Array<{
+      callback: (trx: any) => Promise<unknown>
+      resolve: (value: unknown) => void
+      reject: (reason: unknown) => void
+    }> = []
+    mockEm.transactional.mockImplementation((callback: (trx: any) => Promise<unknown>) =>
+      new Promise((resolve, reject) => {
+        pendingTransactions.push({ callback, resolve, reject })
+        if (pendingTransactions.length !== 2) return
+        void (async () => {
+          for (const pending of pendingTransactions) {
+            try {
+              pending.resolve(await pending.callback(mockEm))
+            } catch (error) {
+              pending.reject(error)
+            }
+          }
+        })()
+      }),
+    )
+
+    const [first, second] = await Promise.all([
+      sendQuote(makeRequest({ quoteId: quote.id, validForDays: 14 })),
+      sendQuote(makeRequest({ quoteId: quote.id, validForDays: 14 })),
+    ])
+
+    expect(first.status).toBe(200)
+    expect(second.status).toBe(200)
+    expect(mockEventBus.emitEvent).toHaveBeenCalledTimes(1)
+    expect(mockEm.findOne).toHaveBeenCalledWith(
+      SalesQuote,
+      expect.objectContaining({ id: quote.id }),
+      expect.objectContaining({ lockMode: LockMode.PESSIMISTIC_WRITE }),
+    )
   })
 
   test('accept falls back to raw token lookup for quotes sent before hashing rollout', async () => {
@@ -167,6 +248,20 @@ describe('quote send + accept flow', () => {
     expect(seenWhereTokens[0]).toBe(hashAuthToken(LEGACY_RAW_TOKEN))
     expect(seenWhereTokens[1]).toBe(LEGACY_RAW_TOKEN)
     expect(legacyQuote.status).toBe('confirmed')
+    expect(mockEventBus.emitEvent).toHaveBeenCalledWith(
+      'sales.quote.status_changed',
+      expect.objectContaining({
+        id: legacyQuote.id,
+        previousStatus: 'sent',
+        status: 'confirmed',
+        orderId: 'order-legacy',
+      }),
+      {
+        persistent: true,
+        tenantId: legacyQuote.tenantId,
+        organizationId: legacyQuote.organizationId,
+      },
+    )
   })
 
   test('public view returns expired flag', async () => {
@@ -222,6 +317,46 @@ describe('quote send + accept flow', () => {
     expect(mockCommandBus.execute).toHaveBeenCalledWith(
       'sales.quotes.convert_to_order',
       expect.objectContaining({ input: { quoteId: quote.id } })
+    )
+  })
+
+  test('accept publishes the status event before a post-commit order lookup can fail', async () => {
+    const quote = {
+      id: '22222222-2222-4222-8222-222222222224',
+      tenantId: '00000000-0000-4000-8000-000000000000',
+      organizationId: '11111111-1111-4111-8111-111111111111',
+      quoteNumber: 'SQ-3',
+      status: 'sent',
+      statusEntryId: null,
+      validUntil: new Date(Date.now() + 60_000),
+      updatedAt: new Date(),
+    }
+
+    mockEm.findOne.mockImplementation(async (cls: any, where: any) => {
+      if (cls === SalesQuote) return where?.acceptanceToken ? quote : null
+      if (cls === Dictionary) return { id: 'dict-1' }
+      if (cls === DictionaryEntry) return { id: 'entry-confirmed' }
+      if (cls === SalesOrder) throw new Error('post-commit order lookup failed')
+      return null
+    })
+    mockCommandBus.execute.mockResolvedValue({ result: { orderId: 'order-lookup-failure' }, logEntry: null })
+
+    const res = await acceptQuote(makeAcceptRequest({ token: '00000000-0000-4000-8000-000000000000' }))
+
+    expect(res.status).toBe(400)
+    expect(mockEventBus.emitEvent).toHaveBeenCalledWith(
+      'sales.quote.status_changed',
+      expect.objectContaining({
+        id: quote.id,
+        previousStatus: 'sent',
+        status: 'confirmed',
+        orderId: 'order-lookup-failure',
+      }),
+      {
+        persistent: true,
+        tenantId: quote.tenantId,
+        organizationId: quote.organizationId,
+      },
     )
   })
 
@@ -734,7 +869,13 @@ describe('quote editing invalidates sent token', () => {
     mockEm.flush.mockResolvedValue(undefined)
 
     const ctx: any = {
-      container: { resolve: (token: string) => (token === 'em' ? mockEm : null) },
+      container: {
+        resolve: (token: string) => {
+          if (token === 'em') return mockEm
+          if (token === 'eventBus') return mockEventBus
+          return null
+        },
+      },
       auth: { sub: 'user-1', tenantId: quote.tenantId, orgId: quote.organizationId },
       organizationScope: null,
       selectedOrganizationId: quote.organizationId,
@@ -746,6 +887,88 @@ describe('quote editing invalidates sent token', () => {
     expect(quote.acceptanceToken).toBeNull()
     expect(quote.sentAt).toBeNull()
     expect(quote.status).toBe('draft')
+    expect(mockEventBus.emitEvent).toHaveBeenCalledWith(
+      'sales.quote.status_changed',
+      expect.objectContaining({
+        id: quote.id,
+        previousStatus: 'sent',
+        status: 'draft',
+      }),
+      {
+        persistent: true,
+        tenantId: quote.tenantId,
+        organizationId: quote.organizationId,
+      },
+    )
+  })
+
+  test('undo emits when restoring a different quote status', async () => {
+    await import('@open-mercato/core/modules/sales/commands/documents')
+
+    const handler = commandRegistry.get<any, any>('sales.quotes.update')
+    expect(handler?.undo).toBeTruthy()
+
+    const quote: any = {
+      id: '33333333-3333-4333-8333-333333333333',
+      tenantId: '00000000-0000-4000-8000-000000000000',
+      organizationId: '11111111-1111-4111-8111-111111111111',
+      status: 'draft',
+      statusEntryId: 'entry-draft',
+    }
+    const quoteSnapshot = {
+      quote: {
+        ...quote,
+        quoteNumber: 'SQ-UNDO-1',
+        status: 'sent',
+        statusEntryId: 'entry-sent',
+        currencyCode: 'USD',
+        customFields: null,
+      },
+      lines: [],
+      adjustments: [],
+      addresses: [],
+      notes: [],
+      tags: [],
+    }
+
+    mockEm.fork.mockReturnValue(mockEm)
+    mockEm.findOne.mockResolvedValue(quote)
+    mockEm.find.mockResolvedValue([])
+    mockEm.flush.mockResolvedValue(undefined)
+    mockEm.nativeDelete.mockResolvedValue(undefined)
+
+    const ctx: any = {
+      container: {
+        resolve: (token: string) => {
+          if (token === 'em') return mockEm
+          if (token === 'eventBus') return mockEventBus
+          return null
+        },
+      },
+      auth: { sub: 'user-1', tenantId: quote.tenantId, orgId: quote.organizationId },
+      organizationScope: null,
+      selectedOrganizationId: quote.organizationId,
+      organizationIds: [quote.organizationId],
+    }
+
+    await handler!.undo!({
+      logEntry: { payload: { undo: { before: quoteSnapshot } } },
+      ctx,
+    })
+
+    expect(mockEventBus.emitEvent).toHaveBeenCalledWith(
+      'sales.quote.status_changed',
+      expect.objectContaining({
+        id: quote.id,
+        previousStatus: 'draft',
+        status: 'sent',
+      }),
+      {
+        persistent: true,
+        tenantId: quote.tenantId,
+        organizationId: quote.organizationId,
+      },
+    )
   })
 })
 

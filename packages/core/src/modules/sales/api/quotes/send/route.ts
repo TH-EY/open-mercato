@@ -14,6 +14,7 @@ import {
   type MutationGuardInput,
 } from '@open-mercato/shared/lib/crud/mutation-guard-registry'
 import type { EntityManager } from '@mikro-orm/postgresql'
+import { LockMode } from '@mikro-orm/core'
 import crypto from 'node:crypto'
 import { withScopedPayload } from '../../utils'
 import { hashAuthToken } from '../../../../auth/lib/tokenHash'
@@ -23,6 +24,7 @@ import { SalesQuote } from '../../../data/entities'
 import { quoteSendSchema } from '../../../data/validators'
 import { sendEmail } from '@open-mercato/shared/lib/email/send'
 import { resolveStatusEntryIdByValue } from '../../../lib/statusHelpers'
+import { emitQuoteStatusChanged } from '../../../lib/quoteStatusEvents'
 import { QuoteSentEmail } from '../../../emails/QuoteSentEmail'
 
 export const metadata = {
@@ -157,23 +159,6 @@ export async function POST(req: Request) {
     const tenantScope = ctx.auth?.tenantId
       ? { tenantId: ctx.auth.tenantId, organizationId: ctx.selectedOrganizationId ?? ctx.auth.orgId ?? null }
       : undefined
-    const quote = await findOneWithDecryption(em, SalesQuote, { id: input.quoteId, deletedAt: null }, {}, tenantScope)
-    if (!quote) {
-      throw new CrudHttpError(404, { error: translate('sales.documents.detail.error', 'Document not found or inaccessible.') })
-    }
-    if (quote.tenantId !== ctx.auth?.tenantId || quote.organizationId !== ctx.selectedOrganizationId) {
-      throw new CrudHttpError(403, { error: translate('sales.documents.errors.forbidden', 'Forbidden') })
-    }
-
-    if ((quote.status ?? null) === 'canceled') {
-      throw new CrudHttpError(400, { error: translate('sales.quotes.send.canceled', 'Canceled quotes cannot be sent.') })
-    }
-
-    const email = resolveQuoteEmail(quote)
-    if (!email) {
-      throw new CrudHttpError(400, { error: translate('sales.quotes.send.missingEmail', 'Customer email is required to send a quote.') })
-    }
-
     const now = new Date()
     const validUntil = new Date(now)
     validUntil.setUTCDate(validUntil.getUTCDate() + input.validForDays)
@@ -183,7 +168,30 @@ export async function POST(req: Request) {
     // Persist the send state (status/token/sentAt) atomically and commit it
     // BEFORE the email goes out, so a customer never receives a link whose
     // acceptance token was not durably stored.
-    await em.transactional(async (tx) => {
+    const { quote, email, previousStatus } = await em.transactional(async (tx) => {
+      const quote = await findOneWithDecryption(
+        tx,
+        SalesQuote,
+        { id: input.quoteId, deletedAt: null },
+        { lockMode: LockMode.PESSIMISTIC_WRITE },
+        tenantScope,
+      )
+      if (!quote) {
+        throw new CrudHttpError(404, { error: translate('sales.documents.detail.error', 'Document not found or inaccessible.') })
+      }
+      if (quote.tenantId !== ctx.auth?.tenantId || quote.organizationId !== ctx.selectedOrganizationId) {
+        throw new CrudHttpError(403, { error: translate('sales.documents.errors.forbidden', 'Forbidden') })
+      }
+      if ((quote.status ?? null) === 'canceled') {
+        throw new CrudHttpError(400, { error: translate('sales.quotes.send.canceled', 'Canceled quotes cannot be sent.') })
+      }
+
+      const email = resolveQuoteEmail(quote)
+      if (!email) {
+        throw new CrudHttpError(400, { error: translate('sales.quotes.send.missingEmail', 'Customer email is required to send a quote.') })
+      }
+
+      const previousStatus = quote.status ?? null
       quote.validUntil = validUntil
       quote.acceptanceToken = hashAuthToken(rawAcceptanceToken)
       quote.sentAt = now
@@ -195,7 +203,10 @@ export async function POST(req: Request) {
       })
       quote.updatedAt = now
       tx.persist(quote)
+      return { quote, email, previousStatus }
     })
+
+    await emitQuoteStatusChanged(ctx.container, quote, previousStatus)
 
     const appUrl = process.env.APP_URL || ''
     const url = appUrl ? `${appUrl.replace(/\/$/, '')}/quote/${rawAcceptanceToken}` : `/quote/${rawAcceptanceToken}`

@@ -39,7 +39,7 @@ export interface EdgeFormValues {
   preConditions: NormalizedCondition[]
   postConditions: NormalizedCondition[]
   activities: Activity[]
-  advancedConfig?: string
+  advancedConfig?: Record<string, any> | string
 }
 
 /**
@@ -100,7 +100,7 @@ export function edgeToFormValues(edge: Edge): EdgeFormValues {
     preConditions: normalizeConditions(edgeData?.preConditions || []),
     postConditions: normalizeConditions(edgeData?.postConditions || []),
     activities: edgeData?.activities || [],
-    advancedConfig: '', // Advanced config is empty initially (can be populated from edgeData if needed)
+    advancedConfig: omitManagedEdgeDataKeys(edgeData),
   }
 }
 
@@ -124,10 +124,14 @@ export function formValuesToEdgeUpdates(
     activities: values.activities.length > 0 ? values.activities : undefined,
   }
 
-  // Parse advanced config (JSON) and merge
-  if (values.advancedConfig && values.advancedConfig.trim()) {
+  // Parse legacy string values or merge the object emitted by JsonBuilder.
+  if (values.advancedConfig) {
     try {
-      const parsed = JSON.parse(values.advancedConfig)
+      const parsed = typeof values.advancedConfig === 'string'
+        ? values.advancedConfig.trim()
+          ? JSON.parse(values.advancedConfig)
+          : {}
+        : values.advancedConfig
       Object.assign(updates, omitManagedEdgeDataKeys(parsed))
     } catch (error) {
       console.error('Invalid JSON in Advanced Configuration:', error)

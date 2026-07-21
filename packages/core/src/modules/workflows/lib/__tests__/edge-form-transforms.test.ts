@@ -112,4 +112,29 @@ describe('edge form transforms', () => {
       }),
     ])
   })
+
+  it('round-trips an inline transition condition through advanced config', () => {
+    const condition = {
+      field: 'signals.wait_for_quote_status.payload.status',
+      operator: '=',
+      value: 'confirmed',
+    }
+    const edge = {
+      id: 'wait_to_end',
+      source: 'wait',
+      target: 'end',
+      data: {
+        transitionName: 'Wait to end',
+        trigger: 'auto',
+        priority: 100,
+        condition,
+      },
+    } as unknown as Edge
+
+    const values = edgeToFormValues(edge)
+    expect(values.advancedConfig).toEqual({ condition })
+
+    const updates = formValuesToEdgeUpdates(values, edge)
+    expect((updates as any).condition).toEqual(condition)
+  })
 })

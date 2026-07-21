@@ -83,13 +83,12 @@ function evaluateSimpleCondition(
 
   const result = applyOperator(leftValue, condition.operator, rightValue)
 
-  // Detailed logging for debugging
+  // Keep diagnostics useful without copying workflow-context values into logs.
   console.log('[RULE EVAL] Simple condition:', {
     field: condition.field,
     operator: condition.operator,
-    expectedValue: rightValue,
-    actualValue: leftValue,
-    actualValueType: typeof leftValue,
+    expectedValueType: Array.isArray(rightValue) ? 'array' : rightValue === null ? 'null' : typeof rightValue,
+    actualValueType: Array.isArray(leftValue) ? 'array' : leftValue === null ? 'null' : typeof leftValue,
     result: result ? '✓ PASS' : '✗ FAIL',
   })
 

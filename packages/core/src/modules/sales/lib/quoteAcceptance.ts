@@ -7,6 +7,7 @@ import type { createRequestContainer } from '@open-mercato/shared/lib/di/contain
 import { sendEmail } from '@open-mercato/shared/lib/email/send'
 import { SalesNote, SalesOrder, SalesQuote } from '../data/entities'
 import { resolveStatusEntryIdByValue } from './statusHelpers'
+import { emitQuoteStatusChanged } from './quoteStatusEvents'
 import { QuoteAcceptedAdminEmail } from '../emails/QuoteAcceptedAdminEmail'
 
 type RequestContainer = Awaited<ReturnType<typeof createRequestContainer>>
@@ -142,7 +143,7 @@ export async function acceptQuoteAndConvertToOrder(input: AcceptQuoteInput): Pro
   const commandBus = input.container.resolve('commandBus') as CommandBus
   const encryptionScope = buildEncryptionScope(input.scope)
 
-  const { quote, orderId } = await input.em.transactional(async (trx) => {
+  const { quote, orderId, previousStatus } = await input.em.transactional(async (trx) => {
     const quote = await input.loadQuoteForUpdate(trx)
     if (!quote) {
       throw new CrudHttpError(404, { error: input.translate('sales.quotes.accept.notFound', 'Quote not found.') })
@@ -166,6 +167,7 @@ export async function acceptQuoteAndConvertToOrder(input: AcceptQuoteInput): Pro
     }
 
     const acceptanceAudit = buildPortalAcceptanceAudit(input.acceptedBy, now)
+    const previousStatus = quote.status ?? null
 
     quote.status = 'confirmed'
     quote.statusEntryId = await resolveStatusEntryIdByValue(trx, {
@@ -239,8 +241,10 @@ export async function acceptQuoteAndConvertToOrder(input: AcceptQuoteInput): Pro
       await trx.flush()
     }
 
-    return { quote, orderId }
+    return { quote, orderId, previousStatus }
   })
+
+  await emitQuoteStatusChanged(input.container, quote, previousStatus, { orderId })
 
   const order = await findOneWithDecryption(input.em, SalesOrder, { id: orderId, deletedAt: null }, {}, encryptionScope)
   const orderNumber = order?.orderNumber ?? orderId

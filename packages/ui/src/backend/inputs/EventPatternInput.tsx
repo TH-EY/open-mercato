@@ -42,10 +42,19 @@ export function EventPatternInput({
     [events]
   )
 
+  const handleInputValueChange = React.useCallback((input: string) => {
+    const normalized = input.trim().toLowerCase()
+    const matched = suggestions.find((option) =>
+      option.value === input.trim() || option.label.toLowerCase() === normalized,
+    )
+    onChange(matched?.value ?? input)
+  }, [onChange, suggestions])
+
   return (
     <ComboboxInput
       value={value}
       onChange={onChange}
+      onInputValueChange={handleInputValueChange}
       placeholder={resolvedPlaceholder}
       suggestions={suggestions}
       allowCustomValues={true}

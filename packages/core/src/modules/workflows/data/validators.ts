@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { parseDuration } from '../lib/duration'
+import { conditionExpressionSchema } from '../../business_rules/data/validators'
 
 /**
  * Workflows Module - Zod Validators
@@ -379,6 +380,7 @@ export const workflowTransitionSchema = z.object({
   toStepId: z.string().min(1).max(100),
   transitionName: z.string().max(255).optional(),
   trigger: transitionTriggerSchema,
+  condition: conditionExpressionSchema,
   preConditions: z.array(transitionConditionSchema).optional(),
   postConditions: z.array(transitionConditionSchema).optional(),
   activities: z.array(activityDefinitionSchema).optional(), // Activities to execute during transition

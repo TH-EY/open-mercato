@@ -15,6 +15,7 @@ export type ComboboxOption = {
 export type ComboboxInputProps = {
   value: string
   onChange: (next: string) => void
+  onInputValueChange?: (next: string) => void
   placeholder?: string
   suggestions?: Array<string | ComboboxOption>
   // Options to hydrate the option map up front (typically the linked entity's
@@ -67,6 +68,7 @@ function areOptionsEqual(a: ComboboxOption[], b: ComboboxOption[]): boolean {
 export function ComboboxInput({
   value,
   onChange,
+  onInputValueChange,
   placeholder,
   suggestions,
   seedOptions,
@@ -408,8 +410,10 @@ export function ComboboxInput({
           setShowSuggestions(true)
         }}
         onChange={(event) => {
+          const nextInput = event.target.value
           setTouched(true)
-          setInput(event.target.value)
+          setInput(nextInput)
+          onInputValueChange?.(nextInput)
           setShowSuggestions(true)
           setSelectedIndex(-1)
         }}
