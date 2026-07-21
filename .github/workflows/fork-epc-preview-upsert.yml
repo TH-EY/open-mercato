@@ -479,7 +479,7 @@ jobs:
           set +a
 
           compose() {
-            COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml "$@"
+            COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml -f infra/aws-upstream-baseline/docker-compose.epc-restart.yml "$@"
           }
 
           existing_epc_postgres="$(compose ps -q postgres 2>/dev/null || true)"
@@ -509,6 +509,18 @@ jobs:
           fi
 
           compose up -d --no-deps --no-build --force-recreate app
+          app_container="$(compose ps -q --all app)"
+          if [[ -z "$app_container" ]]; then
+            echo "EPC preview app container was not created." >&2
+            exit 1
+          fi
+          docker update --restart unless-stopped "$app_container" >/dev/null
+          restart_policy="$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$app_container")"
+          if [[ "$restart_policy" != "unless-stopped" ]]; then
+            echo "Unexpected EPC preview app restart policy: ${restart_policy}" >&2
+            exit 1
+          fi
+          echo "EPC preview app restart policy: ${restart_policy}"
           compose ps app
           SSM
           } | bash infra/aws-upstream-baseline/ssm-run-step.sh
