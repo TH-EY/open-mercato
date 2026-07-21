@@ -374,7 +374,6 @@ jobs:
           postgres_user="$(dotenv_value POSTGRES_USER 2>/dev/null || true)"
           postgres_database="$(dotenv_value POSTGRES_DB 2>/dev/null || true)"
           admin_email="$(dotenv_value OM_INIT_SUPERADMIN_EMAIL)"
-
           if [[ -z "$admin_email" ]]; then
             echo "Missing EPC preview administrator email." >&2
             exit 1
@@ -521,16 +520,23 @@ jobs:
             COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml -f infra/aws-upstream-baseline/docker-compose.epc-restart.yml "$@"
           }
 
+          existing_epc_app="$(compose ps -q app 2>/dev/null || true)"
           existing_epc_postgres="$(compose ps -q postgres 2>/dev/null || true)"
-          if [[ -z "$existing_epc_postgres" ]]; then
-            echo "EPC lifecycle deployment requires an existing running PostgreSQL container; secure first-time provisioning is a separate procedure." >&2
+          if [[ -z "$existing_epc_app" || -z "$existing_epc_postgres" ]]; then
+            echo "EPC lifecycle deployment requires existing running app and PostgreSQL containers; secure first-time provisioning is a separate procedure." >&2
             exit 1
           fi
 
-          admin_exists_sql="$(
+          admin_email_hashes="$(
             printf '%s' "$admin_email" \
-              | python3 -c 'import sys; email = sys.stdin.read().replace("'\''", "'\'''\''"); print(f"select exists (select 1 from users where lower(email) = lower('"'"'{email}'"'"') and deleted_at is null)::int;")'
+              | docker exec -i "$existing_epc_app" node --input-type=module -e \
+                  'const chunks=[]; for await (const chunk of process.stdin) chunks.push(chunk); const email=Buffer.concat(chunks).toString("utf8"); const mod=await import("@open-mercato/core/modules/auth/lib/emailHash"); process.stdout.write(JSON.stringify(mod.emailHashLookupValues(email)));'
           )"
+          admin_exists_sql="$(
+            printf '%s' "$admin_email_hashes" \
+              | python3 infra/aws-upstream-baseline/render-postgres-email-hashes-exists-sql.py
+          )"
+          unset admin_email_hashes
           if ! admin_exists="$(
             printf '%s\n' "$admin_exists_sql" \
               | docker exec -i "$existing_epc_postgres" psql -U "${postgres_user:-postgres}" -d "${postgres_database:-postgres}" -v ON_ERROR_STOP=1 -At -f -
@@ -538,7 +544,7 @@ jobs:
             echo "EPC lifecycle deployment requires the expected existing administrator; refusing insecure first-time initialization." >&2
             exit 1
           fi
-          unset admin_exists_sql admin_exists
+          unset admin_exists_sql admin_exists existing_epc_app
 
           if [[ -n "$postgres_password" ]]; then
             pg_password_sql="$(

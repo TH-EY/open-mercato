@@ -64,7 +64,9 @@ test('EPC deploy synchronizes the existing administrator from the host-side secr
   assert.doesNotMatch(recreate, /openmercato-preview-.*postgres-password\.sql/)
   assert.match(recreate, /docker exec -i "\$existing_epc_postgres" psql/)
   assert.match(recreate, /secure first-time provisioning is a separate procedure/)
-  assert.match(recreate, /select exists \(select 1 from users/)
+  assert.match(recreate, /emailHashLookupValues\(email\)/)
+  assert.match(recreate, /render-postgres-email-hashes-exists-sql\.py/)
+  assert.doesNotMatch(recreate, /lower\(email\)/)
   assert.match(recreate, /refusing insecure first-time initialization/)
   assert.ok(
     recreate.indexOf('refusing insecure first-time initialization') < recreate.indexOf('compose up -d'),

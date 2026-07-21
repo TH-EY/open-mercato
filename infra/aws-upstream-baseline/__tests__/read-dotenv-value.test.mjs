@@ -8,6 +8,9 @@ import test from 'node:test'
 const reader = path.resolve('infra/aws-upstream-baseline/read-dotenv-value.py')
 const privateWriter = path.resolve('infra/aws-upstream-baseline/write-private-file.py')
 const postgresSqlRenderer = path.resolve('infra/aws-upstream-baseline/render-postgres-password-sql.py')
+const emailHashesSqlRenderer = path.resolve(
+  'infra/aws-upstream-baseline/render-postgres-email-hashes-exists-sql.py',
+)
 
 test('dotenv reader returns values as inert data', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'om-dotenv-reader-'))
@@ -34,6 +37,23 @@ test('PostgreSQL password SQL renderer reads the secret from stdin and quotes va
     result.stdout,
     "set password_encryption = 'scram-sha-256';\nalter role \"custom\"\"role\" login password 'p''ass';\n",
   )
+})
+
+test('email existence SQL renderer accepts only application lookup hashes', () => {
+  const keyed = `v2:${'a'.repeat(64)}`
+  const legacy = 'b'.repeat(64)
+  const result = spawnSync('python3', [emailHashesSqlRenderer], {
+    input: JSON.stringify([keyed, legacy]),
+  })
+  const output = result.stdout.toString('utf8')
+
+  assert.equal(result.status, 0, result.stderr.toString('utf8'))
+  assert.match(output, /email_hash in \('v2:a{64}', 'b{64}'\)/)
+
+  const invalid = spawnSync('python3', [emailHashesSqlRenderer], {
+    input: JSON.stringify(["not-a-hash'); drop table users; --"]),
+  })
+  assert.notEqual(invalid.status, 0)
 })
 
 test('private writer atomically replaces an existing world-readable file with mode 0600', () => {
