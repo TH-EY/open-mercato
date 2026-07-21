@@ -80,7 +80,11 @@ test('authenticated smoke uses the same host-side administrator secret', () => {
 
   assert.match(smoke, /admin_password_secret_id=/)
   assert.match(smoke, /aws secretsmanager get-secret-value/)
-  assert.match(smoke, /bash \.\/infra\/aws-upstream-baseline\/smoke\.sh/)
+  assert.match(smoke, /docker exec -i/)
+  assert.match(smoke, /node --input-type=module - --run-smoke/)
+  assert.match(smoke, /< \.\/scripts\/smoke-auth-dashboard\.mjs/)
+  assert.doesNotMatch(smoke, /bash \.\/infra\/aws-upstream-baseline\/smoke\.sh/)
+  assert.doesNotMatch(smoke, /-e SMOKE_TEST_PASSWORD=/)
   assert.doesNotMatch(smoke, /EPC_PREVIEW_ADMIN_PASSWORD/)
   assert.doesNotMatch(smoke, /SMOKE_TEST_PASSWORD: \$\{\{ secrets\./)
   assert.doesNotMatch(smoke, /\. \.\/\.env/)

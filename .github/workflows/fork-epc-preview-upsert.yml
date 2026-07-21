@@ -720,6 +720,7 @@ jobs:
             printf 'aws_region=%q\n' "${AWS_REGION}"
             printf 'admin_password_secret_id=%q\n' "${admin_password_secret_id}"
             printf 'base_url=%q\n' '${{ steps.preview.outputs.preview_url }}'
+            printf 'preview_project=%q\n' '${{ steps.preview.outputs.preview_project }}'
             printf 'smoke_paths=%q\n' "${smoke_paths}"
             printf 'workdir=%q\n' '${{ steps.preview.outputs.preview_workdir }}'
             cat <<'SSM'
@@ -733,7 +734,25 @@ jobs:
             --query SecretString \
             --output text)"
           export SMOKE_TEST_PATHS="$smoke_paths"
-          bash ./infra/aws-upstream-baseline/smoke.sh
+          app_container="$(
+            docker ps \
+              --filter "label=com.docker.compose.project=$preview_project" \
+              --filter 'label=com.docker.compose.service=app' \
+              --format '{{.ID}}' \
+              | head -n 1
+          )"
+          if [[ -z "$app_container" ]]; then
+            echo "Missing running EPC application container for authenticated smoke test" >&2
+            exit 1
+          fi
+          docker exec -i \
+            -e BASE_URL \
+            -e SMOKE_TEST_EMAIL \
+            -e SMOKE_TEST_PASSWORD \
+            -e SMOKE_TEST_PATHS \
+            "$app_container" \
+            node --input-type=module - --run-smoke \
+            < ./scripts/smoke-auth-dashboard.mjs
           unset SMOKE_TEST_PASSWORD
           SSM
           } | bash infra/aws-upstream-baseline/ssm-run-step.sh
