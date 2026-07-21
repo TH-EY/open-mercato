@@ -1,0 +1,7 @@
+services:
+  app:
+    restart: unless-stopped
+    environment:
+      OM_INIT_SUPERADMIN_PASSWORD: ''
+      OM_INIT_ADMIN_PASSWORD: ''
+      OM_INIT_EMPLOYEE_PASSWORD: ''

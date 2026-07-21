@@ -48,17 +48,20 @@ DEPLOY_EMPLOYEE_PASSWORD=""
 DEPLOY_APP_IMAGE="${DEPLOY_APP_IMAGE:-${APP_IMAGE:-}}"
 DEPLOY_ECR_REGISTRY="${DEPLOY_ECR_REGISTRY:-${ECR_REGISTRY:-}}"
 DEPLOY_ECR_PASSWORD="${DEPLOY_ECR_PASSWORD:-${ECR_PASSWORD:-}}"
+DEPLOY_AWS_REGION="${AWS_REGION:-eu-west-2}"
+DEPLOY_SUPERADMIN_PASSWORD_SECRET_ID=""
+DEPLOY_ADMIN_PASSWORD_SECRET_ID=""
+DEPLOY_EMPLOYEE_PASSWORD_SECRET_ID=""
 if [[ "${PREVIEW_SLUG}" == "manoj" ]]; then
   DEPLOY_SUPERADMIN_EMAIL="${MANOJ_SUPERADMIN_EMAIL:-superadmin@manoj.om.they.dev}"
   DEPLOY_ADMIN_EMAIL="${MANOJ_ADMIN_EMAIL:-admin@manoj.om.they.dev}"
   DEPLOY_EMPLOYEE_EMAIL="${MANOJ_EMPLOYEE_EMAIL:-employee@manoj.om.they.dev}"
-  DEPLOY_SUPERADMIN_PASSWORD="${MANOJ_SUPERADMIN_PASSWORD:-}"
-  DEPLOY_ADMIN_PASSWORD="${MANOJ_ADMIN_PASSWORD:-}"
-  DEPLOY_EMPLOYEE_PASSWORD="${MANOJ_EMPLOYEE_PASSWORD:-}"
-  for required_var in DEPLOY_SUPERADMIN_PASSWORD DEPLOY_ADMIN_PASSWORD DEPLOY_EMPLOYEE_PASSWORD; do
+  DEPLOY_SUPERADMIN_PASSWORD_SECRET_ID="${MANOJ_SUPERADMIN_PASSWORD_SECRET_ID:-}"
+  DEPLOY_ADMIN_PASSWORD_SECRET_ID="${MANOJ_ADMIN_PASSWORD_SECRET_ID:-}"
+  DEPLOY_EMPLOYEE_PASSWORD_SECRET_ID="${MANOJ_EMPLOYEE_PASSWORD_SECRET_ID:-}"
+  for required_var in DEPLOY_SUPERADMIN_PASSWORD_SECRET_ID DEPLOY_ADMIN_PASSWORD_SECRET_ID DEPLOY_EMPLOYEE_PASSWORD_SECRET_ID; do
     if [[ -z "${!required_var}" ]]; then
-      echo "Missing required Manoj credential value for ${required_var}" >&2
-      echo "Set MANOJ_SUPERADMIN_PASSWORD, MANOJ_ADMIN_PASSWORD, and MANOJ_EMPLOYEE_PASSWORD before deploying fork/manoj." >&2
+      echo "Missing required Manoj secret identifier for ${required_var}" >&2
       exit 1
     fi
   done
@@ -78,15 +81,21 @@ REMOTE_SCRIPT="$(mktemp)"
   printf 'workdir=%q\n' "${REMOTE_WORKDIR}"
   printf 'remote_root=%q\n' "${REMOTE_ROOT}"
   printf 'baseline_env_file=%q\n' "${BASELINE_ENV_FILE_REMOTE}"
+  printf 'aws_region=%q\n' "${DEPLOY_AWS_REGION}"
   printf 'deploy_superadmin_email=%q\n' "${DEPLOY_SUPERADMIN_EMAIL}"
-  printf 'deploy_superadmin_password=%q\n' "${DEPLOY_SUPERADMIN_PASSWORD}"
   printf 'deploy_admin_email=%q\n' "${DEPLOY_ADMIN_EMAIL}"
-  printf 'deploy_admin_password=%q\n' "${DEPLOY_ADMIN_PASSWORD}"
   printf 'deploy_employee_email=%q\n' "${DEPLOY_EMPLOYEE_EMAIL}"
-  printf 'deploy_employee_password=%q\n' "${DEPLOY_EMPLOYEE_PASSWORD}"
+  printf 'deploy_superadmin_password_secret_id=%q\n' "${DEPLOY_SUPERADMIN_PASSWORD_SECRET_ID}"
+  printf 'deploy_admin_password_secret_id=%q\n' "${DEPLOY_ADMIN_PASSWORD_SECRET_ID}"
+  printf 'deploy_employee_password_secret_id=%q\n' "${DEPLOY_EMPLOYEE_PASSWORD_SECRET_ID}"
   printf 'deploy_app_image=%q\n' "${DEPLOY_APP_IMAGE}"
   printf 'deploy_ecr_registry=%q\n' "${DEPLOY_ECR_REGISTRY}"
-  printf 'deploy_ecr_password=%q\n' "${DEPLOY_ECR_PASSWORD}"
+  if [[ "${PREVIEW_SLUG}" != "manoj" ]]; then
+    printf 'deploy_superadmin_password=%q\n' "${DEPLOY_SUPERADMIN_PASSWORD}"
+    printf 'deploy_admin_password=%q\n' "${DEPLOY_ADMIN_PASSWORD}"
+    printf 'deploy_employee_password=%q\n' "${DEPLOY_EMPLOYEE_PASSWORD}"
+    printf 'deploy_ecr_password=%q\n' "${DEPLOY_ECR_PASSWORD}"
+  fi
   cat <<'EOF'
 command -v git >/dev/null 2>&1 || { echo "Missing git on preview host" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo "Missing docker on preview host" >&2; exit 1; }
@@ -94,6 +103,39 @@ command -v docker >/dev/null 2>&1 || { echo "Missing docker on preview host" >&2
 persistent_demo=false
 if [[ "$branch" == "fork/EPC" || "$branch" == "fork/manoj" ]]; then
   persistent_demo=true
+fi
+
+if [[ "$branch" == "fork/manoj" ]]; then
+  command -v aws >/dev/null 2>&1 || { echo "Missing AWS CLI on preview host" >&2; exit 1; }
+  existing_manoj_app="$(docker ps -q \
+    --filter "label=com.docker.compose.project=${preview_project}" \
+    --filter 'label=com.docker.compose.service=app')"
+  existing_manoj_postgres="$(docker ps -q \
+    --filter "label=com.docker.compose.project=${preview_project}" \
+    --filter 'label=com.docker.compose.service=postgres')"
+  if [[ -z "$existing_manoj_app" || -z "$existing_manoj_postgres" ]]; then
+    echo "Manoj lifecycle deployment requires the existing running app and PostgreSQL containers; secure first-time provisioning is a separate procedure." >&2
+    exit 1
+  fi
+
+  secret_value() {
+    aws secretsmanager get-secret-value \
+      --region "$aws_region" \
+      --secret-id "$1" \
+      --query SecretString \
+      --output text
+  }
+  deploy_superadmin_password="$(secret_value "$deploy_superadmin_password_secret_id")"
+  deploy_admin_password="$(secret_value "$deploy_admin_password_secret_id")"
+  deploy_employee_password="$(secret_value "$deploy_employee_password_secret_id")"
+  for secret_name in deploy_superadmin_password deploy_admin_password deploy_employee_password; do
+    secret_value_to_validate="${!secret_name}"
+    if [[ ${#secret_value_to_validate} -lt 20 || ! "$secret_value_to_validate" =~ ^[A-Za-z0-9._!@%+=:-]+$ ]]; then
+      echo "Manoj password secret has an invalid format: ${secret_name}" >&2
+      exit 1
+    fi
+  done
+  unset secret_value_to_validate
 fi
 
 mkdir -p "$remote_root"
@@ -104,7 +146,7 @@ if [[ ! -d "$workdir/.git" ]]; then
   fi
   git clone --branch "$branch" --single-branch "$repo_url" "$workdir"
 else
-  if [[ "$deploy_mode" == "full" ]]; then
+  if [[ "$deploy_mode" == "full" || "$branch" == "fork/manoj" ]]; then
     git -C "$workdir" remote set-url origin "$repo_url"
     git -C "$workdir" fetch origin "$branch" --prune
     git -C "$workdir" checkout -B "$branch" "origin/$branch"
@@ -117,8 +159,14 @@ else
   fi
 fi
 
-python3 - <<'PY' "$baseline_env_file" "$workdir/.env" "$preview_env" "$preview_port" "$preview_hostname" "$deploy_superadmin_email" "$deploy_superadmin_password" "$deploy_mode" "$preview_project" "$deploy_admin_email" "$deploy_admin_password" "$deploy_employee_email" "$deploy_employee_password" "$branch" "$deploy_app_image"
-import secrets, sys
+if [[ "$branch" != "fork/manoj" ]]; then
+  export OM_DEPLOY_SUPERADMIN_PASSWORD="${deploy_superadmin_password:-}"
+  export OM_DEPLOY_ADMIN_PASSWORD="${deploy_admin_password:-}"
+  export OM_DEPLOY_EMPLOYEE_PASSWORD="${deploy_employee_password:-}"
+fi
+render_runtime_env() {
+python3 - <<'PY' "$baseline_env_file" "$workdir/.env" "$preview_env" "$preview_port" "$preview_hostname" "$deploy_superadmin_email" "$deploy_mode" "$preview_project" "$deploy_admin_email" "$deploy_employee_email" "$branch" "$deploy_app_image"
+import os, secrets, sys
 from pathlib import Path
 (
     baseline,
@@ -127,18 +175,18 @@ from pathlib import Path
     preview_port,
     preview_host,
     deploy_superadmin_email,
-    deploy_superadmin_password,
     deploy_mode,
     preview_project,
     deploy_admin_email,
-    deploy_admin_password,
     deploy_employee_email,
-    deploy_employee_password,
     branch,
     deploy_app_image,
-) = sys.argv[1:16]
+) = sys.argv[1:13]
 is_epc = branch == 'fork/EPC' or preview_host == 'preview-epc.om.they.dev'
 is_manoj = branch == 'fork/manoj' or preview_host == 'manoj.om.they.dev'
+deploy_superadmin_password = os.environ.get('OM_DEPLOY_SUPERADMIN_PASSWORD', '')
+deploy_admin_password = os.environ.get('OM_DEPLOY_ADMIN_PASSWORD', '')
+deploy_employee_password = os.environ.get('OM_DEPLOY_EMPLOYEE_PASSWORD', '')
 preserve_existing = is_epc or is_manoj or deploy_mode == 'config-restart'
 values = {}
 existing = {}
@@ -224,6 +272,9 @@ if is_manoj:
         'OM_INIT_REDACT_CREDENTIAL_OUTPUT': 'true',
     })
     for key in [
+        'OM_INIT_SUPERADMIN_PASSWORD',
+        'OM_INIT_ADMIN_PASSWORD',
+        'OM_INIT_EMPLOYEE_PASSWORD',
         'EPC_LEAD_TENANT_ID',
         'EPC_LEAD_ORGANIZATION_ID',
         'EPC_LEAD_OWNER_USER_ID',
@@ -234,15 +285,15 @@ if is_manoj:
 if deploy_superadmin_email:
     values['OM_INIT_SUPERADMIN_EMAIL'] = deploy_superadmin_email
     values['ADMIN_EMAIL'] = deploy_superadmin_email
-if deploy_superadmin_password:
+if deploy_superadmin_password and not is_manoj:
     values['OM_INIT_SUPERADMIN_PASSWORD'] = deploy_superadmin_password
 if deploy_admin_email:
     values['OM_INIT_ADMIN_EMAIL'] = deploy_admin_email
-if deploy_admin_password:
+if deploy_admin_password and not is_manoj:
     values['OM_INIT_ADMIN_PASSWORD'] = deploy_admin_password
 if deploy_employee_email:
     values['OM_INIT_EMPLOYEE_EMAIL'] = deploy_employee_email
-if deploy_employee_password:
+if deploy_employee_password and not is_manoj:
     values['OM_INIT_EMPLOYEE_PASSWORD'] = deploy_employee_password
 if deploy_app_image:
     values['APP_IMAGE'] = deploy_app_image
@@ -259,21 +310,96 @@ keys = [
     'EPC_LEAD_TENANT_ID','EPC_LEAD_ORGANIZATION_ID','EPC_LEAD_OWNER_USER_ID',
     'EPC_LEAD_PIPELINE_STAGE_ID','EPC_LEAD_CAPTURE_ALLOWED_ORIGINS'
 ]
-target_path.write_text('\n'.join(f'{key}={values[key]}' for key in keys if key in values) + '\n')
+content = '\n'.join(f'{key}={values[key]}' for key in keys if key in values) + '\n'
+if is_manoj:
+    sys.stdout.write(content)
+else:
+    target_path.write_text(content)
 PY
+}
+if [[ "$branch" == "fork/manoj" ]]; then
+  render_runtime_env \
+    | python3 "$workdir/infra/aws-upstream-baseline/write-private-file.py" "$workdir/.env" \
+        --required-key APP_PORT \
+        --required-key APP_IMAGE \
+        --required-key POSTGRES_PASSWORD \
+        --required-key JWT_SECRET \
+        --required-key AUTH_SECRET \
+        --required-key TENANT_DATA_ENCRYPTION_KEY \
+        --required-key MEILISEARCH_MASTER_KEY
+else
+  render_runtime_env
+fi
+unset OM_DEPLOY_SUPERADMIN_PASSWORD OM_DEPLOY_ADMIN_PASSWORD OM_DEPLOY_EMPLOYEE_PASSWORD
 
 cd "$workdir"
-set -a
-. ./.env
-set +a
+if [[ "$branch" == "fork/manoj" ]]; then
+  dotenv_value() {
+    python3 infra/aws-upstream-baseline/read-dotenv-value.py .env "$1"
+  }
+  export APP_PORT="$(dotenv_value APP_PORT)"
+  export APP_IMAGE="$(dotenv_value APP_IMAGE 2>/dev/null || true)"
+  export POSTGRES_PASSWORD="$(dotenv_value POSTGRES_PASSWORD)"
+  export POSTGRES_USER="$(dotenv_value POSTGRES_USER 2>/dev/null || true)"
+  export POSTGRES_DB="$(dotenv_value POSTGRES_DB 2>/dev/null || true)"
+else
+  set -a
+  . ./.env
+  set +a
+fi
 
 compose() {
-  COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml "$@"
+  local compose_files=(-f docker-compose.fullapp.yml)
+  if [[ "$branch" == "fork/manoj" ]]; then
+    compose_files+=(-f infra/aws-upstream-baseline/docker-compose.manoj-lifecycle.yml)
+  fi
+  COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env "${compose_files[@]}" "$@"
 }
 
 persistent_stack_exists=false
 if [[ "$persistent_demo" == "true" ]] && [[ -n "$(compose ps -q postgres 2>/dev/null || true)" ]]; then
   persistent_stack_exists=true
+fi
+
+if [[ "$branch" == "fork/manoj" ]]; then
+  existing_manoj_postgres="$(compose ps -q postgres 2>/dev/null || true)"
+  existing_manoj_app="$(compose ps -q app 2>/dev/null || true)"
+  if [[ -z "$existing_manoj_postgres" || -z "$existing_manoj_app" ]]; then
+    echo "Manoj lifecycle deployment requires the existing stack after checkout preparation." >&2
+    exit 1
+  fi
+
+  email_hash_candidates() {
+    docker exec \
+      -e "OM_ACCOUNT_EMAIL=$1" \
+      "$existing_manoj_app" \
+      corepack yarn node --input-type=module -e \
+        'import { emailHashLookupValues } from "@open-mercato/core/modules/auth/lib/emailHash"; process.stdout.write(emailHashLookupValues(process.env.OM_ACCOUNT_EMAIL).join("\n"))'
+  }
+  resolve_existing_account() {
+    local email="$1"
+    local expected_role="$2"
+    local matches
+    matches="$({
+      email_hash_candidates "$email" \
+        | python3 infra/aws-upstream-baseline/render-postgres-email-hashes-exists-sql.py "$expected_role"
+    } | docker exec -i "$existing_manoj_postgres" \
+      psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-open-mercato}" -v ON_ERROR_STOP=1 -At -f -)"
+    if [[ "$(printf '%s\n' "$matches" | awk 'NF { count++ } END { print count + 0 }')" != "1" ]]; then
+      echo "Manoj lifecycle deployment requires exactly one existing ${expected_role} account: ${email}" >&2
+      exit 1
+    fi
+    printf '%s' "$matches"
+  }
+  IFS=$'\t' read -r deploy_superadmin_user_id deploy_superadmin_tenant_id <<< "$(resolve_existing_account "$deploy_superadmin_email" superadmin)"
+  IFS=$'\t' read -r deploy_admin_user_id deploy_admin_tenant_id <<< "$(resolve_existing_account "$deploy_admin_email" admin)"
+  IFS=$'\t' read -r deploy_employee_user_id deploy_employee_tenant_id <<< "$(resolve_existing_account "$deploy_employee_email" employee)"
+  if [[ -z "$deploy_superadmin_user_id" || -z "$deploy_superadmin_tenant_id" || \
+        "$deploy_superadmin_tenant_id" != "$deploy_admin_tenant_id" || \
+        "$deploy_superadmin_tenant_id" != "$deploy_employee_tenant_id" ]]; then
+    echo "Manoj lifecycle deployment requires the three expected accounts in one existing tenant." >&2
+    exit 1
+  fi
 fi
 
 if [[ "$preview_hostname" == "preview-epc.om.they.dev" && ( -z "${EPC_LEAD_TENANT_ID:-}" || -z "${EPC_LEAD_ORGANIZATION_ID:-}" ) ]]; then
@@ -342,19 +468,13 @@ sync_persistent_postgres_password() {
   if [[ -z "$existing_persistent_postgres" ]]; then
     return 0
   fi
-  pg_password_sql="/tmp/openmercato-preview-${preview_env}-postgres-password.sql"
-  python3 - <<'PY' > "$pg_password_sql"
-import os
-
-password = os.environ["POSTGRES_PASSWORD"]
-escaped = password.replace("'", "''")
-print("set password_encryption = 'scram-sha-256';")
-print(f"alter role postgres login password '{escaped}';")
-PY
-  docker cp "$pg_password_sql" "$existing_persistent_postgres:/tmp/openmercato-preview-postgres-password.sql"
-  rm -f "$pg_password_sql"
+  pg_password_sql="$(
+    printf '%s' "$POSTGRES_PASSWORD" \
+      | python3 infra/aws-upstream-baseline/render-postgres-password-sql.py "${POSTGRES_USER:-postgres}"
+  )"
   for attempt in 1 2 3 4 5; do
-    if docker exec "$existing_persistent_postgres" psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -v ON_ERROR_STOP=1 -f /tmp/openmercato-preview-postgres-password.sql >/dev/null; then
+    if printf '%s\n' "$pg_password_sql" \
+      | docker exec -i "$existing_persistent_postgres" psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -v ON_ERROR_STOP=1 -f - >/dev/null; then
       break
     fi
     if [[ "$attempt" == "5" ]]; then
@@ -363,7 +483,7 @@ PY
     echo "Postgres password sync attempt ${attempt} failed; retrying"
     sleep "$((attempt * 2))"
   done
-  docker exec "$existing_persistent_postgres" rm -f /tmp/openmercato-preview-postgres-password.sql
+  unset pg_password_sql
 }
 
 post_deploy_cleanup() {
@@ -384,6 +504,14 @@ if [[ "$deploy_mode" == "config-restart" ]]; then
     echo "Missing existing image ${app_image}; run a full deploy first." >&2
     exit 1
   fi
+  if [[ "$branch" == "fork/manoj" ]]; then
+    existing_manoj_app="$(compose ps -q app 2>/dev/null || true)"
+    if [[ -z "$existing_manoj_app" ]] || ! docker exec "$existing_manoj_app" sh -lc \
+      'grep -q -- "--password-env" packages/core/src/modules/auth/cli.ts && grep -q -- "transactionalEm.nativeDelete(Session" packages/core/src/modules/auth/cli.ts'; then
+      echo "Manoj config restart requires an image with the secure scoped password-rotation CLI; run a full deploy first." >&2
+      exit 1
+    fi
+  fi
   sync_persistent_postgres_password
   compose up -d --no-deps --no-build --force-recreate app
 else
@@ -391,9 +519,14 @@ else
     docker build -t opencode-mvp:latest docker/opencode
   fi
   if [[ -n "${APP_IMAGE:-}" ]]; then
-    if [[ -n "${deploy_ecr_registry:-}" && -n "${deploy_ecr_password:-}" ]]; then
-      printf '%s' "${deploy_ecr_password}" | docker login --username AWS --password-stdin "${deploy_ecr_registry}" >/dev/null
-      unset deploy_ecr_password
+    if [[ -n "${deploy_ecr_registry:-}" ]]; then
+      if [[ "$branch" == "fork/manoj" ]]; then
+        aws ecr get-login-password --region "$aws_region" \
+          | docker login --username AWS --password-stdin "${deploy_ecr_registry}" >/dev/null
+      elif [[ -n "${deploy_ecr_password:-}" ]]; then
+        printf '%s' "${deploy_ecr_password}" | docker login --username AWS --password-stdin "${deploy_ecr_registry}" >/dev/null
+        unset deploy_ecr_password
+      fi
       cleanup_ecr_login() {
         docker logout "${deploy_ecr_registry}" >/dev/null 2>&1 || true
       }
@@ -429,6 +562,72 @@ else
   fi
 fi
 wait_for_local_login
+
+if [[ "$branch" == "fork/manoj" ]]; then
+  app_container="$(compose ps -q app)"
+  if [[ -z "$app_container" ]]; then
+    echo "Manoj app container was not created." >&2
+    exit 1
+  fi
+
+  restart_policy="$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$app_container")"
+  if [[ "$restart_policy" != "unless-stopped" ]]; then
+    echo "Unexpected Manoj app restart policy: ${restart_policy}" >&2
+    exit 1
+  fi
+  env_mode="$(stat -c '%a' .env)"
+  if [[ "$env_mode" != "600" ]]; then
+    echo "Unexpected Manoj .env mode: ${env_mode}" >&2
+    exit 1
+  fi
+  nonempty_file_passwords="$(awk -F= '/^OM_INIT_(SUPERADMIN|ADMIN|EMPLOYEE)_PASSWORD=./ { count++ } END { print count + 0 }' .env)"
+  nonempty_container_passwords="$(
+    docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$app_container" \
+      | awk -F= '/^OM_INIT_(SUPERADMIN|ADMIN|EMPLOYEE)_PASSWORD=/ && length($2) > 0 { count++ } END { print count + 0 }'
+  )"
+  if [[ "$nonempty_file_passwords" != "0" || "$nonempty_container_passwords" != "0" ]]; then
+    echo "Manoj bootstrap passwords remain in persistent runtime configuration." >&2
+    exit 1
+  fi
+
+  rotate_account_password() {
+    local email="$1"
+    local user_id="$2"
+    local tenant_id="$3"
+    local password="$4"
+    printf '%s\n' "$password" \
+      | docker exec -i \
+          -e "OM_ROTATED_ACCOUNT_EMAIL=${email}" \
+          -e "OM_ROTATED_ACCOUNT_USER_ID=${user_id}" \
+          -e "OM_ROTATED_ACCOUNT_TENANT_ID=${tenant_id}" \
+          "$app_container" sh -lc \
+          'IFS= read -r OM_ROTATED_ACCOUNT_PASSWORD; export OM_ROTATED_ACCOUNT_PASSWORD; corepack yarn mercato auth set-password --email "$OM_ROTATED_ACCOUNT_EMAIL" --user-id "$OM_ROTATED_ACCOUNT_USER_ID" --tenant-id "$OM_ROTATED_ACCOUNT_TENANT_ID" --password-env OM_ROTATED_ACCOUNT_PASSWORD'
+  }
+  rotate_account_password "$deploy_superadmin_email" "$deploy_superadmin_user_id" "$deploy_superadmin_tenant_id" "$deploy_superadmin_password"
+  rotate_account_password "$deploy_admin_email" "$deploy_admin_user_id" "$deploy_admin_tenant_id" "$deploy_admin_password"
+  rotate_account_password "$deploy_employee_email" "$deploy_employee_user_id" "$deploy_employee_tenant_id" "$deploy_employee_password"
+
+  smoke_script_path='/tmp/openmercato-manoj-authenticated-smoke.mjs'
+  docker cp scripts/smoke-auth-dashboard.mjs "$app_container:$smoke_script_path"
+  authenticated_smoke() {
+    local email="$1"
+    local password="$2"
+    printf '%s\n' "$password" \
+      | docker exec -i \
+          -e "SMOKE_TEST_EMAIL=${email}" \
+          -e BASE_URL=http://127.0.0.1:3000 \
+          -e SMOKE_TEST_PATHS=/backend \
+          "$app_container" sh -lc \
+            'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /tmp/openmercato-manoj-authenticated-smoke.mjs --run-smoke'
+  }
+  authenticated_smoke "$deploy_superadmin_email" "$deploy_superadmin_password"
+  authenticated_smoke "$deploy_admin_email" "$deploy_admin_password"
+  authenticated_smoke "$deploy_employee_email" "$deploy_employee_password"
+  docker exec "$app_container" rm -f "$smoke_script_path"
+
+  unset deploy_superadmin_password deploy_admin_password deploy_employee_password POSTGRES_PASSWORD
+  echo "Manoj lifecycle checks passed: existing stack and accounts, private .env, empty bootstrap password variables, restart unless-stopped, and three authenticated logins."
+fi
 post_deploy_cleanup
 EOF
 } > "${REMOTE_SCRIPT}"
@@ -451,6 +650,43 @@ if [[ "${PREVIEW_SLUG}" == "manoj" ]]; then
     --retention-in-days 14 2>/dev/null || true
   SSM_CLOUDWATCH_ARGS=(--cloud-watch-output-config "CloudWatchOutputEnabled=true,CloudWatchLogGroupName=${MANOJ_SSM_LOG_GROUP}")
 fi
+
+MANOJ_TARGET_QUIESCED=false
+restore_manoj_target() {
+  local original_status=$?
+  if [[ "$MANOJ_TARGET_QUIESCED" == "true" && -n "${TARGET_GROUP_ARN:-}" && "$TARGET_GROUP_ARN" != "None" ]]; then
+    echo "Restoring Manoj ALB target after an interrupted deployment." >&2
+    if aws elbv2 register-targets \
+      --region "${AWS_REGION}" \
+      --target-group-arn "${TARGET_GROUP_ARN}" \
+      --targets "Id=${PREVIEW_INSTANCE_ID},Port=${PREVIEW_PORT}" >/dev/null; then
+      wait_for_target_healthy "${TARGET_GROUP_ARN}" 60 || true
+    fi
+  fi
+  return "$original_status"
+}
+trap restore_manoj_target EXIT
+
+if [[ "${PREVIEW_SLUG}" == "manoj" ]]; then
+  TARGET_GROUP_ARN="$(aws elbv2 describe-target-groups \
+    --region "${AWS_REGION}" \
+    --names "${TARGET_GROUP_NAME}" \
+    --query 'TargetGroups[0].TargetGroupArn' \
+    --output text 2>/dev/null || true)"
+  if [[ -n "${TARGET_GROUP_ARN}" && "${TARGET_GROUP_ARN}" != "None" ]]; then
+    MANOJ_TARGET_QUIESCED=true
+    aws elbv2 deregister-targets \
+      --region "${AWS_REGION}" \
+      --target-group-arn "${TARGET_GROUP_ARN}" \
+      --targets "Id=${PREVIEW_INSTANCE_ID},Port=${PREVIEW_PORT}" >/dev/null
+    aws elbv2 wait target-deregistered \
+      --region "${AWS_REGION}" \
+      --target-group-arn "${TARGET_GROUP_ARN}" \
+      --targets "Id=${PREVIEW_INSTANCE_ID},Port=${PREVIEW_PORT}"
+    echo "Manoj ALB target is quiesced before app recreation and credential rotation."
+  fi
+fi
+
 COMMAND_ID="$(aws ssm send-command \
   --region "${AWS_REGION}" \
   --instance-ids "${PREVIEW_INSTANCE_ID}" \
@@ -498,6 +734,7 @@ aws elbv2 modify-target-group \
   --matcher HttpCode=200-399 >/dev/null
 
 aws elbv2 register-targets --region "${AWS_REGION}" --target-group-arn "${TARGET_GROUP_ARN}" --targets "Id=${PREVIEW_INSTANCE_ID},Port=${PREVIEW_PORT}" >/dev/null
+MANOJ_TARGET_QUIESCED=false
 echo "Registered preview target on port ${PREVIEW_PORT}"
 
 RULE_ARN="$(existing_rule_arn_for_host "${PREVIEW_HOSTNAME}")"

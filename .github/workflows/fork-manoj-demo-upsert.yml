@@ -22,6 +22,7 @@ concurrency:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   AWS_REGION: eu-west-2
+  NAME_PREFIX: openmercato-upstream-baseline-dokploy
   ECR_REPOSITORY_NAME: openmercato-app
   SSM_CLOUDWATCH_LOG_GROUP: /aws/ssm/openmercato-upstream-baseline-dokploy/manoj-demo-deploy
 
@@ -91,11 +92,11 @@ jobs:
           BRANCH: fork/manoj
           DEPLOY_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'full' }}
           MANOJ_SUPERADMIN_EMAIL: ${{ secrets.MANOJ_DEMO_SUPERADMIN_EMAIL || 'superadmin@manoj.om.they.dev' }}
-          MANOJ_SUPERADMIN_PASSWORD: ${{ secrets.MANOJ_DEMO_SUPERADMIN_PASSWORD }}
           MANOJ_ADMIN_EMAIL: ${{ secrets.MANOJ_DEMO_ADMIN_EMAIL || 'admin@manoj.om.they.dev' }}
-          MANOJ_ADMIN_PASSWORD: ${{ secrets.MANOJ_DEMO_ADMIN_PASSWORD }}
           MANOJ_EMPLOYEE_EMAIL: ${{ secrets.MANOJ_DEMO_EMPLOYEE_EMAIL || 'employee@manoj.om.they.dev' }}
-          MANOJ_EMPLOYEE_PASSWORD: ${{ secrets.MANOJ_DEMO_EMPLOYEE_PASSWORD }}
+          MANOJ_SUPERADMIN_PASSWORD_SECRET_ID: ${{ env.NAME_PREFIX }}/manoj-demo/superadmin-password
+          MANOJ_ADMIN_PASSWORD_SECRET_ID: ${{ env.NAME_PREFIX }}/manoj-demo/admin-password
+          MANOJ_EMPLOYEE_PASSWORD_SECRET_ID: ${{ env.NAME_PREFIX }}/manoj-demo/employee-password
           DEPLOY_APP_IMAGE: ${{ steps.ecr.outputs.image_uri }}
           DEPLOY_ECR_REGISTRY: ${{ steps.ecr.outputs.repository_url }}
         run: |
@@ -103,8 +104,6 @@ jobs:
           if [[ -n "${DEPLOY_ECR_REGISTRY}" ]]; then
             DEPLOY_ECR_REGISTRY="${DEPLOY_ECR_REGISTRY%%/*}"
             export DEPLOY_ECR_REGISTRY
-            DEPLOY_ECR_PASSWORD="$(aws ecr get-login-password --region "${AWS_REGION}")"
-            export DEPLOY_ECR_PASSWORD
           fi
           bash infra/aws-upstream-baseline/preview-upsert.sh fork/manoj | tee deploy.log
           {
@@ -114,20 +113,15 @@ jobs:
       - name: Smoke test Manoj demo
         id: smoke
         shell: bash
-        env:
-          BASE_URL: https://manoj.om.they.dev
-          SMOKE_TEST_EMAIL: ${{ secrets.MANOJ_DEMO_SUPERADMIN_EMAIL || 'superadmin@manoj.om.they.dev' }}
-          SMOKE_TEST_PASSWORD: ${{ secrets.MANOJ_DEMO_SUPERADMIN_PASSWORD }}
-          SMOKE_TEST_PATHS: >-
-            /backend/projects
-            /backend/customers/companies
-            /backend/catalog/products
-            /backend/sales/orders
-            /backend/config/system-status
         run: |
           set -euo pipefail
           started_seconds="${SECONDS}"
-          bash ./infra/aws-upstream-baseline/smoke.sh
+          status="$(curl -fsS -o /dev/null -w '%{http_code}' https://manoj.om.they.dev/login)"
+          if [[ ! "$status" =~ ^[23] ]]; then
+            echo "Manoj login page returned HTTP ${status}" >&2
+            exit 1
+          fi
+          echo "Manoj login page is reachable (${status}); authenticated checks ran on the host."
           elapsed_seconds=$((SECONDS - started_seconds))
           echo "elapsed_seconds=${elapsed_seconds}" >> "$GITHUB_OUTPUT"
 

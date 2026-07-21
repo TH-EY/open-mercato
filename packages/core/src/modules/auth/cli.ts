@@ -2,7 +2,7 @@ import type { ModuleCli } from '@open-mercato/shared/modules/registry'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { hash } from 'bcryptjs'
 import type { EntityManager } from '@mikro-orm/postgresql'
-import { User, Role, UserRole } from '@open-mercato/core/modules/auth/data/entities'
+import { User, Role, UserRole, Session, PasswordReset } from '@open-mercato/core/modules/auth/data/entities'
 import { Tenant, Organization } from '@open-mercato/core/modules/directory/data/entities'
 import { rebuildHierarchyForTenant } from '@open-mercato/core/modules/directory/lib/hierarchy'
 import { ensureRoles, setupInitialTenant, ensureDefaultRoleAcls, ensureCustomRoleAcls, OrgSlugExistsError, DerivedUserPasswordRequiredError } from './lib/setup-app'
@@ -736,38 +736,87 @@ const setPassword: ModuleCli = {
   command: 'set-password',
   async run(rest) {
     const args: Record<string, string> = {}
-    for (let i = 0; i < rest.length; i += 2) {
-      const k = rest[i]?.replace(/^--/, '')
-      const v = rest[i + 1]
-      if (k) args[k] = v
+    for (let i = 0; i < rest.length; i++) {
+      const token = rest[i]
+      if (!token?.startsWith('--')) continue
+      const key = token.replace(/^--/, '')
+      const next = rest[i + 1]
+      if (next && !next.startsWith('--')) {
+        args[key] = next
+        i++
+      }
     }
 
     const email = args.email
-    const password = args.password
+    const userId = args['user-id']
+    const tenantId = args['tenant-id']
+    const passwordEnv = args['password-env']
+    if (args.password && passwordEnv) {
+      throw new Error('Use only one of --password or --password-env')
+    }
+    const password = passwordEnv ? process.env[passwordEnv] : args.password
 
     if (!email || !password) {
-      console.error('Usage: mercato auth set-password --email <email> --password <newPassword>')
-      return
+      throw new Error(
+        'Usage: mercato auth set-password --email <email> [--user-id <userId> --tenant-id <tenantId>] (--password <newPassword> | --password-env <environmentVariable>)',
+      )
     }
-    if (!ensurePasswordPolicy(password)) return
+    if ((userId && !tenantId) || (!userId && tenantId)) {
+      throw new Error('Use --user-id and --tenant-id together')
+    }
+    if (!ensurePasswordPolicy(password)) {
+      throw new Error('Password does not satisfy the configured password policy')
+    }
 
     const { resolve } = await createRequestContainer()
     const em = resolve('em') as any
-    const user = await findOneWithDecryption(
-      em,
-      User,
-      { $or: [{ email }, { emailHash: { $in: emailHashLookupValues(email) } }] } as any,
-      undefined,
-      { tenantId: null, organizationId: null },
-    )
-
-    if (!user) {
-      console.error(`User with email "${email}" not found`)
-      return
+    const emailCriteria = {
+      deletedAt: null,
+      $or: [{ email }, { emailHash: { $in: emailHashLookupValues(email) } }],
+    }
+    let user: User | null
+    if (userId && tenantId) {
+      user = await findOneWithDecryption(
+        em,
+        User,
+        { ...emailCriteria, id: userId, tenantId } as any,
+        undefined,
+        { tenantId: null, organizationId: null },
+      )
+    } else {
+      const matches = await findWithDecryption(
+        em,
+        User,
+        emailCriteria as any,
+        undefined,
+        { tenantId: null, organizationId: null },
+      )
+      if (matches.length > 1) {
+        throw new Error(
+          `Multiple active users match "${email}"; retry with --user-id and --tenant-id`,
+        )
+      }
+      user = matches[0] ?? null
     }
 
-    user.passwordHash = await hash(password, 10)
-    await em.persist(user).flush()
+    if (!user) {
+      throw new Error(`User with email "${email}" not found`)
+    }
+
+    const passwordHash = await hash(password, 10)
+    const targetTenantId = tenantId ?? (user.tenantId ? String(user.tenantId) : null)
+    await em.transactional(async (transactionalEm: any) => {
+      const affected = await transactionalEm.nativeUpdate(
+        User,
+        { id: user.id, tenantId: targetTenantId, deletedAt: null },
+        { passwordHash },
+      )
+      if (affected !== 1) {
+        throw new Error(`User with email "${email}" changed during password rotation`)
+      }
+      await transactionalEm.nativeDelete(Session, { user: user.id })
+      await transactionalEm.nativeDelete(PasswordReset, { user: user.id })
+    })
 
     console.log(`✅ Password updated successfully for user: ${email}`)
   },

@@ -191,6 +191,19 @@ function formatCliFailureMessage(modName: string, cmdName: string, error: unknow
   return fallbackMessage
 }
 
+export function redactAuthSetPasswordArgs(args: string[]): string[] {
+  const redacted = [...args]
+  for (let i = 0; i < redacted.length; i++) {
+    if (redacted[i] === '--password' && redacted[i + 1]) {
+      redacted[i + 1] = '***'
+      i++
+    } else if (redacted[i]?.startsWith('--password=')) {
+      redacted[i] = '--password=***'
+    }
+  }
+  return redacted
+}
+
 function formatInitFailureMessage(error: unknown): string {
   const fallbackMessage = getFallbackErrorMessage(error)
   const databaseIssue = detectDatabaseConnectionIssue(error)
@@ -2472,7 +2485,9 @@ export async function run(argv = process.argv) {
   const started = Date.now()
   const loggedArgs = modName === 'deploy' && cmdName === 'railway'
     ? (await import('./lib/deploy/railway/options')).redactRailwayCliArgs(rest)
-    : rest
+    : modName === 'auth' && cmdName === 'set-password'
+      ? redactAuthSetPasswordArgs(rest)
+      : rest
   console.log(`🚀 Running ${modName}:${cmdName} ${loggedArgs.join(' ')}`)
   try {
     await cmd.run(rest)

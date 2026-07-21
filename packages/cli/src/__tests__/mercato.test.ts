@@ -4,9 +4,26 @@ import {
   getCliModules,
   hasCliModules,
   padByCodePointWidth,
+  redactAuthSetPasswordArgs,
   run,
 } from '../mercato'
 import { pathIncludes } from '../lib/__tests__/path-helpers'
+
+describe('mercato CLI secret redaction', () => {
+  it('redacts auth set-password values in split and equals forms', () => {
+    expect(redactAuthSetPasswordArgs(['--email', 'admin@example.com', '--password', 'plain-secret'])).toEqual([
+      '--email',
+      'admin@example.com',
+      '--password',
+      '***',
+    ])
+    expect(redactAuthSetPasswordArgs(['--password=plain-secret'])).toEqual(['--password=***'])
+    expect(redactAuthSetPasswordArgs(['--password-env', 'ADMIN_PASSWORD'])).toEqual([
+      '--password-env',
+      'ADMIN_PASSWORD',
+    ])
+  })
+})
 
 type MockChildAutoExit = { code: number | null; signal?: NodeJS.Signals | null } | undefined
 type MockChildSpawnRouter = (args: string[]) => MockChildAutoExit
