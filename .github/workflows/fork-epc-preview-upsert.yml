@@ -510,6 +510,12 @@ jobs:
           postgres_password="$(dotenv_value POSTGRES_PASSWORD)"
           postgres_user="$(dotenv_value POSTGRES_USER 2>/dev/null || true)"
           postgres_database="$(dotenv_value POSTGRES_DB 2>/dev/null || true)"
+          admin_email="$(dotenv_value OM_INIT_SUPERADMIN_EMAIL)"
+
+          if [[ -z "$admin_email" ]]; then
+            echo "Missing EPC preview administrator email." >&2
+            exit 1
+          fi
 
           compose() {
             COMPOSE_BAKE=false COMPOSE_DOCKER_CLI_BUILD=0 DOCKER_BUILDKIT=0 docker compose --project-name "$preview_project" --env-file .env -f docker-compose.fullapp.yml -f infra/aws-upstream-baseline/docker-compose.epc-restart.yml "$@"

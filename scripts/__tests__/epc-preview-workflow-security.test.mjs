@@ -46,6 +46,12 @@ test('EPC deploy synchronizes the existing administrator from the host-side secr
 
   assert.match(recreate, /admin_password_secret_id=/)
   assert.match(recreate, /aws secretsmanager get-secret-value/)
+  assert.match(recreate, /admin_email="\$\(dotenv_value OM_INIT_SUPERADMIN_EMAIL\)"/)
+  assert.ok(
+    recreate.indexOf('admin_email="$(dotenv_value OM_INIT_SUPERADMIN_EMAIL)"') <
+      recreate.indexOf('printf \'%s\' "$admin_email"'),
+    'administrator email must be loaded in the same SSM step before lifecycle validation',
+  )
   assert.match(recreate, /mercato auth set-password/)
   assert.doesNotMatch(recreate, /EPC_PREVIEW_ADMIN_PASSWORD/)
   assert.doesNotMatch(recreate, /--password "\$admin_password"/)
