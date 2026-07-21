@@ -130,7 +130,12 @@ if [[ "$branch" == "fork/manoj" ]]; then
   deploy_employee_password="$(secret_value "$deploy_employee_password_secret_id")"
   for secret_name in deploy_superadmin_password deploy_admin_password deploy_employee_password; do
     secret_value_to_validate="${!secret_name}"
-    if [[ ${#secret_value_to_validate} -lt 20 || ! "$secret_value_to_validate" =~ ^[A-Za-z0-9._!@%+=:-]+$ ]]; then
+    if [[ ${#secret_value_to_validate} -lt 20 || \
+          ! "$secret_value_to_validate" =~ ^[A-Za-z0-9._!@%+=:-]+$ || \
+          ! "$secret_value_to_validate" =~ [a-z] || \
+          ! "$secret_value_to_validate" =~ [A-Z] || \
+          ! "$secret_value_to_validate" =~ [0-9] || \
+          ! "$secret_value_to_validate" =~ [!@%+=:._-] ]]; then
       echo "Manoj password secret has an invalid format: ${secret_name}" >&2
       exit 1
     fi

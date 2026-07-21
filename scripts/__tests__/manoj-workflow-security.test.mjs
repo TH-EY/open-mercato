@@ -21,6 +21,8 @@ test('Manoj host resolves secrets and ECR token without serializing their values
   assert.match(deployScript, /aws secretsmanager get-secret-value/)
   assert.match(deployScript, /aws ecr get-login-password --region "\$aws_region"/)
   assert.match(deployScript, /if \[\[ "\$\{PREVIEW_SLUG\}" != "manoj" \]\]; then/)
+  assert.match(deployScript, /! "\$secret_value_to_validate" =~ \[A-Z\]/)
+  assert.match(deployScript, /! "\$secret_value_to_validate" =~ \[0-9\]/)
   assert.doesNotMatch(deployScript, /printf 'deploy_superadmin_password=%q[^\n]*MANOJ/)
   assert.doesNotMatch(deployScript, /printf 'deploy_ecr_password=%q[^\n]*MANOJ/)
 })
