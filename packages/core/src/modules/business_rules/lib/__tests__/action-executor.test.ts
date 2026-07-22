@@ -489,19 +489,84 @@ describe('Action Executor', () => {
       const mockFetch = jest.fn() as jest.MockedFunction<typeof fetch>
       const apiKeyProfileId = '123e4567-e89b-42d3-a456-426614174010'
 
-      function createOpenMercatoContext(overrides: Partial<ActionContext> = {}) {
+      function createOpenMercatoContext(
+        overrides: Partial<ActionContext> = {},
+        options: {
+          apiKeyProfile?: Record<string, any> | null
+          actorFeatures?: string[]
+          actorOrganizations?: string[] | null
+          grantorUser?: Record<string, any> | null
+          roleAclFeatures?: string[]
+          roleIds?: string[]
+        } = {},
+      ) {
         const createdApiKeys: any[] = []
-        const apiKeyProfile = {
+        const roleIds = options.roleIds ?? ['role-1']
+        const apiKeyProfile = options.apiKeyProfile === null ? null : {
           id: apiKeyProfileId,
           tenantId: 'tenant-456',
           organizationId: 'org-789',
-          rolesJson: ['role-1'],
+          rolesJson: roleIds,
           expiresAt: null,
           deletedAt: null,
+          ...options.apiKeyProfile,
+        }
+        const grantorUser = options.grantorUser === null ? null : {
+          id: 'user-123',
+          tenantId: 'tenant-456',
+          organizationId: 'org-789',
+          deletedAt: null,
+          ...options.grantorUser,
+        }
+        const rbacService = {
+          loadAcl: jest.fn(async () => ({
+            isSuperAdmin: false,
+            features: options.actorFeatures ?? ['business_rules.view'],
+            organizations: options.actorOrganizations ?? ['org-789'],
+          })),
         }
         const em = {
-          findOne: jest.fn(async (Entity: any) => {
-            if (Entity?.name === 'ApiKey') return apiKeyProfile
+          find: jest.fn(async (Entity: any, where: any) => {
+            if (Entity?.name === 'Role') {
+              const requestedIds = where?.id?.$in ?? roleIds
+              return roleIds
+                .filter((roleId) => requestedIds.includes(roleId))
+                .map((roleId) => ({
+                  id: roleId,
+                  name: `Role ${roleId}`,
+                  tenantId: 'tenant-456',
+                  deletedAt: null,
+                }))
+            }
+            return []
+          }),
+          findOne: jest.fn(async (Entity: any, where: any) => {
+            if (Entity?.name === 'ApiKey') {
+              if (!apiKeyProfile) return null
+              if (where?.id && where.id !== apiKeyProfile.id) return null
+              if (where?.tenantId && where.tenantId !== apiKeyProfile.tenantId) return null
+              if (where?.organizationId && where.organizationId !== apiKeyProfile.organizationId) return null
+              if (where?.deletedAt === null && apiKeyProfile.deletedAt) return null
+              return apiKeyProfile
+            }
+            if (Entity?.name === 'User') {
+              if (!grantorUser) return null
+              if (where?.id && where.id !== grantorUser.id) return null
+              if (where?.tenantId && where.tenantId !== grantorUser.tenantId) return null
+              if (where?.organizationId && where.organizationId !== grantorUser.organizationId) return null
+              if (where?.deletedAt === null && grantorUser.deletedAt) return null
+              return grantorUser
+            }
+            if (Entity?.name === 'RoleAcl') {
+              const roleRef = where?.role
+              const roleId = roleRef && typeof roleRef === 'object' ? roleRef.id : roleRef
+              if (!roleId || !roleIds.includes(String(roleId))) return null
+              return {
+                isSuperAdmin: false,
+                featuresJson: options.roleAclFeatures ?? ['business_rules.view'],
+                organizationsJson: ['org-789'],
+              }
+            }
             return null
           }),
           create: jest.fn((Entity: any, data: any) => {
@@ -519,7 +584,9 @@ describe('Action Executor', () => {
             tenantId: 'tenant-456',
             organizationId: 'org-789',
             executedBy: 'user-123',
+            accountableGrantorId: 'user-123',
             em: em as any,
+            rbacService: rbacService as any,
             openMercatoEndpointOptions: [
               {
                 id: 'POST /api/business_rules/rules',
@@ -542,6 +609,7 @@ describe('Action Executor', () => {
           } as ActionContext,
           em,
           createdApiKeys,
+          rbacService,
         }
       }
 
@@ -671,6 +739,152 @@ describe('Action Executor', () => {
 
         expect(result.success).toBe(false)
         expect(result.error).toContain('currently available /api/* endpoint')
+        expect(mockFetch).not.toHaveBeenCalled()
+      })
+
+      it('should fail before creating a key when the accountable grantor is missing', async () => {
+        const { context, createdApiKeys } = createOpenMercatoContext({ accountableGrantorId: null })
+
+        const result = await executeAction({
+          type: 'CALL_OPEN_MERCATO',
+          config: {
+            endpoint: '/api/business_rules/rules',
+            method: 'GET',
+            apiKeyId: apiKeyProfileId,
+          },
+        }, context)
+
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('accountable active user grantor')
+        expect(createdApiKeys).toHaveLength(0)
+        expect(mockFetch).not.toHaveBeenCalled()
+      })
+
+      it('should fail before creating a key when the accountable grantor drifted out of organization scope', async () => {
+        const { context, createdApiKeys } = createOpenMercatoContext({}, {
+          grantorUser: { organizationId: 'org-other' },
+        })
+
+        const result = await executeAction({
+          type: 'CALL_OPEN_MERCATO',
+          config: {
+            endpoint: '/api/business_rules/rules',
+            method: 'GET',
+            apiKeyId: apiKeyProfileId,
+          },
+        }, context)
+
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('accountable active user grantor in scope')
+        expect(createdApiKeys).toHaveLength(0)
+        expect(mockFetch).not.toHaveBeenCalled()
+      })
+
+      it('should fail before creating a key when the selected profile RoleAcl expands beyond the grantor ACL', async () => {
+        const { context, createdApiKeys } = createOpenMercatoContext({}, {
+          actorFeatures: ['business_rules.view'],
+          roleAclFeatures: ['catalog.categories.manage'],
+        })
+
+        const result = await executeAction({
+          type: 'CALL_OPEN_MERCATO',
+          config: {
+            endpoint: '/api/business_rules/rules',
+            method: 'GET',
+            apiKeyId: apiKeyProfileId,
+          },
+        }, context)
+
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('Cannot grant feature catalog.categories.manage')
+        expect(createdApiKeys).toHaveLength(0)
+        expect(mockFetch).not.toHaveBeenCalled()
+      })
+
+      it('should allow runtime execution when the accountable grantor wildcard covers the profile roles', async () => {
+        mockFetch.mockResolvedValue({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => ({ ok: true }),
+        } as any)
+        const { context, createdApiKeys } = createOpenMercatoContext({}, {
+          actorFeatures: ['catalog.*'],
+          roleAclFeatures: ['catalog.categories.manage'],
+        })
+
+        const result = await executeAction({
+          type: 'CALL_OPEN_MERCATO',
+          config: {
+            endpoint: '/api/business_rules/rules',
+            method: 'GET',
+            apiKeyId: apiKeyProfileId,
+          },
+        }, context)
+
+        expect(result.success).toBe(true)
+        expect(createdApiKeys).toHaveLength(1)
+        expect(mockFetch).toHaveBeenCalledTimes(1)
+      })
+
+      it('should fail before creating a key when the selected profile drifted out of organization scope', async () => {
+        const { context, createdApiKeys } = createOpenMercatoContext({}, {
+          apiKeyProfile: { organizationId: 'org-other' },
+        })
+
+        const result = await executeAction({
+          type: 'CALL_OPEN_MERCATO',
+          config: {
+            endpoint: '/api/business_rules/rules',
+            method: 'GET',
+            apiKeyId: apiKeyProfileId,
+          },
+        }, context)
+
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('active API key profile in scope')
+        expect(createdApiKeys).toHaveLength(0)
+        expect(mockFetch).not.toHaveBeenCalled()
+      })
+
+      it('should fail before creating a key when the selected profile was deleted', async () => {
+        const { context, createdApiKeys } = createOpenMercatoContext({}, {
+          apiKeyProfile: { deletedAt: new Date('2026-01-01T00:00:00.000Z') },
+        })
+
+        const result = await executeAction({
+          type: 'CALL_OPEN_MERCATO',
+          config: {
+            endpoint: '/api/business_rules/rules',
+            method: 'GET',
+            apiKeyId: apiKeyProfileId,
+          },
+        }, context)
+
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('active API key profile in scope')
+        expect(createdApiKeys).toHaveLength(0)
+        expect(mockFetch).not.toHaveBeenCalled()
+      })
+
+      it('should fail before creating a key when the selected profile expired', async () => {
+        const { context, createdApiKeys } = createOpenMercatoContext({}, {
+          apiKeyProfile: { expiresAt: new Date('2026-01-01T00:00:00.000Z') },
+        })
+
+        const result = await executeAction({
+          type: 'CALL_OPEN_MERCATO',
+          config: {
+            endpoint: '/api/business_rules/rules',
+            method: 'GET',
+            apiKeyId: apiKeyProfileId,
+          },
+        }, context)
+
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('active API key profile in scope')
+        expect(createdApiKeys).toHaveLength(0)
         expect(mockFetch).not.toHaveBeenCalled()
       })
     })

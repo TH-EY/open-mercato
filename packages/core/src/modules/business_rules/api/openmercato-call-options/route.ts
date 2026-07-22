@@ -4,6 +4,7 @@ import type { EntityManager } from '@mikro-orm/postgresql'
 import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import { getAuthFromRequest } from '@open-mercato/shared/lib/auth/server'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
+import type { RbacService } from '../../../auth/services/rbacService'
 import {
   getCurrentOpenMercatoEndpointOptions,
   listOpenMercatoApiKeyOptions,
@@ -42,8 +43,10 @@ const errorResponseSchema = z.object({
 })
 
 export const metadata = {
-  GET: { requireAuth: true, requireFeatures: ['business_rules.manage', 'api_keys.view'] },
+  GET: { requireAuth: true, requireFeatures: ['business_rules.manage', 'api_keys.view', 'api_keys.create'] },
 }
+
+const REQUIRED_FEATURES = ['business_rules.manage', 'api_keys.view', 'api_keys.create']
 
 export async function GET(req: Request) {
   const auth = await getAuthFromRequest(req)
@@ -57,12 +60,26 @@ export async function GET(req: Request) {
 
   const container = await createRequestContainer()
   const em = container.resolve('em') as EntityManager
+  const rbacService = container.resolve('rbacService') as RbacService | undefined
+  const allowed = auth.sub && await rbacService?.userHasAllFeatures?.(auth.sub, REQUIRED_FEATURES, {
+    tenantId: auth.tenantId ?? null,
+    organizationId: auth.orgId ?? null,
+  })
+  if (!allowed || !rbacService) {
+    return NextResponse.json(
+      { error: 'Forbidden', requiredFeatures: REQUIRED_FEATURES },
+      { status: 403 },
+    )
+  }
 
   const [endpoints, apiKeys] = await Promise.all([
     getCurrentOpenMercatoEndpointOptions(),
     listOpenMercatoApiKeyOptions(em, {
       tenantId: auth.tenantId,
       organizationId: auth.orgId ?? null,
+    }, {
+      actorUserId: auth.sub,
+      rbacService,
     }),
   ])
 

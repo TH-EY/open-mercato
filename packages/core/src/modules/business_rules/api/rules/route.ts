@@ -22,6 +22,7 @@ import {
   resolveBusinessRuleDiscoveryCache,
 } from '../../lib/rule-engine'
 import { validateOpenMercatoCallActions } from '../../lib/openmercato-call-options'
+import type { RbacService } from '../../../auth/services/rbacService'
 
 const querySchema = z.looseObject({
   id: z.uuid().optional(),
@@ -85,6 +86,8 @@ const routeMetadata = {
 
 export const metadata = routeMetadata
 
+const OPEN_MERCATO_CONFIGURATOR_FEATURES = ['business_rules.manage', 'api_keys.view', 'api_keys.create']
+
 function hasOpenMercatoCallAction(actions: unknown): boolean {
   return Array.isArray(actions)
     && actions.some((action) => action && typeof action === 'object' && (action as { type?: unknown }).type === 'CALL_OPEN_MERCATO')
@@ -96,28 +99,54 @@ async function requireOpenMercatoCallConfiguratorAccess(
 ): Promise<Response | null> {
   if (!auth.sub) {
     return NextResponse.json(
-      { error: 'Forbidden', requiredFeatures: ['api_keys.view'] },
+      { error: 'Forbidden', requiredFeatures: OPEN_MERCATO_CONFIGURATOR_FEATURES },
       { status: 403 },
     )
   }
 
-  const rbac = container.resolve('rbacService') as {
-    userHasAllFeatures?: (
-      userId: string,
-      required: string[],
-      scope: { tenantId: string | null; organizationId: string | null },
-    ) => Promise<boolean>
-  } | undefined
-  const allowed = await rbac?.userHasAllFeatures?.(auth.sub, ['api_keys.view'], {
+  const rbac = container.resolve('rbacService') as RbacService | undefined
+  const allowed = await rbac?.userHasAllFeatures?.(auth.sub, OPEN_MERCATO_CONFIGURATOR_FEATURES, {
     tenantId: auth.tenantId ?? null,
     organizationId: auth.orgId ?? null,
   })
   if (allowed) return null
 
   return NextResponse.json(
-    { error: 'Forbidden', requiredFeatures: ['api_keys.view'] },
+    { error: 'Forbidden', requiredFeatures: OPEN_MERCATO_CONFIGURATOR_FEATURES },
     { status: 403 },
   )
+}
+
+function buildEffectiveBusinessRuleCandidate(
+  rule: BusinessRule,
+  patch: Record<string, any>,
+  tenantId: string,
+  organizationId: string,
+) {
+  const candidate = {
+    ruleId: rule.ruleId,
+    ruleName: rule.ruleName,
+    description: rule.description ?? null,
+    ruleType: rule.ruleType,
+    ruleCategory: rule.ruleCategory ?? null,
+    entityType: rule.entityType,
+    eventType: rule.eventType ?? null,
+    conditionExpression: rule.conditionExpression ?? null,
+    successActions: rule.successActions ?? null,
+    failureActions: rule.failureActions ?? null,
+    enabled: rule.enabled,
+    priority: rule.priority,
+    version: rule.version,
+    effectiveFrom: rule.effectiveFrom ?? null,
+    effectiveTo: rule.effectiveTo ?? null,
+    tenantId,
+    organizationId,
+    createdBy: rule.createdBy ?? null,
+    ...patch,
+  }
+  delete (candidate as Record<string, unknown>).id
+  delete (candidate as Record<string, unknown>).updatedBy
+  return candidate
 }
 
 export async function GET(req: Request) {
@@ -256,16 +285,28 @@ export async function POST(req: Request) {
     if (accessError) return accessError
   }
 
-  const actionErrors = [
-    ...await validateOpenMercatoCallActions(em as EntityManager, parsed.data.successActions, {
-      tenantId,
-      organizationId,
-    }),
-    ...await validateOpenMercatoCallActions(em as EntityManager, parsed.data.failureActions, {
-      tenantId,
-      organizationId,
-    }),
-  ]
+  let actionErrors: string[]
+  try {
+    const grantContext = {
+      actorUserId: auth.sub,
+      rbacService: container.resolve('rbacService') as RbacService,
+    }
+    actionErrors = [
+      ...await validateOpenMercatoCallActions(em as EntityManager, parsed.data.successActions, {
+        tenantId,
+        organizationId,
+      }, undefined, grantContext),
+      ...await validateOpenMercatoCallActions(em as EntityManager, parsed.data.failureActions, {
+        tenantId,
+        organizationId,
+      }, undefined, grantContext),
+    ]
+  } catch (err) {
+    if (isCrudHttpError(err)) {
+      return NextResponse.json(err.body, { status: err.status })
+    }
+    throw err
+  }
   if (actionErrors.length > 0) {
     return NextResponse.json({ error: `Validation failed: ${actionErrors.join(', ')}` }, { status: 400 })
   }
@@ -333,25 +374,6 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: `Validation failed: ${errors.join(', ')}` }, { status: 400 })
   }
 
-  if (hasOpenMercatoCallAction(parsed.data.successActions) || hasOpenMercatoCallAction(parsed.data.failureActions)) {
-    const accessError = await requireOpenMercatoCallConfiguratorAccess(container, auth)
-    if (accessError) return accessError
-  }
-
-  const actionErrors = [
-    ...await validateOpenMercatoCallActions(em as EntityManager, parsed.data.successActions, {
-      tenantId,
-      organizationId,
-    }),
-    ...await validateOpenMercatoCallActions(em as EntityManager, parsed.data.failureActions, {
-      tenantId,
-      organizationId,
-    }),
-  ]
-  if (actionErrors.length > 0) {
-    return NextResponse.json({ error: `Validation failed: ${actionErrors.join(', ')}` }, { status: 400 })
-  }
-
   const rule = await em.findOne(BusinessRule, {
     id: parsed.data.id,
     tenantId,
@@ -361,6 +383,53 @@ export async function PUT(req: Request) {
 
   if (!rule) {
     return NextResponse.json({ error: 'Rule not found' }, { status: 404 })
+  }
+
+  const updateActorId = auth.sub ?? null
+  const assignData = {
+    ...parsed.data,
+    updatedBy: auth.sub ?? auth.email ?? null,
+  }
+  const effectivePayload = buildEffectiveBusinessRuleCandidate(rule, assignData, tenantId, organizationId)
+  const effectiveSchema = createLocalizedBusinessRuleSchema(t)
+  const effectiveParsed = effectiveSchema.safeParse(effectivePayload)
+  if (!effectiveParsed.success) {
+    const errors = effectiveParsed.error.issues.map(e => `${e.path.join('.')}: ${e.message}`)
+    return NextResponse.json({ error: `Validation failed: ${errors.join(', ')}` }, { status: 400 })
+  }
+
+  const effectiveSuccessActions = effectiveParsed.data.successActions
+  const effectiveFailureActions = effectiveParsed.data.failureActions
+  if (hasOpenMercatoCallAction(effectiveSuccessActions) || hasOpenMercatoCallAction(effectiveFailureActions)) {
+    const accessError = await requireOpenMercatoCallConfiguratorAccess(container, auth)
+    if (accessError) return accessError
+  }
+
+  let actionErrors: string[]
+  try {
+    const accountableGrantorId = updateActorId ?? rule.updatedBy ?? rule.createdBy ?? null
+    const grantContext = {
+      actorUserId: accountableGrantorId,
+      rbacService: container.resolve('rbacService') as RbacService,
+    }
+    actionErrors = [
+      ...await validateOpenMercatoCallActions(em as EntityManager, effectiveSuccessActions, {
+        tenantId,
+        organizationId,
+      }, undefined, grantContext),
+      ...await validateOpenMercatoCallActions(em as EntityManager, effectiveFailureActions, {
+        tenantId,
+        organizationId,
+      }, undefined, grantContext),
+    ]
+  } catch (err) {
+    if (isCrudHttpError(err)) {
+      return NextResponse.json(err.body, { status: err.status })
+    }
+    throw err
+  }
+  if (actionErrors.length > 0) {
+    return NextResponse.json({ error: `Validation failed: ${actionErrors.join(', ')}` }, { status: 400 })
   }
 
   try {
@@ -377,7 +446,7 @@ export async function PUT(req: Request) {
     throw err
   }
 
-  em.assign(rule, parsed.data)
+  em.assign(rule, assignData)
 
   try {
     await em.persist(rule).flush()

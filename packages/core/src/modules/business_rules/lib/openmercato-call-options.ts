@@ -8,8 +8,11 @@ import { getModules } from '@open-mercato/shared/lib/modules/registry'
 import { buildOpenApiDocument } from '@open-mercato/shared/lib/openapi'
 import type { OpenApiMethodDoc, OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { forbidden } from '@open-mercato/shared/lib/crud/errors'
+import { assertActorCanGrantRoles } from '../../auth/lib/grantChecks'
+import type { RbacService } from '../../auth/services/rbacService'
 import { ApiKey } from '../../api_keys/data/entities'
-import { Role } from '../../auth/data/entities'
+import { Role, User } from '../../auth/data/entities'
 import { Organization } from '../../directory/data/entities'
 import {
   OPENMERCATO_CALL_METHODS,
@@ -21,6 +24,17 @@ import {
 export type OpenMercatoCallScope = {
   tenantId: string
   organizationId?: string | null
+}
+
+export type OpenMercatoCallGrantContext = {
+  actorUserId?: string | null
+  rbacService: RbacService
+}
+
+export type GrantableOpenMercatoApiKeyProfile = {
+  apiKey: ApiKey
+  roleIds: string[]
+  roles: Role[]
 }
 
 const METHOD_ORDER = new Map<string, number>(
@@ -205,9 +219,91 @@ export function findOpenMercatoEndpointOption(
   return options.find((option) => option.path === endpoint && option.method === normalizedMethod) ?? null
 }
 
+function getApiKeyProfileRoleIds(apiKey: ApiKey): string[] {
+  return Array.isArray(apiKey.rolesJson)
+    ? apiKey.rolesJson.filter((roleId): roleId is string => typeof roleId === 'string' && roleId.length > 0)
+    : []
+}
+
+async function loadApiKeyProfileRoles(
+  em: EntityManager,
+  roleIds: string[],
+  scope: OpenMercatoCallScope,
+): Promise<Role[]> {
+  if (roleIds.length === 0) {
+    throw forbidden('CALL_OPEN_MERCATO action requires an API key profile with at least one role.')
+  }
+
+  const roles = await findWithDecryption(
+    em,
+    Role,
+    { id: { $in: roleIds }, tenantId: scope.tenantId, deletedAt: null },
+    {},
+    { tenantId: scope.tenantId, organizationId: null },
+  )
+  const foundIds = new Set(roles.map((role) => String(role.id)))
+  if (roleIds.some((roleId) => !foundIds.has(roleId))) {
+    throw forbidden('CALL_OPEN_MERCATO selected API key profile contains unavailable roles.')
+  }
+
+  return roles
+}
+
+async function assertOpenMercatoGrantorIsActive(
+  em: EntityManager,
+  scope: OpenMercatoCallScope,
+  actorUserId?: string | null,
+): Promise<string> {
+  const grantorId = typeof actorUserId === 'string' ? actorUserId.trim() : ''
+  if (!grantorId || grantorId.startsWith('api_key:')) {
+    throw forbidden('CALL_OPEN_MERCATO action requires an accountable active user grantor.')
+  }
+
+  const grantor = await findOneWithDecryption(
+    em,
+    User,
+    {
+      id: grantorId,
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId ?? null,
+      deletedAt: null,
+    },
+    {},
+    { tenantId: scope.tenantId, organizationId: scope.organizationId ?? null },
+  )
+  if (!grantor) {
+    throw forbidden('CALL_OPEN_MERCATO action requires an accountable active user grantor in scope.')
+  }
+
+  return grantorId
+}
+
+export async function assertOpenMercatoApiKeyProfileGrantable(
+  em: EntityManager,
+  apiKey: ApiKey,
+  scope: OpenMercatoCallScope,
+  grantContext: OpenMercatoCallGrantContext,
+): Promise<GrantableOpenMercatoApiKeyProfile> {
+  const actorUserId = await assertOpenMercatoGrantorIsActive(em, scope, grantContext.actorUserId)
+  const roleIds = getApiKeyProfileRoleIds(apiKey)
+  const roles = await loadApiKeyProfileRoles(em, roleIds, scope)
+
+  await assertActorCanGrantRoles({
+    em,
+    rbacService: grantContext.rbacService,
+    actorUserId,
+    tenantId: scope.tenantId,
+    organizationId: scope.organizationId ?? null,
+    roles,
+  })
+
+  return { apiKey, roleIds, roles }
+}
+
 export async function listOpenMercatoApiKeyOptions(
   em: EntityManager,
   scope: OpenMercatoCallScope,
+  grantContext?: OpenMercatoCallGrantContext,
 ): Promise<OpenMercatoApiKeyOption[]> {
   const filters: Record<string, any> = {
     tenantId: scope.tenantId,
@@ -221,6 +317,7 @@ export async function listOpenMercatoApiKeyOptions(
   const keys = await findWithDecryption(em, ApiKey, filters, { orderBy: { name: 'asc' } }, decryptionScope)
   const now = Date.now()
   const activeKeys = keys.filter((key) => !key.expiresAt || key.expiresAt.getTime() > now)
+  const grantableKeys: ApiKey[] = []
 
   const roleIds = new Set<string>()
   const organizationIds = new Set<string>()
@@ -233,7 +330,7 @@ export async function listOpenMercatoApiKeyOptions(
 
   const [roles, organizations] = await Promise.all([
     roleIds.size > 0
-      ? findWithDecryption(em, Role, { id: { $in: Array.from(roleIds) }, deletedAt: null }, {}, decryptionScope)
+      ? findWithDecryption(em, Role, { id: { $in: Array.from(roleIds) }, tenantId: scope.tenantId, deletedAt: null }, {}, decryptionScope)
       : [],
     organizationIds.size > 0
       ? findWithDecryption(em, Organization, { id: { $in: Array.from(organizationIds) } }, {}, decryptionScope)
@@ -242,7 +339,20 @@ export async function listOpenMercatoApiKeyOptions(
   const roleMap = new Map((roles as Role[]).map((role) => [String(role.id), role.name ?? null]))
   const orgMap = new Map((organizations as Organization[]).map((org) => [String(org.id), org.name ?? null]))
 
-  return activeKeys.map((key) => ({
+  if (grantContext) {
+    for (const key of activeKeys) {
+      try {
+        await assertOpenMercatoApiKeyProfileGrantable(em, key, scope, grantContext)
+        grantableKeys.push(key)
+      } catch {
+        // Fail closed in the picker: profiles the actor cannot grant are hidden.
+      }
+    }
+  }
+
+  const visibleKeys = grantContext ? grantableKeys : activeKeys
+
+  return visibleKeys.map((key) => ({
     id: key.id,
     name: key.name,
     keyPrefix: key.keyPrefix,
@@ -290,6 +400,7 @@ export async function validateOpenMercatoCallActions(
   actions: unknown,
   scope: OpenMercatoCallScope,
   endpointOptions?: OpenMercatoEndpointOption[],
+  grantContext?: OpenMercatoCallGrantContext,
 ): Promise<string[]> {
   if (!Array.isArray(actions) || actions.length === 0) return []
 
@@ -315,6 +426,8 @@ export async function validateOpenMercatoCallActions(
       errors.push(`Action ${index + 1}: selected API key profile is not available`)
     } else if (!Array.isArray(apiKey.rolesJson) || apiKey.rolesJson.length === 0) {
       errors.push(`Action ${index + 1}: selected API key profile has no roles`)
+    } else if (grantContext) {
+      await assertOpenMercatoApiKeyProfileGrantable(em, apiKey, scope, grantContext)
     }
   }
 

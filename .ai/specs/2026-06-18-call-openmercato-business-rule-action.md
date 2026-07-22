@@ -6,6 +6,8 @@ Business rules gain an additive `CALL_OPEN_MERCATO` action that lets rule author
 
 The existing `CALL_WEBHOOK` action is unchanged and continues to require a URL.
 
+Configuring or executing a `CALL_OPEN_MERCATO` action is intentionally fail-closed: the accountable rule author/editor must still be an active user in the rule organization and must be able to grant every role carried by the selected API-key profile.
+
 ## Overview
 
 Business rules already support generic webhooks, but internal Open Mercato automation should not require users to paste local application URLs or manually handle API-key secrets. This spec adds a first-party action type for internal API calls while keeping the action config in the existing JSONB action arrays.
@@ -85,6 +87,7 @@ Requires:
 
 - `business_rules.manage`
 - `api_keys.view`
+- `api_keys.create`
 
 Response:
 
@@ -121,6 +124,7 @@ Endpoint filtering:
 API key filtering:
 
 - Include only active, unexpired, non-deleted API keys in the current tenant and selected organization scope.
+- Include only profiles whose full role ACL the caller can grant; profiles outside that all-or-nothing grant ceiling are hidden rather than trimmed.
 - Return metadata only; never return secrets, hashed secrets, or authorization headers.
 
 ### Business Rule Create/Update
@@ -128,9 +132,12 @@ API key filtering:
 Create/update validation remains backward-compatible for existing action types. When `CALL_OPEN_MERCATO` is present, the route additionally verifies:
 
 - The caller can view API key profiles.
+- The caller can create API keys, because the action mints a one-time key when it runs.
 - The selected endpoint and method are currently available.
 - The selected API key profile exists in the current tenant/organization scope.
 - The selected API key profile has at least one role.
+- The caller can grant the selected profile's complete current role ACL.
+- Partial updates merge the patch into the scoped persisted rule first, then validate the effective success and failure action arrays before persistence. Omitting action arrays cannot bypass `CALL_OPEN_MERCATO` validation.
 
 `CALL_WEBHOOK` validation remains unchanged and continues to require `config.url`.
 
@@ -153,11 +160,13 @@ The action executor:
 1. Validates that the configured endpoint is a currently available relative `/api/...` path for the configured method.
 2. Resolves the selected API key profile in the execution tenant and organization scope.
 3. Rejects missing, deleted, expired, or role-less profiles.
-4. Creates a one-time API key with the selected profile's roles.
-5. Calls the selected internal endpoint using `Authorization: apikey ...`, tenant/org headers, and business-rule trace headers.
-6. Parses the response body as JSON when possible.
-7. Treats non-2xx responses as action failures and marks 5xx failures as retriable.
-8. Soft-deletes the one-time key after the call.
+4. Resolves the accountable grantor as `updatedBy ?? createdBy`, requires that grantor to be an active user in the rule tenant/organization, and re-checks that the grantor can still grant the selected profile's complete current role ACL.
+5. Fails before creating the one-time key or calling `fetch` when the grantor is missing/deleted, loses privileges, the selected profile's RoleAcl expands, or the profile drifts out of organization scope.
+6. Creates a one-time API key with the selected profile's roles and `createdBy: null`.
+7. Calls the selected internal endpoint using `Authorization: apikey ...`, tenant/org headers, and business-rule trace headers.
+8. Parses the response body as JSON when possible.
+9. Treats non-2xx responses as action failures and marks 5xx failures as retriable.
+10. Soft-deletes the one-time key after the call.
 
 ## Security
 
@@ -166,7 +175,10 @@ The action executor:
 - Authorization headers are not persisted.
 - Endpoint execution is allowlisted by current OpenAPI/route metadata and relative `/api/...` paths, excluding auth, API-key management, and recursive business-rule execution routes.
 - API key profile resolution is scoped by tenant and organization.
-- The options route requires both business-rule management and API-key viewing permissions.
+- The options route requires business-rule management, API-key viewing, and API-key creation permissions.
+- Options, create/update validation, and runtime execution enforce the same all-or-nothing grant ceiling for the selected profile roles; roles are never silently trimmed.
+- Runtime one-time M2M keys use `createdBy: null` so their authentication is not coupled to a triggering user principal.
+- Existing `CALL_OPEN_MERCATO` rules with null or non-resolvable `createdBy`/`updatedBy` are not grandfathered; they fail closed until edited by an accountable active user who can grant the selected profile.
 - Rule execution logs persist only action type, success flag, and error summary for action results.
 
 ## Alternatives Considered
@@ -190,8 +202,10 @@ Rejected for the initial implementation. Parameterized routes need dedicated UI 
 - Existing `CALL_WEBHOOK` validation still rejects a missing `url`.
 - Options route tests cover metadata trimming, endpoint exclusions, and feature guards.
 - Rule create/update route tests reject malformed configs and unknown or unavailable API key profiles.
-- Executor tests cover one-time key create/delete, request headers/body, non-2xx handling, and unsafe endpoint refusal.
-- Integration coverage creates a rule with `CALL_OPEN_MERCATO`, verifies no webhook URL validation error, reloads the config, executes a harmless internal endpoint, and cleans up fixtures.
+- Options/create/update tests cover the `api_keys.create` requirement and broad-role denial with subset/wildcard allow cases.
+- Rule update tests cover the partial `PUT` bypass regression by validating the effective action arrays when the patch omits actions.
+- Executor tests cover one-time key create/delete, request headers/body, non-2xx handling, unsafe endpoint refusal, missing/deleted grantors, grantor privilege loss, RoleAcl expansion, profile org drift, and deleted/expired profiles.
+- Integration coverage creates a rule with `CALL_OPEN_MERCATO`, verifies no webhook URL validation error, reloads the config, executes a harmless internal endpoint, denies broader profile selection for an actor lacking `catalog.categories.manage`, allows an actor whose grants cover that profile, and cleans up fixtures.
 
 ## Risks & Impact Review
 
@@ -205,9 +219,9 @@ Rejected for the initial implementation. Parameterized routes need dedicated UI 
 ### Privilege Amplification Through API Key Profiles
 
 - Severity: High
-- Scenario: A rule author selects a profile with broader roles than intended.
-- Mitigation: Configuring this action requires `business_rules.manage` and `api_keys.view`. Runtime uses only roles already assigned to a scoped API key profile.
-- Residual risk: Administrators must manage API key profiles carefully.
+- Scenario: A rule author selects a profile with broader roles than they can grant, then uses the business rule to mint a one-time M2M key with those roles.
+- Mitigation: Configuring this action requires `business_rules.manage`, `api_keys.view`, and `api_keys.create`; options hide profiles outside the caller's all-or-nothing grant ceiling; create/update re-validates the selected profile server-side; runtime re-checks the accountable `updatedBy ?? createdBy` grantor before key creation and internal fetch.
+- Residual risk: Rules created by an accountable user can stop executing later if that user is deleted or loses required privileges. This is intentional fail-closed behavior.
 
 ### Secret Exposure in Logs
 
@@ -241,3 +255,4 @@ Rejected for the initial implementation. Parameterized routes need dedicated UI 
 ### 2026-07-22
 
 - Hardened endpoint exposure, M2M one-time key identity, and response-error logging for review feedback.
+- Tightened the authorization contract for API-key profiles: `api_keys.create` is required, profile roles must fit the actor/accountable grantor grant ceiling at options/save/runtime, partial updates validate effective action state, and legacy rules without a resolvable accountable grantor fail closed.

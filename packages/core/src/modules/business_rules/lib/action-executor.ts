@@ -2,11 +2,13 @@ import type { EntityManager as PostgreSqlEntityManager } from '@mikro-orm/postgr
 import type { EvaluationContext } from './expression-evaluator'
 import { getNestedValue, resolveSpecialValue } from './value-resolver'
 import {
+  assertOpenMercatoApiKeyProfileGrantable,
   findOpenMercatoEndpointOption,
   getCurrentOpenMercatoEndpointOptions,
   resolveOpenMercatoApiKeyProfile,
 } from './openmercato-call-options'
 import type { OpenMercatoEndpointOption } from './openmercato-call-options-types'
+import type { RbacService } from '../../auth/services/rbacService'
 
 /**
  * Action definition
@@ -30,6 +32,8 @@ export interface ActionContext extends EvaluationContext {
   organizationId?: string
   executedBy?: string | null
   em?: PostgreSqlEntityManager
+  accountableGrantorId?: string | null
+  rbacService?: RbacService
   openMercatoEndpointOptions?: OpenMercatoEndpointOption[]
   [key: string]: any
 }
@@ -474,12 +478,16 @@ async function handleCallOpenMercato(
     throw new Error('CALL_OPEN_MERCATO action requires an active API key profile in scope')
   }
 
-  const roleIds = Array.isArray(apiKeyProfile.rolesJson)
-    ? apiKeyProfile.rolesJson.filter((roleId): roleId is string => typeof roleId === 'string' && roleId.length > 0)
-    : []
-  if (roleIds.length === 0) {
-    throw new Error('CALL_OPEN_MERCATO action requires an API key profile with at least one role')
-  }
+  const rbacService = await resolveOpenMercatoRbacService(context)
+  const grantableProfile = await assertOpenMercatoApiKeyProfileGrantable(
+    em,
+    apiKeyProfile,
+    { tenantId, organizationId },
+    {
+      actorUserId: context.accountableGrantorId ?? null,
+      rbacService,
+    },
+  )
 
   const { withOnetimeApiKey } = await import('../../api_keys/services/apiKeyService')
   const fullUrl = buildOpenMercatoApiUrl(endpointOption.path)
@@ -494,7 +502,7 @@ async function handleCallOpenMercato(
       description: `One-time key for business rule ${context.ruleId || 'unknown'}`,
       tenantId,
       organizationId,
-      roles: roleIds,
+      roles: grantableProfile.roleIds,
       createdBy: null,
       expiresAt: null,
     },
@@ -601,6 +609,18 @@ function buildOpenMercatoApiUrl(endpoint: string): string {
   }
   const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '')
   return `${appUrl}${endpoint}`
+}
+
+async function resolveOpenMercatoRbacService(context: ActionContext): Promise<RbacService> {
+  if (context.rbacService) return context.rbacService
+
+  const { createRequestContainer } = await import('@open-mercato/shared/lib/di/container')
+  const container = await createRequestContainer()
+  const rbacService = container.resolve('rbacService') as RbacService | undefined
+  if (!rbacService) {
+    throw new Error('CALL_OPEN_MERCATO action requires an RBAC service')
+  }
+  return rbacService
 }
 
 function normalizeOpenMercatoRequestBody(value: any, context: ActionContext): any {

@@ -523,6 +523,9 @@ export async function executeSingleRule(
           tenantId: context.tenantId,
           organizationId: context.organizationId,
           executedBy: context.executedBy ?? context.user?.id ?? null,
+          // CALL_OPEN_MERCATO re-checks this accountable author/editor before
+          // minting a one-time M2M key; legacy rules without one fail closed.
+          accountableGrantorId: rule.updatedBy ?? rule.createdBy ?? null,
           em: em as any,
         }
 
