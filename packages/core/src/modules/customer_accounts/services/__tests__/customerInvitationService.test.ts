@@ -35,7 +35,7 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
   const tenantId = '11111111-1111-4111-8111-111111111111'
   const organizationId = '22222222-2222-4222-8222-222222222222'
 
-  let mockEm: jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush'>>
+  let mockEm: jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush' | 'remove'>>
   let service: CustomerInvitationService
 
   beforeEach(() => {
@@ -46,7 +46,8 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
       create: jest.fn((_: unknown, data: unknown) => data as any),
       persist: jest.fn(),
       flush: jest.fn(async () => undefined),
-    } as unknown as jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush'>>
+      remove: jest.fn(),
+    } as unknown as jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush' | 'remove'>>
     service = new CustomerInvitationService(mockEm as unknown as EntityManager)
   })
 
@@ -123,7 +124,7 @@ describe('CustomerInvitationService.createInvitation — pending-invitation dedu
   const tenantId = '11111111-1111-4111-8111-111111111111'
   const organizationId = '22222222-2222-4222-8222-222222222222'
 
-  let mockEm: jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush'>>
+  let mockEm: jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush' | 'remove'>>
   let service: CustomerInvitationService
 
   beforeEach(() => {
@@ -134,7 +135,8 @@ describe('CustomerInvitationService.createInvitation — pending-invitation dedu
       create: jest.fn((_: unknown, data: unknown) => data as any),
       persist: jest.fn(() => mockEm),
       flush: jest.fn(async () => undefined),
-    } as unknown as jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush'>>
+      remove: jest.fn(() => mockEm),
+    } as unknown as jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush' | 'remove'>>
     service = new CustomerInvitationService(mockEm as unknown as EntityManager)
   })
 
@@ -171,6 +173,14 @@ describe('CustomerInvitationService.createInvitation — pending-invitation dedu
     expect(mockEm.create).not.toHaveBeenCalled()
     expect(result.invitation).toBe(existing)
     expect(result.rawToken).toBe('raw-token')
+    expect(result.reused).toBe(true)
+    expect(result.rollbackSnapshot).toMatchObject({
+      email: 'old@example.com',
+      token: 'old-hashed-token',
+      roleIdsJson: ['old-role'],
+      invitedByUserId: null,
+      displayName: 'Old Name',
+    })
     expect(existing.email).toBe('new@example.com')
     expect(existing.token).toBe('hashed-token')
     expect(existing.roleIdsJson).toEqual(roleIds)
@@ -216,5 +226,51 @@ describe('CustomerInvitationService.createInvitation — pending-invitation dedu
     })
     expect(mockEm.persist).toHaveBeenCalled()
     expect(result.rawToken).toBe('raw-token')
+    expect(result.reused).toBe(false)
+    expect(result.rollbackSnapshot).toBeUndefined()
+  })
+
+  it('removes a freshly-created invitation with MikroORM v7 remove plus flush', async () => {
+    const invitation = { id: 'inv-fresh' } as unknown as CustomerUserInvitation
+
+    await service.removeInvitation(invitation)
+
+    expect(mockEm.remove).toHaveBeenCalledWith(invitation)
+    expect(mockEm.flush).toHaveBeenCalled()
+  })
+
+  it('restores a reused pending invitation from its rollback snapshot', async () => {
+    const invitation = {
+      id: 'inv-existing',
+      email: 'new@example.com',
+      token: 'new-hashed-token',
+      customerEntityId: 'new-company',
+      roleIdsJson: ['new-role'],
+      invitedByUserId: 'new-inviter',
+      invitedByCustomerUserId: null,
+      displayName: 'New Name',
+      expiresAt: new Date('2026-06-18T12:00:00.000Z'),
+    } as unknown as CustomerUserInvitation
+
+    await service.restoreInvitation(invitation, {
+      email: 'old@example.com',
+      token: 'old-hashed-token',
+      customerEntityId: null,
+      roleIdsJson: ['old-role'],
+      invitedByUserId: 'old-inviter',
+      invitedByCustomerUserId: 'old-portal-user',
+      displayName: 'Old Name',
+      expiresAt: new Date('2026-06-17T12:00:00.000Z'),
+    })
+
+    expect(invitation.email).toBe('old@example.com')
+    expect(invitation.token).toBe('old-hashed-token')
+    expect(invitation.customerEntityId).toBeNull()
+    expect(invitation.roleIdsJson).toEqual(['old-role'])
+    expect(invitation.invitedByUserId).toBe('old-inviter')
+    expect(invitation.invitedByCustomerUserId).toBe('old-portal-user')
+    expect(invitation.displayName).toBe('Old Name')
+    expect(invitation.expiresAt.toISOString()).toBe('2026-06-17T12:00:00.000Z')
+    expect(mockEm.flush).toHaveBeenCalled()
   })
 })

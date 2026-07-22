@@ -2,6 +2,8 @@
 
 const mockCheckAuthRateLimit = jest.fn()
 const mockCreateInvitation = jest.fn()
+const mockRemoveInvitation = jest.fn()
+const mockRestoreInvitation = jest.fn()
 const mockGetCustomerAuthFromRequest = jest.fn()
 const mockRequireCustomerFeature = jest.fn()
 const mockFindWithDecryption = jest.fn()
@@ -16,7 +18,13 @@ const roleId = '11111111-1111-4111-8111-111111111111'
 const mockContainer = {
   resolve: jest.fn((token: string) => {
     if (token === 'customerRbacService') return {}
-    if (token === 'customerInvitationService') return { createInvitation: mockCreateInvitation }
+    if (token === 'customerInvitationService') {
+      return {
+        createInvitation: mockCreateInvitation,
+        removeInvitation: mockRemoveInvitation,
+        restoreInvitation: mockRestoreInvitation,
+      }
+    }
     if (token === 'em') return {}
     return null
   }),
@@ -82,8 +90,11 @@ describe('portal customer account user invite route', () => {
         expiresAt: new Date('2026-06-18T12:00:00.000Z').toISOString(),
       },
       rawToken: 'raw-invite-token',
+      reused: false,
     })
     mockSendCustomerInvitationEmail.mockResolvedValue(undefined)
+    mockRemoveInvitation.mockResolvedValue(undefined)
+    mockRestoreInvitation.mockResolvedValue(undefined)
   })
 
   it('creates a portal-admin invitation and sends the invitation email', async () => {
@@ -140,6 +151,42 @@ describe('portal customer account user invite route', () => {
 
     expect(response.status).toBe(502)
     expect(json).toEqual({ ok: false, error: 'Invitation email could not be sent' })
+    expect(mockRemoveInvitation).toHaveBeenCalledWith(expect.objectContaining({
+      id: '66666666-6666-4666-8666-666666666666',
+    }))
+    expect(mockRestoreInvitation).not.toHaveBeenCalled()
+    consoleErrorSpy.mockRestore()
+  })
+
+  it('restores a reused pending invitation when email delivery fails', async () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined)
+    const rollbackSnapshot = {
+      email: 'buyer@example.com',
+      token: 'previous-hashed-token',
+      roleIdsJson: [roleId],
+      expiresAt: new Date('2026-06-17T12:00:00.000Z'),
+    }
+    mockCreateInvitation.mockResolvedValueOnce({
+      invitation: {
+        id: '66666666-6666-4666-8666-666666666666',
+        email: 'buyer@example.com',
+        expiresAt: new Date('2026-06-18T12:00:00.000Z').toISOString(),
+      },
+      rawToken: 'new-raw-token',
+      reused: true,
+      rollbackSnapshot,
+    })
+    mockSendCustomerInvitationEmail.mockRejectedValueOnce(new Error('smtp unavailable'))
+    const { POST } = await import('../users-invite')
+
+    const response = await POST(makeInviteRequest())
+
+    expect(response.status).toBe(502)
+    expect(mockRestoreInvitation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: '66666666-6666-4666-8666-666666666666' }),
+      rollbackSnapshot,
+    )
+    expect(mockRemoveInvitation).not.toHaveBeenCalled()
     consoleErrorSpy.mockRestore()
   })
 })

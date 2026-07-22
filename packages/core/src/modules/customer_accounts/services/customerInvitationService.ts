@@ -13,6 +13,37 @@ import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/
 const BCRYPT_COST = 10
 const INVITATION_TTL_MS = 72 * 60 * 60 * 1000 // 72 hours
 
+type InvitationRollbackSnapshot = {
+  email: string
+  token: string
+  customerEntityId?: string | null
+  roleIdsJson?: string[] | null
+  invitedByUserId?: string | null
+  invitedByCustomerUserId?: string | null
+  displayName?: string | null
+  expiresAt: Date
+}
+
+type CreateInvitationResult = {
+  invitation: CustomerUserInvitation
+  rawToken: string
+  reused: boolean
+  rollbackSnapshot?: InvitationRollbackSnapshot
+}
+
+function snapshotInvitation(invitation: CustomerUserInvitation): InvitationRollbackSnapshot {
+  return {
+    email: invitation.email,
+    token: invitation.token,
+    customerEntityId: invitation.customerEntityId ?? null,
+    roleIdsJson: Array.isArray(invitation.roleIdsJson) ? [...invitation.roleIdsJson] : invitation.roleIdsJson ?? null,
+    invitedByUserId: invitation.invitedByUserId ?? null,
+    invitedByCustomerUserId: invitation.invitedByCustomerUserId ?? null,
+    displayName: invitation.displayName ?? null,
+    expiresAt: new Date(invitation.expiresAt),
+  }
+}
+
 export class CustomerInvitationService {
   constructor(private em: EntityManager) {}
 
@@ -26,7 +57,7 @@ export class CustomerInvitationService {
       invitedByCustomerUserId?: string | null
       displayName?: string | null
     },
-  ): Promise<{ invitation: CustomerUserInvitation; rawToken: string }> {
+  ): Promise<CreateInvitationResult> {
     const token = generateSecureToken()
     const emailHash = hashForLookup(email)
     const normalizedEmail = email.toLowerCase().trim()
@@ -53,6 +84,7 @@ export class CustomerInvitationService {
     )
 
     if (existing) {
+      const rollbackSnapshot = snapshotInvitation(existing)
       existing.email = normalizedEmail
       existing.token = tokenHashed
       existing.customerEntityId = options.customerEntityId || null
@@ -62,7 +94,7 @@ export class CustomerInvitationService {
       existing.displayName = options.displayName || null
       existing.expiresAt = expiresAt
       await this.em.flush()
-      return { invitation: existing, rawToken: token }
+      return { invitation: existing, rawToken: token, reused: true, rollbackSnapshot }
     }
 
     const invitation = this.em.create(CustomerUserInvitation, {
@@ -80,7 +112,27 @@ export class CustomerInvitationService {
       createdAt: new Date(),
     } as any) as CustomerUserInvitation
     await this.em.persist(invitation).flush()
-    return { invitation, rawToken: token }
+    return { invitation, rawToken: token, reused: false }
+  }
+
+  async removeInvitation(invitation: CustomerUserInvitation): Promise<void> {
+    this.em.remove(invitation)
+    await this.em.flush()
+  }
+
+  async restoreInvitation(
+    invitation: CustomerUserInvitation,
+    snapshot: InvitationRollbackSnapshot,
+  ): Promise<void> {
+    invitation.email = snapshot.email
+    invitation.token = snapshot.token
+    invitation.customerEntityId = snapshot.customerEntityId ?? null
+    invitation.roleIdsJson = Array.isArray(snapshot.roleIdsJson) ? [...snapshot.roleIdsJson] : snapshot.roleIdsJson ?? null
+    invitation.invitedByUserId = snapshot.invitedByUserId ?? null
+    invitation.invitedByCustomerUserId = snapshot.invitedByCustomerUserId ?? null
+    invitation.displayName = snapshot.displayName ?? null
+    invitation.expiresAt = new Date(snapshot.expiresAt)
+    await this.em.flush()
   }
 
   async findByToken(token: string): Promise<CustomerUserInvitation | null> {
