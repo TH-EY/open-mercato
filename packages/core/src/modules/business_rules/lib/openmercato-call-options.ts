@@ -7,6 +7,7 @@ import {
 import { getModules } from '@open-mercato/shared/lib/modules/registry'
 import { buildOpenApiDocument } from '@open-mercato/shared/lib/openapi'
 import type { OpenApiMethodDoc, OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
+import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { ApiKey } from '../../api_keys/data/entities'
 import { Role } from '../../auth/data/entities'
 import { Organization } from '../../directory/data/entities'
@@ -26,6 +27,14 @@ const METHOD_ORDER = new Map<string, number>(
   OPENMERCATO_CALL_METHODS.map((method, index) => [method, index]),
 )
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const BLOCKED_ENDPOINTS = new Set([
+  '/api/business_rules/execute',
+  '/api/business_rules/openmercato-call-options',
+])
+const BLOCKED_ENDPOINT_PREFIXES = [
+  '/api/api_keys',
+  '/api/auth',
+]
 
 function isOpenMercatoCallMethod(value: string): value is OpenMercatoCallMethod {
   return OPENMERCATO_CALL_METHODS.includes(value as OpenMercatoCallMethod)
@@ -35,14 +44,19 @@ function hasPathSegment(path: string, segment: string): boolean {
   return path.split('/').filter(Boolean).includes(segment)
 }
 
+function isBlockedEndpoint(path: string): boolean {
+  if (BLOCKED_ENDPOINTS.has(path)) return true
+  return BLOCKED_ENDPOINT_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
+}
+
 function shouldExposeEndpoint(path: string, method: string, operation: Record<string, any>): boolean {
   if (!isOpenMercatoCallMethod(method.toUpperCase())) return false
   if (!path.startsWith('/api/')) return false
   if (path.includes('{')) return false
   if (path.includes('[')) return false
   if (path.startsWith('/api/docs')) return false
+  if (isBlockedEndpoint(path)) return false
   if (hasPathSegment(path, 'options')) return false
-  if (path === '/api/business_rules/openmercato-call-options') return false
   if (operation.deprecated === true) return false
   return true
 }
@@ -134,8 +148,8 @@ async function collectOpenMercatoEndpointOptionsFromApiRouteManifests(
     if (!path.startsWith('/api/')) continue
     if (path.includes('[')) continue
     if (path.startsWith('/api/docs')) continue
+    if (isBlockedEndpoint(path)) continue
     if (hasPathSegment(path, 'options')) continue
-    if (path === '/api/business_rules/openmercato-call-options') continue
 
     let routeDoc: OpenApiRouteDoc | undefined
     try {
@@ -203,7 +217,8 @@ export async function listOpenMercatoApiKeyOptions(
     filters.organizationId = scope.organizationId
   }
 
-  const keys = (await em.find(ApiKey, filters, { orderBy: { name: 'asc' } })) as ApiKey[]
+  const decryptionScope = { tenantId: scope.tenantId, organizationId: scope.organizationId ?? null }
+  const keys = await findWithDecryption(em, ApiKey, filters, { orderBy: { name: 'asc' } }, decryptionScope)
   const now = Date.now()
   const activeKeys = keys.filter((key) => !key.expiresAt || key.expiresAt.getTime() > now)
 
@@ -217,8 +232,12 @@ export async function listOpenMercatoApiKeyOptions(
   }
 
   const [roles, organizations] = await Promise.all([
-    roleIds.size > 0 ? em.find(Role, { id: { $in: Array.from(roleIds) }, deletedAt: null }) : [],
-    organizationIds.size > 0 ? em.find(Organization, { id: { $in: Array.from(organizationIds) } }) : [],
+    roleIds.size > 0
+      ? findWithDecryption(em, Role, { id: { $in: Array.from(roleIds) }, deletedAt: null }, {}, decryptionScope)
+      : [],
+    organizationIds.size > 0
+      ? findWithDecryption(em, Organization, { id: { $in: Array.from(organizationIds) } }, {}, decryptionScope)
+      : [],
   ])
   const roleMap = new Map((roles as Role[]).map((role) => [String(role.id), role.name ?? null]))
   const orgMap = new Map((organizations as Organization[]).map((org) => [String(org.id), org.name ?? null]))
@@ -254,7 +273,13 @@ export async function resolveOpenMercatoApiKeyProfile(
     filters.organizationId = scope.organizationId
   }
 
-  const key = await em.findOne(ApiKey, filters)
+  const key = await findOneWithDecryption(
+    em,
+    ApiKey,
+    filters,
+    {},
+    { tenantId: scope.tenantId, organizationId: scope.organizationId ?? null },
+  )
   if (!key) return null
   if (key.expiresAt && key.expiresAt.getTime() <= Date.now()) return null
   return key

@@ -495,7 +495,7 @@ async function handleCallOpenMercato(
       tenantId,
       organizationId,
       roles: roleIds,
-      createdBy: context.executedBy ?? context.user?.id ?? null,
+      createdBy: null,
       expiresAt: null,
     },
     async (apiKeySecret) => {
@@ -645,13 +645,12 @@ async function parseOpenMercatoResponseBody(response: Response): Promise<any> {
   }
 }
 
-function throwOpenMercatoResponseError(status: number, body: any): never {
-  const bodyText = typeof body === 'string' ? body : JSON.stringify(body)
+function throwOpenMercatoResponseError(status: number, _body: any): never {
   if (status >= 400 && status < 500) {
-    throw new Error(`CALL_OPEN_MERCATO request failed with status ${status}: ${bodyText}`)
+    throw new Error(`CALL_OPEN_MERCATO request failed with status ${status}`)
   }
 
-  const error: any = new Error(`CALL_OPEN_MERCATO request failed with status ${status}: ${bodyText}`)
+  const error: any = new Error(`CALL_OPEN_MERCATO request failed with status ${status}`)
   if (status >= 500) {
     error.retriable = true
   }

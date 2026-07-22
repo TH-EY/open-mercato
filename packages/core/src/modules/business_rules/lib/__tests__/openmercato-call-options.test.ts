@@ -53,11 +53,20 @@ describe('OpenMercato call options', () => {
     ])
   })
 
-  test('excludes docs, options, path-parameter, and deprecated endpoints from OpenAPI documents', () => {
+  test('excludes docs, options, path-parameter, deprecated, auth, API key, and recursive execution endpoints from OpenAPI documents', () => {
     const options = collectOpenMercatoEndpointOptionsFromDocument({
       paths: {
         '/api/currencies/currencies': {
           get: { summary: 'List currencies' },
+        },
+        '/api/auth/login': {
+          post: { summary: 'Login' },
+        },
+        '/api/api_keys/keys': {
+          get: { summary: 'List API keys' },
+        },
+        '/api/business_rules/execute': {
+          post: { summary: 'Execute rules' },
         },
         '/api/currencies/currencies/options': {
           get: { summary: 'List currency options' },

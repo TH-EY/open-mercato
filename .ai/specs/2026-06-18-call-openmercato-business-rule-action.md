@@ -114,6 +114,7 @@ Endpoint filtering:
 - Include only relative `/api/...` paths.
 - Exclude API documentation routes.
 - Exclude the options route itself.
+- Exclude auth, API-key management, and recursive business-rule execution routes.
 - Exclude deprecated operations.
 - Exclude parameterized routes until the action UI can collect path parameters.
 
@@ -163,7 +164,7 @@ The action executor:
 - The selected API key secret is never recovered or reused.
 - Generated one-time secrets are not stored in rule config or execution logs.
 - Authorization headers are not persisted.
-- Endpoint execution is allowlisted by current OpenAPI/route metadata and relative `/api/...` paths.
+- Endpoint execution is allowlisted by current OpenAPI/route metadata and relative `/api/...` paths, excluding auth, API-key management, and recursive business-rule execution routes.
 - API key profile resolution is scoped by tenant and organization.
 - The options route requires both business-rule management and API-key viewing permissions.
 - Rule execution logs persist only action type, success flag, and error summary for action results.
@@ -236,3 +237,7 @@ Rejected for the initial implementation. Parameterized routes need dedicated UI 
 ### 2026-06-18
 
 - Added the `CALL_OPEN_MERCATO` business-rule action, options route, editor controls, scoped runtime execution, and test coverage.
+
+### 2026-07-22
+
+- Hardened endpoint exposure, M2M one-time key identity, and response-error logging for review feedback.

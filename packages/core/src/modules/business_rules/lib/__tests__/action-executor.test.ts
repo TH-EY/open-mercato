@@ -596,6 +596,7 @@ describe('Action Executor', () => {
         })
         expect(createdApiKeys).toHaveLength(1)
         expect(createdApiKeys[0].rolesJson).toEqual(['role-1'])
+        expect(createdApiKeys[0].createdBy).toBeNull()
         expect(createdApiKeys[0].deletedAt).toBeInstanceOf(Date)
       })
 
@@ -653,6 +654,7 @@ describe('Action Executor', () => {
 
         expect(result.success).toBe(false)
         expect(result.error).toContain('CALL_OPEN_MERCATO request failed with status 403')
+        expect(result.error).not.toContain('Forbidden')
       })
 
       it('should refuse endpoints that are not in the current OpenMercato options', async () => {

@@ -128,4 +128,68 @@ describe('resolveApiKeyAuth caching + lastUsedAt debounce', () => {
     await getAuthFromRequest(buildRequest('secret-invalidate'))
     expect(findApiKeyBySecret).toHaveBeenCalledTimes(2)
   })
+
+  it('rejects org-scoped API keys when createdBy belongs to another organization', async () => {
+    const { getAuthFromRequest } = await import('@open-mercato/shared/lib/auth/server')
+    findApiKeyBySecret.mockResolvedValue({
+      id: 'key-cross-org-user',
+      name: 'cross-org-user',
+      tenantId: 'tenant-1',
+      organizationId: 'org-rule',
+      rolesJson: ['role-1'],
+      sessionUserId: null,
+      createdBy: 'triggering-user',
+      expiresAt: null,
+      lastUsedAt: null,
+    })
+    emFind.mockResolvedValue([{ name: 'business_rules.view' }])
+    emFindOne.mockImplementation(async (_Entity: unknown, where: any) => {
+      if (where?.id === 'triggering-user') {
+        return { id: 'triggering-user', tenantId: 'tenant-1', organizationId: 'org-trigger' }
+      }
+      return null
+    })
+
+    const auth = await getAuthFromRequest(buildRequest('secret-cross-org-user'))
+
+    expect(auth).toBeNull()
+  })
+
+  it('authenticates org-scoped M2M API keys with createdBy null through tenant and organization scope', async () => {
+    const { getAuthFromRequest } = await import('@open-mercato/shared/lib/auth/server')
+    findApiKeyBySecret.mockResolvedValue({
+      id: 'key-m2m',
+      name: 'm2m',
+      tenantId: 'tenant-1',
+      organizationId: 'org-rule',
+      rolesJson: ['role-1'],
+      sessionUserId: null,
+      createdBy: null,
+      expiresAt: null,
+      lastUsedAt: null,
+    })
+    emFind.mockResolvedValue([{ name: 'business_rules.view' }])
+    emFindOne.mockImplementation(async (_Entity: unknown, where: any) => {
+      if (where?.id === 'tenant-1' && where?.isActive === true) {
+        return { id: 'tenant-1', isActive: true }
+      }
+      if (where?.id === 'org-rule' && where?.isActive === true) {
+        return { id: 'org-rule', isActive: true, tenant: { id: 'tenant-1' } }
+      }
+      return null
+    })
+
+    const auth = await getAuthFromRequest(buildRequest('secret-m2m'))
+
+    expect(auth).toMatchObject({
+      sub: 'api_key:key-m2m',
+      tenantId: 'tenant-1',
+      orgId: 'org-rule',
+      roles: ['business_rules.view'],
+      isApiKey: true,
+      keyId: 'key-m2m',
+      keyName: 'm2m',
+    })
+    expect(auth).not.toHaveProperty('userId')
+  })
 })
