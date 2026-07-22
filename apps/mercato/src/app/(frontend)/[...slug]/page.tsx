@@ -9,6 +9,8 @@ import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { resolveTranslations } from '@open-mercato/shared/lib/i18n/server'
 import type { RbacService } from '@open-mercato/core/modules/auth/services/rbacService'
 import type { CustomerRbacService } from '@open-mercato/core/modules/customer_accounts/services/customerRbacService'
+import { Organization } from '@open-mercato/core/modules/directory/data/entities'
+import type { EntityManager } from '@mikro-orm/postgresql'
 import type { Metadata } from 'next'
 import { resolveLocalizedTitleMetadata } from '@/lib/metadata'
 import { resolvePageMiddlewareRedirect } from '@open-mercato/shared/lib/middleware/page-executor'
@@ -60,18 +62,25 @@ export default async function SiteCatchAll({ params }: FrontendParams) {
 
   // Customer portal auth gate — separate from staff auth
   if (match.route.requireCustomerAuth) {
+    const segments = pathname.split('/').filter(Boolean)
+    const orgSlug = segments[0] ?? ''
+    await ensureServerBootstrap()
+    const portalContainer = await createRequestContainer()
+    const em = portalContainer.resolve('em') as EntityManager
+    const org = await em.findOne(Organization, { slug: orgSlug, deletedAt: null })
+    const tenant = (org as any)?.tenant
+    const expectedTenantId = typeof tenant === 'string' ? tenant : tenant?.id ? String(tenant.id) : null
+    const expectedOrganizationId = org ? String(org.id) : null
+
     const { getCustomerAuthFromCookies } = await import('@open-mercato/core/modules/customer_accounts/lib/customerAuthServer')
-    const customerAuth = await getCustomerAuthFromCookies()
+    const customerAuth = expectedTenantId && expectedOrganizationId
+      ? await getCustomerAuthFromCookies({ expectedTenantId, expectedOrganizationId })
+      : null
     if (!customerAuth) {
-      // Extract orgSlug from pathname for redirect (e.g., /my-org/portal/orders → my-org)
-      const segments = pathname.split('/').filter(Boolean)
-      const orgSlug = segments[0] ?? ''
       redirect(`/${orgSlug}/portal/login`)
     }
     const customerFeatures = match.route.requireCustomerFeatures
     if (customerFeatures && customerFeatures.length) {
-      await ensureServerBootstrap()
-      const portalContainer = await createRequestContainer()
       const customerRbac = portalContainer.resolve('customerRbacService') as CustomerRbacService
       const ok = await customerRbac.userHasAllFeatures(
         customerAuth.sub,

@@ -44,7 +44,7 @@ async function assertSessionStillActive(sessionId: string): Promise<boolean> {
  * ```
  */
 export async function getCustomerAuthFromCookies(
-  options?: { expectedTenantId?: string },
+  options?: { expectedTenantId?: string; expectedOrganizationId?: string },
 ): Promise<CustomerAuthContext | null> {
   const cookieStore = await cookies()
   const token = cookieStore.get('customer_auth_token')?.value
@@ -63,6 +63,10 @@ export async function getCustomerAuthFromCookies(
       // JWTs are rejected as if unauthenticated.
       return null
     }
+    const orgId = String(payload.orgId)
+    if (options?.expectedOrganizationId && options.expectedOrganizationId !== orgId) {
+      return null
+    }
     const stillActive = await assertSessionStillActive(sid)
     if (!stillActive) return null
 
@@ -79,7 +83,7 @@ export async function getCustomerAuthFromCookies(
       sid,
       type: 'customer',
       tenantId,
-      orgId: String(payload.orgId),
+      orgId,
       email: String(payload.email || ''),
       displayName: String(payload.displayName || ''),
       customerEntityId: payload.customerEntityId ? String(payload.customerEntityId) : null,
@@ -112,7 +116,10 @@ export async function getCustomerAuthForHost(
     const service = container.resolve('domainMappingService') as InstanceType<typeof DomainMappingService>
     const resolved = await service.resolveByHostname(hostname)
     if (!resolved || resolved.status !== 'active') return null
-    return getCustomerAuthFromCookies({ expectedTenantId: resolved.tenantId })
+    return getCustomerAuthFromCookies({
+      expectedTenantId: resolved.tenantId,
+      expectedOrganizationId: resolved.organizationId,
+    })
   } catch (err) {
     console.warn('[customer_accounts] getCustomerAuthForHost: domain resolve failed; falling back to platform cookie', err)
     return getCustomerAuthFromCookies()

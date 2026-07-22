@@ -15,6 +15,7 @@ const mockRequireCustomerFeature = jest.fn()
 const mockEmit = jest.fn(async () => undefined)
 const mockSendCustomerInvitationEmail = jest.fn()
 const mockRemoveInvitation = jest.fn()
+const mockCancelInvitationAttempt = jest.fn()
 
 jest.mock('@open-mercato/core/modules/customer_accounts/lib/rateLimiter', () => ({
   checkAuthRateLimit: (...args: unknown[]) => mockCheckAuthRateLimit(...args),
@@ -31,6 +32,7 @@ const mockContainer = {
         createInvitation: mockCreateInvitation,
         removeInvitation: mockRemoveInvitation,
         restoreInvitation: jest.fn(),
+        cancelInvitationAttempt: mockCancelInvitationAttempt,
       }
     }
     if (token === 'em') return { find: jest.fn() }
@@ -109,6 +111,7 @@ describe('customer invitation endpoints — invitation-created event', () => {
         expiresAt: new Date().toISOString(),
       },
       rawToken: 'raw-secret-token',
+      attemptTokenHash: 'hashed-raw-secret-token',
       reused: false,
     })
     mockEmit.mockResolvedValue(undefined)

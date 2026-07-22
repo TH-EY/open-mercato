@@ -15,6 +15,7 @@ const INVITATION_TTL_MS = 72 * 60 * 60 * 1000 // 72 hours
 
 type InvitationRollbackSnapshot = {
   email: string
+  emailHash: string
   token: string
   customerEntityId?: string | null
   roleIdsJson?: string[] | null
@@ -27,6 +28,7 @@ type InvitationRollbackSnapshot = {
 type CreateInvitationResult = {
   invitation: CustomerUserInvitation
   rawToken: string
+  attemptTokenHash: string
   reused: boolean
   rollbackSnapshot?: InvitationRollbackSnapshot
 }
@@ -34,6 +36,7 @@ type CreateInvitationResult = {
 function snapshotInvitation(invitation: CustomerUserInvitation): InvitationRollbackSnapshot {
   return {
     email: invitation.email,
+    emailHash: invitation.emailHash,
     token: invitation.token,
     customerEntityId: invitation.customerEntityId ?? null,
     roleIdsJson: Array.isArray(invitation.roleIdsJson) ? [...invitation.roleIdsJson] : invitation.roleIdsJson ?? null,
@@ -94,7 +97,7 @@ export class CustomerInvitationService {
       existing.displayName = options.displayName || null
       existing.expiresAt = expiresAt
       await this.em.flush()
-      return { invitation: existing, rawToken: token, reused: true, rollbackSnapshot }
+      return { invitation: existing, rawToken: token, attemptTokenHash: tokenHashed, reused: true, rollbackSnapshot }
     }
 
     const invitation = this.em.create(CustomerUserInvitation, {
@@ -112,27 +115,83 @@ export class CustomerInvitationService {
       createdAt: new Date(),
     } as any) as CustomerUserInvitation
     await this.em.persist(invitation).flush()
-    return { invitation, rawToken: token, reused: false }
+    return { invitation, rawToken: token, attemptTokenHash: tokenHashed, reused: false }
   }
 
-  async removeInvitation(invitation: CustomerUserInvitation): Promise<void> {
-    this.em.remove(invitation)
-    await this.em.flush()
+  async removeInvitation(invitation: CustomerUserInvitation, attemptTokenHash: string): Promise<void> {
+    const affected = await this.em.nativeDelete(CustomerUserInvitation, {
+      id: invitation.id,
+      tenantId: invitation.tenantId,
+      organizationId: invitation.organizationId,
+      token: attemptTokenHash,
+      acceptedAt: null,
+      cancelledAt: null,
+      expiresAt: { $gt: new Date() },
+    } as any)
+    if (affected !== 1) {
+      throw new Error('Invitation rollback delete did not affect exactly one pending invitation')
+    }
   }
 
   async restoreInvitation(
     invitation: CustomerUserInvitation,
     snapshot: InvitationRollbackSnapshot,
+    attemptTokenHash: string,
   ): Promise<void> {
+    const restoredRoleIds = Array.isArray(snapshot.roleIdsJson) ? [...snapshot.roleIdsJson] : snapshot.roleIdsJson ?? null
+    const affected = await this.em.nativeUpdate(
+      CustomerUserInvitation,
+      {
+        id: invitation.id,
+        tenantId: invitation.tenantId,
+        organizationId: invitation.organizationId,
+        token: attemptTokenHash,
+        acceptedAt: null,
+        cancelledAt: null,
+        expiresAt: { $gt: new Date() },
+      } as any,
+      {
+        email: snapshot.email,
+        emailHash: snapshot.emailHash,
+        token: snapshot.token,
+        customerEntityId: snapshot.customerEntityId ?? null,
+        roleIdsJson: restoredRoleIds,
+        invitedByUserId: snapshot.invitedByUserId ?? null,
+        invitedByCustomerUserId: snapshot.invitedByCustomerUserId ?? null,
+        displayName: snapshot.displayName ?? null,
+        expiresAt: new Date(snapshot.expiresAt),
+      } as any,
+    )
+    if (affected !== 1) {
+      throw new Error('Invitation rollback restore did not affect exactly one pending invitation')
+    }
+
     invitation.email = snapshot.email
+    invitation.emailHash = snapshot.emailHash
     invitation.token = snapshot.token
     invitation.customerEntityId = snapshot.customerEntityId ?? null
-    invitation.roleIdsJson = Array.isArray(snapshot.roleIdsJson) ? [...snapshot.roleIdsJson] : snapshot.roleIdsJson ?? null
+    invitation.roleIdsJson = restoredRoleIds
     invitation.invitedByUserId = snapshot.invitedByUserId ?? null
     invitation.invitedByCustomerUserId = snapshot.invitedByCustomerUserId ?? null
     invitation.displayName = snapshot.displayName ?? null
     invitation.expiresAt = new Date(snapshot.expiresAt)
-    await this.em.flush()
+  }
+
+  async cancelInvitationAttempt(invitation: CustomerUserInvitation, attemptTokenHash: string): Promise<boolean> {
+    const affected = await this.em.nativeUpdate(
+      CustomerUserInvitation,
+      {
+        id: invitation.id,
+        tenantId: invitation.tenantId,
+        organizationId: invitation.organizationId,
+        token: attemptTokenHash,
+        acceptedAt: null,
+        cancelledAt: null,
+        expiresAt: { $gt: new Date() },
+      } as any,
+      { cancelledAt: new Date() } as any,
+    )
+    return affected === 1
   }
 
   async findByToken(token: string): Promise<CustomerUserInvitation | null> {
@@ -154,56 +213,70 @@ export class CustomerInvitationService {
     password: string,
     displayName: string,
   ): Promise<{ user: CustomerUser; invitation: CustomerUserInvitation } | null> {
+    const tokenHashed = hashToken(token)
+    const passwordHash = await hash(password, BCRYPT_COST)
     const invitation = await this.findByToken(token)
     if (!invitation) return null
 
-    const passwordHash = await hash(password, BCRYPT_COST)
-    const emailHash = hashForLookup(invitation.email)
+    return this.em.transactional(async (tx) => {
+      const acceptedAt = new Date()
+      const affected = await tx.nativeUpdate(
+        CustomerUserInvitation,
+        {
+          id: invitation.id,
+          tenantId: invitation.tenantId,
+          organizationId: invitation.organizationId,
+          token: tokenHashed,
+          acceptedAt: null,
+          cancelledAt: null,
+          expiresAt: { $gt: acceptedAt },
+        } as any,
+        { acceptedAt } as any,
+      )
+      if (affected !== 1) return null
 
-    // Create user
-    const user = this.em.create(CustomerUser, {
-      email: invitation.email,
-      emailHash,
-      passwordHash,
-      displayName: displayName || invitation.displayName || invitation.email,
-      tenantId: invitation.tenantId,
-      organizationId: invitation.organizationId,
-      customerEntityId: invitation.customerEntityId || null,
-      isActive: true,
-      emailVerifiedAt: new Date(), // Invitation implicitly verifies email
-      failedLoginAttempts: 0,
-      createdAt: new Date(),
-    } as any) as CustomerUser
-    this.em.persist(user)
+      const emailHash = hashForLookup(invitation.email)
+      const user = tx.create(CustomerUser, {
+        email: invitation.email,
+        emailHash,
+        passwordHash,
+        displayName: displayName || invitation.displayName || invitation.email,
+        tenantId: invitation.tenantId,
+        organizationId: invitation.organizationId,
+        customerEntityId: invitation.customerEntityId || null,
+        isActive: true,
+        emailVerifiedAt: acceptedAt,
+        failedLoginAttempts: 0,
+        createdAt: acceptedAt,
+      } as any) as CustomerUser
+      tx.persist(user)
 
-    // Assign roles
-    const roleIds = Array.isArray(invitation.roleIdsJson) ? invitation.roleIdsJson : []
-    const roles = roleIds.length > 0
-      ? await findWithDecryption(
-          this.em,
-          CustomerRole,
-          {
-            id: { $in: roleIds } as any,
-            tenantId: invitation.tenantId,
-            deletedAt: null,
-          } as any,
-          undefined,
-          { tenantId: invitation.tenantId, organizationId: invitation.organizationId },
-        )
-      : []
-    for (const role of roles) {
-      const userRole = this.em.create(CustomerUserRole, {
-        user,
-        role,
-        createdAt: new Date(),
-      } as any)
-      this.em.persist(userRole)
-    }
+      const roleIds = Array.isArray(invitation.roleIdsJson) ? invitation.roleIdsJson : []
+      const roles = roleIds.length > 0
+        ? await findWithDecryption(
+            tx,
+            CustomerRole,
+            {
+              id: { $in: roleIds } as any,
+              tenantId: invitation.tenantId,
+              deletedAt: null,
+            } as any,
+            undefined,
+            { tenantId: invitation.tenantId, organizationId: invitation.organizationId },
+          )
+        : []
+      for (const role of roles) {
+        const userRole = tx.create(CustomerUserRole, {
+          user,
+          role,
+          createdAt: acceptedAt,
+        } as any)
+        tx.persist(userRole)
+      }
 
-    // Mark invitation as accepted
-    invitation.acceptedAt = new Date()
-
-    await this.em.flush()
-    return { user, invitation }
+      invitation.acceptedAt = acceptedAt
+      await tx.flush()
+      return { user, invitation }
+    })
   }
 }

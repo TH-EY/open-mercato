@@ -47,6 +47,7 @@ export const invitationAcceptSchema = z.object({
   token: z.string().min(1).max(512),
   password: passwordField,
   displayName: displayNameField,
+  organizationId: z.string().uuid().optional(),
 })
 
 export const profileUpdateSchema = z.object({

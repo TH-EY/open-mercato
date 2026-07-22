@@ -1,9 +1,12 @@
 /** @jest-environment node */
 
 const mockAcceptInvitation = jest.fn()
+const mockFindByToken = jest.fn()
 const mockLoadAcl = jest.fn()
 const mockCreateSession = jest.fn()
 const mockEmit = jest.fn(async () => undefined)
+const mockResolveTenantContext = jest.fn()
+const mockEmFindOne = jest.fn()
 
 const tenantId = '11111111-1111-4111-8111-111111111111'
 const organizationId = '22222222-2222-4222-8222-222222222222'
@@ -20,9 +23,12 @@ const invitedUser = {
 
 const mockContainer = {
   resolve: jest.fn((token: string) => {
-    if (token === 'customerInvitationService') return { acceptInvitation: mockAcceptInvitation }
+    if (token === 'customerInvitationService') {
+      return { acceptInvitation: mockAcceptInvitation, findByToken: mockFindByToken }
+    }
     if (token === 'customerRbacService') return { loadAcl: mockLoadAcl }
     if (token === 'customerSessionService') return { createSession: mockCreateSession }
+    if (token === 'em') return { findOne: mockEmFindOne }
     return null
   }),
 }
@@ -34,6 +40,18 @@ jest.mock('@open-mercato/shared/lib/di/container', () => ({
 jest.mock('@open-mercato/core/modules/customer_accounts/events', () => ({
   emitCustomerAccountsEvent: (...args: unknown[]) => mockEmit(...args),
 }))
+
+jest.mock('@open-mercato/core/modules/customer_accounts/lib/resolveTenantContext', () => {
+  class TenantResolutionError extends Error {
+    constructor(message: string, public readonly status: number) {
+      super(message)
+    }
+  }
+  return {
+    TenantResolutionError,
+    resolveTenantContext: (...args: unknown[]) => mockResolveTenantContext(...args),
+  }
+})
 
 function readSetCookies(response: Response): string[] {
   const headers = response.headers as Headers & { getSetCookie?: () => string[] }
@@ -54,6 +72,7 @@ function makeAcceptRequest(): Request {
       token: 'invite-token',
       password: 'Secret123!',
       displayName: 'Buyer User',
+      organizationId,
     }),
   })
 }
@@ -61,6 +80,24 @@ function makeAcceptRequest(): Request {
 describe('customer invitation accept route', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockFindByToken.mockResolvedValue({
+      id: invitationId,
+      tenantId,
+      organizationId,
+      acceptedAt: null,
+      cancelledAt: null,
+    })
+    mockResolveTenantContext.mockResolvedValue({
+      tenantId,
+      organizationId,
+      source: 'body',
+      hostname: 'localhost',
+    })
+    mockEmFindOne.mockResolvedValue({
+      id: organizationId,
+      slug: 'canonical-org',
+      deletedAt: null,
+    })
     mockAcceptInvitation.mockResolvedValue({
       user: invitedUser,
       invitation: { id: invitationId, tenantId, organizationId },
@@ -85,7 +122,14 @@ describe('customer invitation accept route', () => {
         emailVerified: true,
       },
       resolvedFeatures: ['portal.dashboard.view'],
+      redirectTo: '/canonical-org/portal/dashboard',
     })
+    expect(mockFindByToken).toHaveBeenCalledWith('invite-token')
+    expect(mockResolveTenantContext).toHaveBeenCalledWith(
+      expect.any(Request),
+      null,
+      { container: mockContainer, organizationId },
+    )
     expect(mockAcceptInvitation).toHaveBeenCalledWith('invite-token', 'Secret123!', 'Buyer User')
     expect(mockLoadAcl).toHaveBeenCalledWith(userId, { tenantId, organizationId })
     expect(mockCreateSession).toHaveBeenCalledWith(
@@ -98,5 +142,26 @@ describe('customer invitation accept route', () => {
     const setCookies = readSetCookies(response).join('\n')
     expect(setCookies).toContain('customer_auth_token=jwt-session-token')
     expect(setCookies).toContain('customer_session_token=raw-session-token')
+  })
+
+  it('rejects a wrong-org portal context without creating a user, session, event, or cookies', async () => {
+    mockResolveTenantContext.mockResolvedValueOnce({
+      tenantId,
+      organizationId: '99999999-9999-4999-8999-999999999999',
+      source: 'body',
+      hostname: 'localhost',
+    })
+    const { POST } = await import('../invitations/accept')
+
+    const response = await POST(makeAcceptRequest())
+    const body = await response.json()
+
+    expect(response.status).toBe(400)
+    expect(body).toEqual({ ok: false, error: 'Invalid or expired invitation' })
+    expect(mockAcceptInvitation).not.toHaveBeenCalled()
+    expect(mockLoadAcl).not.toHaveBeenCalled()
+    expect(mockCreateSession).not.toHaveBeenCalled()
+    expect(mockEmit).not.toHaveBeenCalled()
+    expect(readSetCookies(response)).toHaveLength(0)
   })
 })

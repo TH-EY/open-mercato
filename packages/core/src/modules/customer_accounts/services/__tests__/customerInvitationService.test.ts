@@ -3,13 +3,14 @@ import type { EntityManager } from '@mikro-orm/postgresql'
 import { CustomerInvitationService } from '@open-mercato/core/modules/customer_accounts/services/customerInvitationService'
 import {
   CustomerRole,
+  CustomerUser,
   CustomerUserInvitation,
   CustomerUserRole,
 } from '@open-mercato/core/modules/customer_accounts/data/entities'
 
 jest.mock('@open-mercato/core/modules/customer_accounts/lib/tokenGenerator', () => ({
   generateSecureToken: jest.fn(() => 'raw-token'),
-  hashToken: jest.fn(() => 'hashed-token'),
+  hashToken: jest.fn((value: string) => `hashed-${value}`),
 }))
 
 jest.mock('@open-mercato/shared/lib/encryption/aes', () => ({
@@ -35,7 +36,7 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
   const tenantId = '11111111-1111-4111-8111-111111111111'
   const organizationId = '22222222-2222-4222-8222-222222222222'
 
-  let mockEm: jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush' | 'remove'>>
+  let mockEm: jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush' | 'nativeUpdate' | 'transactional'>>
   let service: CustomerInvitationService
 
   beforeEach(() => {
@@ -46,8 +47,9 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
       create: jest.fn((_: unknown, data: unknown) => data as any),
       persist: jest.fn(),
       flush: jest.fn(async () => undefined),
-      remove: jest.fn(),
-    } as unknown as jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush' | 'remove'>>
+      nativeUpdate: jest.fn(async () => 1),
+      transactional: jest.fn(async (fn: (tx: EntityManager) => unknown) => fn(mockEm as unknown as EntityManager)),
+    } as unknown as jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush' | 'nativeUpdate' | 'transactional'>>
     service = new CustomerInvitationService(mockEm as unknown as EntityManager)
   })
 
@@ -86,6 +88,18 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
       deletedAt: null,
     })
     expect(mockEm.findOne).not.toHaveBeenCalledWith(CustomerRole, expect.anything())
+    expect(mockEm.nativeUpdate).toHaveBeenCalledWith(
+      CustomerUserInvitation,
+      expect.objectContaining({
+        id: 'inv-1',
+        tenantId,
+        organizationId,
+        token: 'hashed-raw-token',
+        acceptedAt: null,
+        cancelledAt: null,
+      }),
+      expect.objectContaining({ acceptedAt: expect.any(Date) }),
+    )
 
     const linkCreates = (mockEm.create as jest.Mock).mock.calls.filter((call) => call[0] === CustomerUserRole)
     expect(linkCreates).toHaveLength(roleIds.length)
@@ -114,6 +128,55 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
     const roleFinds = (mockEm.find as jest.Mock).mock.calls.filter((call) => call[0] === CustomerRole)
     expect(roleFinds).toHaveLength(0)
   })
+
+  it('does not create a user when a looked-up token was rotated before acceptance claim', async () => {
+    const invitation = {
+      id: 'inv-race',
+      email: 'new@example.com',
+      tenantId,
+      organizationId,
+      customerEntityId: null,
+      roleIdsJson: roleIds,
+      token: 'hashed-stale-token',
+      expiresAt: new Date(Date.now() + 60_000),
+      acceptedAt: null,
+      cancelledAt: null,
+    } as unknown as CustomerUserInvitation
+
+    ;(mockEm.findOne as jest.Mock).mockResolvedValueOnce(invitation)
+    ;(mockEm.nativeUpdate as jest.Mock).mockResolvedValueOnce(0)
+
+    const result = await service.acceptInvitation('stale-token', 'Secret123!', 'New User')
+
+    expect(result).toBeNull()
+    expect(mockEm.nativeUpdate).toHaveBeenCalledWith(
+      CustomerUserInvitation,
+      expect.objectContaining({
+        id: 'inv-race',
+        token: 'hashed-stale-token',
+        acceptedAt: null,
+        cancelledAt: null,
+      }),
+      expect.objectContaining({ acceptedAt: expect.any(Date) }),
+    )
+    expect(mockEm.create).not.toHaveBeenCalledWith(CustomerUser, expect.anything())
+    expect(mockEm.flush).not.toHaveBeenCalled()
+
+    ;(mockEm.findOne as jest.Mock).mockResolvedValueOnce({
+      ...invitation,
+      token: 'hashed-fresh-token',
+    })
+    ;(mockEm.nativeUpdate as jest.Mock).mockResolvedValueOnce(1)
+    ;(mockEm.find as jest.Mock).mockResolvedValue([])
+
+    const freshResult = await service.acceptInvitation('fresh-token', 'Secret123!', 'New User')
+
+    expect(freshResult).not.toBeNull()
+    expect(mockEm.create).toHaveBeenCalledWith(
+      CustomerUser,
+      expect.objectContaining({ email: 'new@example.com', passwordHash: 'hashed-Secret123!' }),
+    )
+  })
 })
 
 describe('CustomerInvitationService.createInvitation — pending-invitation dedupe', () => {
@@ -124,7 +187,7 @@ describe('CustomerInvitationService.createInvitation — pending-invitation dedu
   const tenantId = '11111111-1111-4111-8111-111111111111'
   const organizationId = '22222222-2222-4222-8222-222222222222'
 
-  let mockEm: jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush' | 'remove'>>
+  let mockEm: jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush' | 'nativeUpdate' | 'nativeDelete'>>
   let service: CustomerInvitationService
 
   beforeEach(() => {
@@ -135,8 +198,9 @@ describe('CustomerInvitationService.createInvitation — pending-invitation dedu
       create: jest.fn((_: unknown, data: unknown) => data as any),
       persist: jest.fn(() => mockEm),
       flush: jest.fn(async () => undefined),
-      remove: jest.fn(() => mockEm),
-    } as unknown as jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush' | 'remove'>>
+      nativeUpdate: jest.fn(async () => 1),
+      nativeDelete: jest.fn(async () => 1),
+    } as unknown as jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush' | 'nativeUpdate' | 'nativeDelete'>>
     service = new CustomerInvitationService(mockEm as unknown as EntityManager)
   })
 
@@ -182,7 +246,7 @@ describe('CustomerInvitationService.createInvitation — pending-invitation dedu
       displayName: 'Old Name',
     })
     expect(existing.email).toBe('new@example.com')
-    expect(existing.token).toBe('hashed-token')
+    expect(existing.token).toBe('hashed-raw-token')
     expect(existing.roleIdsJson).toEqual(roleIds)
     expect(existing.invitedByUserId).toBe('inviter-1')
     expect(existing.displayName).toBe('Refreshed Name')
@@ -221,7 +285,7 @@ describe('CustomerInvitationService.createInvitation — pending-invitation dedu
       organizationId,
       email: 'fresh@example.com',
       emailHash: 'email-hash',
-      token: 'hashed-token',
+      token: 'hashed-raw-token',
       roleIdsJson: roleIds,
     })
     expect(mockEm.persist).toHaveBeenCalled()
@@ -230,18 +294,34 @@ describe('CustomerInvitationService.createInvitation — pending-invitation dedu
     expect(result.rollbackSnapshot).toBeUndefined()
   })
 
-  it('removes a freshly-created invitation with MikroORM v7 remove plus flush', async () => {
-    const invitation = { id: 'inv-fresh' } as unknown as CustomerUserInvitation
+  it('removes only the matching pending attempt for a freshly-created invitation', async () => {
+    const invitation = {
+      id: 'inv-fresh',
+      tenantId,
+      organizationId,
+    } as unknown as CustomerUserInvitation
 
-    await service.removeInvitation(invitation)
+    await service.removeInvitation(invitation, 'hashed-raw-token')
 
-    expect(mockEm.remove).toHaveBeenCalledWith(invitation)
-    expect(mockEm.flush).toHaveBeenCalled()
+    expect(mockEm.nativeDelete).toHaveBeenCalledWith(
+      CustomerUserInvitation,
+      expect.objectContaining({
+        id: 'inv-fresh',
+        tenantId,
+        organizationId,
+        token: 'hashed-raw-token',
+        acceptedAt: null,
+        cancelledAt: null,
+      }),
+    )
+    expect(mockEm.flush).not.toHaveBeenCalled()
   })
 
-  it('restores a reused pending invitation from its rollback snapshot', async () => {
+  it('restores only the matching pending attempt from its rollback snapshot', async () => {
     const invitation = {
       id: 'inv-existing',
+      tenantId,
+      organizationId,
       email: 'new@example.com',
       token: 'new-hashed-token',
       customerEntityId: 'new-company',
@@ -254,6 +334,7 @@ describe('CustomerInvitationService.createInvitation — pending-invitation dedu
 
     await service.restoreInvitation(invitation, {
       email: 'old@example.com',
+      emailHash: 'old-email-hash',
       token: 'old-hashed-token',
       customerEntityId: null,
       roleIdsJson: ['old-role'],
@@ -261,9 +342,26 @@ describe('CustomerInvitationService.createInvitation — pending-invitation dedu
       invitedByCustomerUserId: 'old-portal-user',
       displayName: 'Old Name',
       expiresAt: new Date('2026-06-17T12:00:00.000Z'),
-    })
+    }, 'new-hashed-token')
 
+    expect(mockEm.nativeUpdate).toHaveBeenCalledWith(
+      CustomerUserInvitation,
+      expect.objectContaining({
+        id: 'inv-existing',
+        tenantId,
+        organizationId,
+        token: 'new-hashed-token',
+        acceptedAt: null,
+        cancelledAt: null,
+      }),
+      expect.objectContaining({
+        email: 'old@example.com',
+        emailHash: 'old-email-hash',
+        token: 'old-hashed-token',
+      }),
+    )
     expect(invitation.email).toBe('old@example.com')
+    expect(invitation.emailHash).toBe('old-email-hash')
     expect(invitation.token).toBe('old-hashed-token')
     expect(invitation.customerEntityId).toBeNull()
     expect(invitation.roleIdsJson).toEqual(['old-role'])
@@ -271,6 +369,79 @@ describe('CustomerInvitationService.createInvitation — pending-invitation dedu
     expect(invitation.invitedByCustomerUserId).toBe('old-portal-user')
     expect(invitation.displayName).toBe('Old Name')
     expect(invitation.expiresAt.toISOString()).toBe('2026-06-17T12:00:00.000Z')
-    expect(mockEm.flush).toHaveBeenCalled()
+    expect(mockEm.flush).not.toHaveBeenCalled()
+  })
+
+  it('fails a stale fresh-delete when another invite attempt already reused the row', async () => {
+    ;(mockEm.nativeDelete as jest.Mock).mockResolvedValueOnce(0)
+    const invitation = {
+      id: 'inv-fresh',
+      tenantId,
+      organizationId,
+    } as unknown as CustomerUserInvitation
+
+    await expect(service.removeInvitation(invitation, 'stale-attempt-hash')).rejects.toThrow(
+      'Invitation rollback delete did not affect exactly one pending invitation',
+    )
+  })
+
+  it('fails a stale restore when another invite attempt already reused the row', async () => {
+    ;(mockEm.nativeUpdate as jest.Mock).mockResolvedValueOnce(0)
+    const invitation = {
+      id: 'inv-existing',
+      tenantId,
+      organizationId,
+    } as unknown as CustomerUserInvitation
+
+    await expect(service.restoreInvitation(invitation, {
+      email: 'old@example.com',
+      emailHash: 'old-email-hash',
+      token: 'old-hashed-token',
+      expiresAt: new Date(Date.now() + 60_000),
+    }, 'stale-attempt-hash')).rejects.toThrow(
+      'Invitation rollback restore did not affect exactly one pending invitation',
+    )
+  })
+
+  it('does not restore over an invitation accepted during rollback', async () => {
+    ;(mockEm.nativeUpdate as jest.Mock).mockResolvedValueOnce(0)
+    const invitation = {
+      id: 'inv-existing',
+      tenantId,
+      organizationId,
+      acceptedAt: new Date(),
+    } as unknown as CustomerUserInvitation
+
+    await expect(service.restoreInvitation(invitation, {
+      email: 'old@example.com',
+      emailHash: 'old-email-hash',
+      token: 'old-hashed-token',
+      expiresAt: new Date(Date.now() + 60_000),
+    }, 'new-attempt-hash')).rejects.toThrow(
+      'Invitation rollback restore did not affect exactly one pending invitation',
+    )
+  })
+
+  it('can cancel only the current failed delivery attempt', async () => {
+    const invitation = {
+      id: 'inv-existing',
+      tenantId,
+      organizationId,
+    } as unknown as CustomerUserInvitation
+
+    await expect(service.cancelInvitationAttempt(invitation, 'current-attempt-hash')).resolves.toBe(true)
+
+    expect(mockEm.nativeUpdate).toHaveBeenCalledWith(
+      CustomerUserInvitation,
+      expect.objectContaining({
+        id: 'inv-existing',
+        tenantId,
+        organizationId,
+        token: 'current-attempt-hash',
+        acceptedAt: null,
+        cancelledAt: null,
+      }),
+      expect.objectContaining({ cancelledAt: expect.any(Date) }),
+    )
   })
 })

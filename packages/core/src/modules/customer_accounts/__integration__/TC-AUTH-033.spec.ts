@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { apiRequest, getAuthToken } from '@open-mercato/core/helpers/integration/api'
+import { getTokenContext } from '@open-mercato/core/helpers/integration/generalFixtures'
 
 type CapturedEmail = {
   to?: string
@@ -60,6 +61,7 @@ test.describe('TC-AUTH-033: customer invitation email happy path', () => {
     const acceptedDisplayName = `QA Accepted ${stamp}`
 
     const adminToken = await getAuthToken(request, 'admin')
+    const adminContext = getTokenContext(adminToken)
 
     const rolesRes = await apiRequest(request, 'GET', '/api/customer_accounts/admin/roles?pageSize=10', {
       token: adminToken,
@@ -94,6 +96,7 @@ test.describe('TC-AUTH-033: customer invitation email happy path', () => {
         token,
         password: `Password${stamp}!`,
         displayName: acceptedDisplayName,
+        organizationId: adminContext.organizationId,
       },
       headers: { 'Content-Type': 'application/json' },
     })

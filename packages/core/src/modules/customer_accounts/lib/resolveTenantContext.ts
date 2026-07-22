@@ -6,7 +6,7 @@
  *   and cross-checked against the resolved tenant (fail closed on mismatch); if
  *   no `organizationId` is supplied it falls back to the legacy `tenantId`.
  * - Custom-domain hosts: resolve via `domainMappingService.resolveByHostname()`.
- *   If the body supplied a different `tenantId`, fail closed (mismatch).
+ *   If the body supplied a different `tenantId` or `organizationId`, fail closed (mismatch).
  *
  * This is the single entry point used by all customer-auth routes (login,
  * signup, magic-link, password-reset) so they all behave consistently when
@@ -140,6 +140,12 @@ export async function resolveTenantContext(
   if (bodyTenantId && bodyTenantId !== resolved.tenantId) {
     throw new TenantResolutionError(
       'tenantId in request body does not match the resolved custom domain',
+      400,
+    )
+  }
+  if (bodyOrganizationId && bodyOrganizationId !== resolved.organizationId) {
+    throw new TenantResolutionError(
+      'organizationId in request body does not match the resolved custom domain',
       400,
     )
   }

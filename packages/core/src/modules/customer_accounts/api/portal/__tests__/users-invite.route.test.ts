@@ -4,6 +4,7 @@ const mockCheckAuthRateLimit = jest.fn()
 const mockCreateInvitation = jest.fn()
 const mockRemoveInvitation = jest.fn()
 const mockRestoreInvitation = jest.fn()
+const mockCancelInvitationAttempt = jest.fn()
 const mockGetCustomerAuthFromRequest = jest.fn()
 const mockRequireCustomerFeature = jest.fn()
 const mockFindWithDecryption = jest.fn()
@@ -23,6 +24,7 @@ const mockContainer = {
         createInvitation: mockCreateInvitation,
         removeInvitation: mockRemoveInvitation,
         restoreInvitation: mockRestoreInvitation,
+        cancelInvitationAttempt: mockCancelInvitationAttempt,
       }
     }
     if (token === 'em') return {}
@@ -90,6 +92,7 @@ describe('portal customer account user invite route', () => {
         expiresAt: new Date('2026-06-18T12:00:00.000Z').toISOString(),
       },
       rawToken: 'raw-invite-token',
+      attemptTokenHash: 'hashed-raw-invite-token',
       reused: false,
     })
     mockSendCustomerInvitationEmail.mockResolvedValue(undefined)
@@ -151,9 +154,10 @@ describe('portal customer account user invite route', () => {
 
     expect(response.status).toBe(502)
     expect(json).toEqual({ ok: false, error: 'Invitation email could not be sent' })
-    expect(mockRemoveInvitation).toHaveBeenCalledWith(expect.objectContaining({
-      id: '66666666-6666-4666-8666-666666666666',
-    }))
+    expect(mockRemoveInvitation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: '66666666-6666-4666-8666-666666666666' }),
+      'hashed-raw-invite-token',
+    )
     expect(mockRestoreInvitation).not.toHaveBeenCalled()
     consoleErrorSpy.mockRestore()
   })
@@ -173,6 +177,7 @@ describe('portal customer account user invite route', () => {
         expiresAt: new Date('2026-06-18T12:00:00.000Z').toISOString(),
       },
       rawToken: 'new-raw-token',
+      attemptTokenHash: 'hashed-new-raw-token',
       reused: true,
       rollbackSnapshot,
     })
@@ -185,8 +190,25 @@ describe('portal customer account user invite route', () => {
     expect(mockRestoreInvitation).toHaveBeenCalledWith(
       expect.objectContaining({ id: '66666666-6666-4666-8666-666666666666' }),
       rollbackSnapshot,
+      'hashed-new-raw-token',
     )
     expect(mockRemoveInvitation).not.toHaveBeenCalled()
+    consoleErrorSpy.mockRestore()
+  })
+
+  it('cancels the current invitation attempt when email rollback fails', async () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined)
+    mockSendCustomerInvitationEmail.mockRejectedValueOnce(new Error('smtp unavailable'))
+    mockRemoveInvitation.mockRejectedValueOnce(new Error('delete conflicted'))
+    const { POST } = await import('../users-invite')
+
+    const response = await POST(makeInviteRequest())
+
+    expect(response.status).toBe(502)
+    expect(mockCancelInvitationAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ id: '66666666-6666-4666-8666-666666666666' }),
+      'hashed-raw-invite-token',
+    )
     consoleErrorSpy.mockRestore()
   })
 })

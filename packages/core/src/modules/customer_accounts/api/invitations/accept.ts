@@ -8,6 +8,9 @@ import { CustomerSessionService } from '@open-mercato/core/modules/customer_acco
 import { CustomerRbacService } from '@open-mercato/core/modules/customer_accounts/services/customerRbacService'
 import { emitCustomerAccountsEvent } from '@open-mercato/core/modules/customer_accounts/events'
 import { getClientIp } from '@open-mercato/shared/lib/ratelimit/helpers'
+import { resolveTenantContext, TenantResolutionError } from '@open-mercato/core/modules/customer_accounts/lib/resolveTenantContext'
+import { Organization } from '@open-mercato/core/modules/directory/data/entities'
+import type { EntityManager } from '@mikro-orm/postgresql'
 
 export const metadata: { path?: string; requireAuth?: boolean } = { requireAuth: false }
 
@@ -28,6 +31,40 @@ export async function POST(req: Request) {
   const customerInvitationService = container.resolve('customerInvitationService') as CustomerInvitationService
   const customerSessionService = container.resolve('customerSessionService') as CustomerSessionService
   const customerRbacService = container.resolve('customerRbacService') as CustomerRbacService
+  const em = container.resolve('em') as EntityManager
+
+  const pendingInvitation = await customerInvitationService.findByToken(parsed.data.token)
+  if (!pendingInvitation) {
+    return NextResponse.json({ ok: false, error: 'Invalid or expired invitation' }, { status: 400 })
+  }
+
+  let requestContext
+  try {
+    requestContext = await resolveTenantContext(req, null, {
+      container,
+      organizationId: parsed.data.organizationId ?? null,
+    })
+  } catch (error) {
+    if (error instanceof TenantResolutionError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: error.status })
+    }
+    throw error
+  }
+
+  if (
+    requestContext.tenantId !== pendingInvitation.tenantId ||
+    requestContext.organizationId !== pendingInvitation.organizationId
+  ) {
+    return NextResponse.json({ ok: false, error: 'Invalid or expired invitation' }, { status: 400 })
+  }
+
+  const organization = await em.findOne(Organization, {
+    id: pendingInvitation.organizationId,
+    deletedAt: null,
+  } as any)
+  if (!organization) {
+    return NextResponse.json({ ok: false, error: 'Invalid or expired invitation' }, { status: 400 })
+  }
 
   const result = await customerInvitationService.acceptInvitation(
     parsed.data.token,
@@ -65,6 +102,7 @@ export async function POST(req: Request) {
 
   const res = NextResponse.json({
     ok: true,
+    redirectTo: `/${organization.slug}/portal/dashboard`,
     user: {
       id: user.id,
       email: user.email,
@@ -94,6 +132,7 @@ export async function POST(req: Request) {
 
 const acceptSuccessSchema = z.object({
   ok: z.literal(true),
+  redirectTo: z.string(),
   user: z.object({
     id: z.string().uuid(),
     email: z.string().email(),

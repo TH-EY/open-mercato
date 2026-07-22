@@ -164,6 +164,19 @@ describe('resolveTenantContext', () => {
     ).rejects.toMatchObject({ status: 400 })
   })
 
+  it('throws 400 when body organizationId mismatches the host-resolved organization', async () => {
+    await expect(
+      resolveTenantContext(makeReq('shop.acme.com'), HOST_TENANT, {
+        container: makeContainer(async () => ({
+          tenantId: HOST_TENANT,
+          organizationId: HOST_ORG,
+          status: 'active',
+        })),
+        organizationId: PLATFORM_ORG,
+      }),
+    ).rejects.toMatchObject({ status: 400 })
+  })
+
   it('accepts matching body tenantId on a custom-domain host', async () => {
     const ctx = await resolveTenantContext(makeReq('shop.acme.com'), HOST_TENANT, {
       container: makeContainer(async () => ({

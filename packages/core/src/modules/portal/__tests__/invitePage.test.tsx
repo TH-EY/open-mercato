@@ -7,8 +7,9 @@ import { renderWithProviders } from '@open-mercato/shared/lib/testing/renderWith
 
 const apiCallMock = jest.fn()
 const locationAssignMock = jest.fn()
+const organizationId = '22222222-2222-4222-8222-222222222222'
 const portalContextState: { tenant: unknown } = {
-  tenant: { tenantId: 't-1', organizationId: 'o-1', organizationName: 'Acme', loading: false, error: null },
+  tenant: { tenantId: 't-1', organizationId, organizationName: 'Acme', loading: false, error: null },
 }
 const searchParamsState: { token: string | null } = { token: 'invite-token-123' }
 
@@ -41,7 +42,7 @@ import PortalInvitePage from '../frontend/[orgSlug]/portal/invite/page'
 describe('PortalInvitePage', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    portalContextState.tenant = { tenantId: 't-1', organizationId: 'o-1', organizationName: 'Acme', loading: false, error: null }
+    portalContextState.tenant = { tenantId: 't-1', organizationId, organizationName: 'Acme', loading: false, error: null }
     searchParamsState.token = 'invite-token-123'
   })
 
@@ -57,7 +58,11 @@ describe('PortalInvitePage', () => {
   }
 
   it('submits the invite token, password, and displayName to the accept API and redirects to dashboard', async () => {
-    apiCallMock.mockResolvedValueOnce({ ok: true, status: 200, result: { ok: true } })
+    apiCallMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      result: { ok: true, redirectTo: '/canonical-acme/portal/dashboard' },
+    })
 
     const { getByLabelText, getByRole } = renderWithProviders(<PortalInvitePage params={{ orgSlug: 'acme' }} />)
     fillForm(getByLabelText)
@@ -74,10 +79,11 @@ describe('PortalInvitePage', () => {
           token: 'invite-token-123',
           password: 'pw12345678',
           displayName: 'Buyer User',
+          organizationId,
         }),
       }),
     )
-    expect(locationAssignMock).toHaveBeenCalledWith('/acme/portal/dashboard')
+    expect(locationAssignMock).toHaveBeenCalledWith('/canonical-acme/portal/dashboard')
   })
 
   it('renders the no-token error and disables the form when ?token= is missing', async () => {

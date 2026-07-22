@@ -34,11 +34,10 @@ export default async function FrontendLayout({ children }: LayoutProps) {
   const orgSlug = portalMatch[1]
   const isPublic = isPublicPortalRoute(pathname)
 
-  const customerAuth = await getCustomerAuthFromCookies()
-
   let orgName: string | null = null
   let tenantId: string | null = null
   let organizationId: string | null = null
+  let customerAuth: Awaited<ReturnType<typeof getCustomerAuthFromCookies>> = null
   let userName: string | null = null
   let userEmail: string | null = null
   let portalEnabled = true
@@ -63,6 +62,13 @@ export default async function FrontendLayout({ children }: LayoutProps) {
       }
     }
 
+    customerAuth = tenantId && organizationId
+      ? await getCustomerAuthFromCookies({
+          expectedTenantId: tenantId,
+          expectedOrganizationId: organizationId,
+        })
+      : null
+
     if (customerAuth) {
       const user = await em.findOne(CustomerUser, { id: customerAuth.sub } as any)
       if (user) {
@@ -74,10 +80,7 @@ export default async function FrontendLayout({ children }: LayoutProps) {
       }
     }
   } catch {
-    if (customerAuth) {
-      userName = customerAuth.displayName || customerAuth.email
-      userEmail = customerAuth.email
-    }
+    customerAuth = null
   }
 
   if (!portalEnabled) {

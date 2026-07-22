@@ -86,7 +86,7 @@ export async function POST(req: Request) {
 
   const customerInvitationService = container.resolve('customerInvitationService') as CustomerInvitationService
 
-  const { invitation, rawToken, reused, rollbackSnapshot } = await customerInvitationService.createInvitation(
+  const { invitation, rawToken, attemptTokenHash, reused, rollbackSnapshot } = await customerInvitationService.createInvitation(
     parsed.data.email,
     { tenantId: auth.tenantId, organizationId: auth.orgId },
     {
@@ -108,12 +108,17 @@ export async function POST(req: Request) {
     console.error('[customer_accounts.portal.users-invite] invitation email failed', error)
     try {
       if (reused && rollbackSnapshot) {
-        await customerInvitationService.restoreInvitation(invitation, rollbackSnapshot)
+        await customerInvitationService.restoreInvitation(invitation, rollbackSnapshot, attemptTokenHash)
       } else {
-        await customerInvitationService.removeInvitation(invitation)
+        await customerInvitationService.removeInvitation(invitation, attemptTokenHash)
       }
     } catch (rollbackError) {
       console.error('[customer_accounts.portal.users-invite] invitation rollback failed', rollbackError)
+      try {
+        await customerInvitationService.cancelInvitationAttempt(invitation, attemptTokenHash)
+      } catch (cancelError) {
+        console.error('[customer_accounts.portal.users-invite] invitation rollback cancellation failed', cancelError)
+      }
     }
     return NextResponse.json({ ok: false, error: 'Invitation email could not be sent' }, { status: 502 })
   }

@@ -68,14 +68,20 @@ export default function PortalInvitePage({ params }: Props) {
 
       setSubmitting(true)
       try {
-        const result = await apiCall<{ ok: boolean; error?: string }>('/api/customer_accounts/invitations/accept', {
+        const organizationId = typeof tenant.organizationId === 'string' ? tenant.organizationId : null
+        if (!organizationId) {
+          setError(t('portal.invite.error.generic', 'Invitation acceptance failed. Please try again.'))
+          return
+        }
+
+        const result = await apiCall<{ ok: boolean; error?: string; redirectTo?: string }>('/api/customer_accounts/invitations/accept', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token, password, displayName: displayName.trim() }),
+          body: JSON.stringify({ token, password, displayName: displayName.trim(), organizationId }),
         })
 
-        if (result.ok && result.result?.ok) {
-          assignLocation(`/${orgSlug}/portal/dashboard`)
+        if (result.ok && result.result?.ok && result.result.redirectTo) {
+          assignLocation(result.result.redirectTo)
           return
         }
 
@@ -90,7 +96,7 @@ export default function PortalInvitePage({ params }: Props) {
         setSubmitting(false)
       }
     },
-    [token, password, confirmPassword, displayName, orgSlug, t],
+    [token, password, confirmPassword, displayName, tenant.organizationId, t],
   )
 
   const injectionContext = useMemo(
