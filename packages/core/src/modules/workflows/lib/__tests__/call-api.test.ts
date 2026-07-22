@@ -2,6 +2,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import type { EntityManager } from '@mikro-orm/postgresql'
 import type { AwilixContainer } from 'awilix'
 import { executeCallApi } from '../activity-executor'
+import { isCallApiIdentityResolutionError } from '../call-api-identity-error'
 import type { WorkflowInstance } from '../../data/entities'
 
 jest.mock('@open-mercato/shared/lib/encryption/find', () => ({
@@ -521,14 +522,16 @@ describe('executeCallApi', () => {
         return Promise.resolve(null)
       })
 
-      await expect(
-        executeCallApi(
-          mockEm,
-          { endpoint: '/api/sales/orders', method: 'GET' },
-          mockContext,
-          mockContainer,
-        ),
-      ).rejects.toThrow(/Refusing to execute CALL_API/)
+      const error = await executeCallApi(
+        mockEm,
+        { endpoint: '/api/sales/orders', method: 'GET' },
+        mockContext,
+        mockContainer,
+      ).catch((caught: unknown) => caught)
+
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).toMatch(/Refusing to execute CALL_API/)
+      expect(isCallApiIdentityResolutionError((error as Error).message)).toBe(true)
 
       expect(createdApiKeys.length).toBe(0)
       expect(mockFetch).not.toHaveBeenCalled()

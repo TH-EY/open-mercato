@@ -164,7 +164,7 @@ export function MobileInstanceOverview({
             {instance.errorMessage}
           </pre>
           {showCallApiIdentityGuidance && (
-            <Alert status="warning" style="lighter" className="mt-3">
+            <Alert status="warning" style="lighter" size="default" className="mt-3">
               <AlertTitle>{t('workflows.instances.callApiIdentity.title')}</AlertTitle>
               <AlertDescription>{t('workflows.instances.callApiIdentity.description')}</AlertDescription>
             </Alert>

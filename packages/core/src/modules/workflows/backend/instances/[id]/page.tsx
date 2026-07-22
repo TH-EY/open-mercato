@@ -685,7 +685,7 @@ export default function WorkflowInstanceDetailPage({ params }: { params?: { id?:
                 {instance.errorMessage}
               </pre>
               {showCallApiIdentityGuidance && (
-                <Alert status="warning" style="lighter" className="mt-4">
+                <Alert status="warning" style="lighter" size="default" className="mt-4">
                   <AlertTitle>
                     {t('workflows.instances.callApiIdentity.title')}
                   </AlertTitle>
