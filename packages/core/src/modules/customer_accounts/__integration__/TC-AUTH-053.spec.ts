@@ -90,7 +90,7 @@ async function loadContext(api: APIRequestContext): Promise<TestContext> {
 }
 
 function uniqueEmail(label: string): string {
-  return `qa-auth-034-${label}-${Date.now()}-${Math.random().toString(36).slice(2)}@test.local`
+  return `qa-auth-053-${label}-${Date.now()}-${Math.random().toString(36).slice(2)}@test.local`
 }
 
 function inviteScope(ctx: TestContext): { tenantId: string; organizationId: string } {
@@ -185,7 +185,7 @@ const inviterA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const inviterB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 const inviterSeed = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
 
-test.describe('TC-AUTH-034: customer invitation concurrency barriers', () => {
+test.describe('TC-AUTH-053: customer invitation concurrency barriers', () => {
   test.beforeAll(async () => {
     await getIntegrationOrm()
   })
