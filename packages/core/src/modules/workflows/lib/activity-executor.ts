@@ -25,6 +25,7 @@ import { parseBooleanWithDefault } from '@open-mercato/shared/lib/boolean'
 import { sendEmail } from '@open-mercato/shared/lib/email/send'
 import { callWebhookConfigSchema } from '../data/validators'
 import { WorkflowActivityJob, WORKFLOW_ACTIVITIES_QUEUE_NAME } from './activity-queue-types'
+import { CALL_API_IDENTITY_ERROR_MARKER } from './call-api-identity-error'
 import { logWorkflowEvent } from './event-logger'
 import { parseDuration } from './duration'
 
@@ -1017,7 +1018,7 @@ export async function executeCallApi(
   if (resolvedRoleIds.length === 0) {
     throw new Error(
       `[CALL_API] Refusing to execute CALL_API for workflow instance ${context.workflowInstance.id}: ` +
-      `no traceable user roles could be resolved from the workflow instance or definition. ` +
+      `${CALL_API_IDENTITY_ERROR_MARKER}. ` +
       `CALL_API activities must run under the identity of the user who triggered them or a user who saved the workflow definition.`
     )
   }

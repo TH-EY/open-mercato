@@ -193,10 +193,11 @@ export async function POST(request: NextRequest) {
 
     const input: StartWorkflowApiInput = validation.data
 
-    // Inject metadata.initiatedBy if not provided
+    // The execution identity is always the authenticated caller. Event-triggered
+    // workflows set their internal trigger marker through the executor directly.
     const metadata = {
       ...input.metadata,
-      initiatedBy: input.metadata?.initiatedBy || auth.sub,
+      initiatedBy: auth.sub,
     }
 
     // Start workflow

@@ -4,6 +4,7 @@ import * as React from 'react'
 import { useState } from 'react'
 import { Button } from '@open-mercato/ui/primitives/button'
 import { Spinner } from '@open-mercato/ui/primitives/spinner'
+import { Alert, AlertDescription, AlertTitle } from '@open-mercato/ui/primitives/alert'
 import { JsonDisplay } from '@open-mercato/ui/backend/JsonDisplay'
 import {
   Dialog,
@@ -15,6 +16,7 @@ import { useT } from '@open-mercato/shared/lib/i18n/context'
 import type { WorkflowInstance, WorkflowEvent } from '../../data/entities'
 import { WorkflowGraphReadOnly } from '../WorkflowGraph'
 import { MobileWorkflowTimeline, type TimelineStep } from './MobileWorkflowTimeline'
+import { isCallApiIdentityResolutionError } from '../../lib/call-api-identity-error'
 import { ChevronDown, ChevronUp, Maximize2 } from 'lucide-react'
 import type { Node, Edge } from '@xyflow/react'
 
@@ -43,6 +45,7 @@ export function MobileInstanceOverview({
 }: MobileInstanceOverviewProps) {
   const t = useT()
   const [showFullGraph, setShowFullGraph] = useState(false)
+  const showCallApiIdentityGuidance = isCallApiIdentityResolutionError(instance.errorMessage)
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set())
 
   const toggleEventDetails = (eventId: string) => {
@@ -160,6 +163,12 @@ export function MobileInstanceOverview({
           <pre className="text-xs text-destructive whitespace-pre-wrap font-mono break-all">
             {instance.errorMessage}
           </pre>
+          {showCallApiIdentityGuidance && (
+            <Alert status="warning" style="lighter" className="mt-3">
+              <AlertTitle>{t('workflows.instances.callApiIdentity.title')}</AlertTitle>
+              <AlertDescription>{t('workflows.instances.callApiIdentity.description')}</AlertDescription>
+            </Alert>
+          )}
         </div>
       )}
 
