@@ -1,10 +1,6 @@
-import type { ApiRouteManifestEntry, Module } from '@open-mercato/shared/modules/registry'
-import { getApiRouteManifests } from '@open-mercato/shared/modules/registry'
-import { getModules } from '@open-mercato/shared/lib/modules/registry'
-import {
-  attachOpenApiDocsToModules,
-  buildOpenApiDocument,
-} from '@open-mercato/shared/lib/openapi'
+import type { Module } from '@open-mercato/shared/modules/registry'
+import type { OpenApiDocument } from '@open-mercato/shared/lib/openapi'
+import { buildOpenApiDocument } from '@open-mercato/shared/lib/openapi'
 import { isRecord } from './endpoint-schema'
 
 export type WorkflowEndpointParamLocation = 'path' | 'query' | 'header'
@@ -103,7 +99,12 @@ function projectSuccessResponseSchema(responses: unknown): Record<string, unknow
 }
 
 export function buildEndpointCatalog(modules: Module[]): WorkflowEndpointCatalog {
-  const document = buildOpenApiDocument(modules)
+  return buildEndpointCatalogFromDocument(buildOpenApiDocument(modules))
+}
+
+export function buildEndpointCatalogFromDocument(
+  document: OpenApiDocument,
+): WorkflowEndpointCatalog {
   const items: WorkflowEndpointDescriptor[] = []
 
   for (const [documentPath, operations] of Object.entries(document.paths)) {
@@ -116,14 +117,17 @@ export function buildEndpointCatalog(modules: Module[]): WorkflowEndpointCatalog
       const requestSchema = jsonContentSchema(operation.requestBody)
       const responseSchema = projectSuccessResponseSchema(operation.responses)
       const tags = operation.tags
+      const apiPath = documentPath === '/api' || documentPath.startsWith('/api/')
+        ? documentPath
+        : `/api${documentPath}`
 
       items.push({
-        path: `/api${documentPath}`,
+        path: apiPath,
         method,
         summary:
           typeof operation.summary === 'string' && operation.summary.length > 0
             ? operation.summary
-            : `${method} /api${documentPath}`,
+            : `${method} ${apiPath}`,
         tag: Array.isArray(tags) && typeof tags[0] === 'string' ? tags[0] : '',
         params: projectParams(operation.parameters),
         hasRequestSchema: requestSchema !== undefined,
@@ -133,28 +137,29 @@ export function buildEndpointCatalog(modules: Module[]): WorkflowEndpointCatalog
     }
   }
 
-  items.sort((left, right) => {
+  return { items: sortCatalogItems(items) }
+}
+
+function sortCatalogItems(items: WorkflowEndpointDescriptor[]): WorkflowEndpointDescriptor[] {
+  return items.sort((left, right) => {
     const byPath = left.path.localeCompare(right.path)
     return byPath !== 0 ? byPath : methodRank(left.method) - methodRank(right.method)
   })
-
-  return { items }
 }
 
 let catalogPromise: Promise<WorkflowEndpointCatalog> | null = null
 
 async function assembleCatalog(
-  apiRouteManifests: ApiRouteManifestEntry[],
+  openApiDocument: OpenApiDocument,
 ): Promise<WorkflowEndpointCatalog> {
-  const modules = await attachOpenApiDocsToModules(getModules(), apiRouteManifests)
-  return buildEndpointCatalog(modules)
+  return buildEndpointCatalogFromDocument(openApiDocument)
 }
 
 export async function getWorkflowEndpointCatalog(
-  apiRouteManifests: ApiRouteManifestEntry[] = getApiRouteManifests(),
+  openApiDocument: OpenApiDocument,
 ): Promise<WorkflowEndpointCatalog> {
   if (!catalogPromise) {
-    catalogPromise = assembleCatalog(apiRouteManifests).catch((error: unknown) => {
+    catalogPromise = assembleCatalog(openApiDocument).catch((error: unknown) => {
       catalogPromise = null
       throw error
     })

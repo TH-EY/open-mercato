@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
-import type { ApiRouteManifestEntry } from '@open-mercato/shared/modules/registry'
+import type { OpenApiDocument, OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { getAuthFromRequest } from '@open-mercato/shared/lib/auth/server'
 import { resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/directory/utils/organizationScope'
@@ -14,7 +13,7 @@ export const metadata = {
 
 export async function GET(
   request: NextRequest,
-  context?: { apiRouteManifests?: ApiRouteManifestEntry[] },
+  context?: { openApiDocument?: OpenApiDocument },
 ) {
   try {
     const container = await createRequestContainer()
@@ -43,8 +42,12 @@ export async function GET(
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 
+    if (!context?.openApiDocument) {
+      throw new Error('[internal] Missing generated OpenAPI document')
+    }
+
     return NextResponse.json(
-      await getWorkflowEndpointCatalog(context?.apiRouteManifests),
+      await getWorkflowEndpointCatalog(context.openApiDocument),
     )
   } catch (error) {
     console.error('Error listing workflow endpoint catalog:', error)

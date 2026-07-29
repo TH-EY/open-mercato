@@ -3,11 +3,12 @@ import {
   findApiRouteManifestMatch,
   getApiRouteManifests,
   registerApiRouteManifests,
-  type ApiRouteManifestEntry,
   type HttpMethod,
 } from '@open-mercato/shared/modules/registry'
+import type { OpenApiDocument } from '@open-mercato/shared/lib/openapi'
 import { isCrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { apiRoutes } from '@/.mercato/generated/api-routes.generated'
+import generatedOpenApiDocument from '@/.mercato/generated/openapi.generated.json'
 import { resolveAuthFromRequestDetailed } from '@open-mercato/shared/lib/auth/server'
 import { bootstrap } from '@/bootstrap'
 import type { AuthContext } from '@open-mercato/shared/lib/auth/server'
@@ -55,7 +56,7 @@ type MethodMetadata = {
 type HandlerContext = {
   params: Record<string, string | string[]>
   auth: AuthContext
-  apiRouteManifests: ApiRouteManifestEntry[]
+  openApiDocument: OpenApiDocument
 }
 
 type LifecycleEventBus = {
@@ -427,7 +428,7 @@ async function handleRequest(
     const handlerContext: HandlerContext = {
       params: match.params,
       auth,
-      apiRouteManifests: getApiRouteManifests(),
+      openApiDocument: generatedOpenApiDocument as OpenApiDocument,
     }
     const runHandler = () => runWithCacheTenant(auth?.tenantId ?? null, () => handler(req, handlerContext))
     const response = methodMetadata?.skipModuleResourceUsageTracking !== true

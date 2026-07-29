@@ -1,7 +1,10 @@
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
-import type { ApiRouteManifestEntry, Module } from '@open-mercato/shared/modules/registry'
-import { registerModules } from '@open-mercato/shared/lib/modules/registry'
+import type { Module } from '@open-mercato/shared/modules/registry'
+import {
+  buildOpenApiDocument,
+  type OpenApiDocument,
+} from '@open-mercato/shared/lib/openapi'
 import { GET } from '../endpoints/route'
 import {
   buildEndpointCatalog,
@@ -80,46 +83,12 @@ function testModules(): Module[] {
   } as unknown as Module]
 }
 
-function manifestBackedModules(): Module[] {
-  return [{
-    id: 'inventory',
-    apis: [{
-      path: '/inventory/items/[id]',
-      handlers: { PUT: noopHandler },
-    }],
-  } as unknown as Module]
-}
-
-const manifestBackedRoutes: ApiRouteManifestEntry[] = [{
-  moduleId: 'inventory',
-  kind: 'route-file',
-  path: '/inventory/items/[id]',
-  methods: ['PUT'],
-  load: async () => ({
-    openApi: {
-      tag: 'Inventory',
-      methods: {
-        PUT: {
-          summary: 'Update inventory item',
-          requestBody: { schema: z.object({ quantity: z.number() }) },
-          responses: [{
-            status: 200,
-            description: 'Updated',
-            schema: z.object({ id: z.string(), quantity: z.number() }),
-          }],
-        },
-      },
-    },
-  }),
-}]
-
 describe('GET /api/workflows/endpoints', () => {
   const request = () => new NextRequest('http://localhost/api/workflows/endpoints')
   const rbacService = { userHasAllFeatures: jest.fn() }
 
   beforeEach(() => {
     clearWorkflowEndpointCatalogForTests()
-    registerModules(testModules())
     rbacService.userHasAllFeatures.mockResolvedValue(true)
 
     const { createRequestContainer } = require('@open-mercato/shared/lib/di/container')
@@ -144,7 +113,9 @@ describe('GET /api/workflows/endpoints', () => {
   })
 
   it('returns sorted operations, parameter hints, and declared schemas', async () => {
-    const response = await GET(request())
+    const response = await GET(request(), {
+      openApiDocument: buildOpenApiDocument(testModules()),
+    })
     const body = await response.json()
 
     expect(response.status).toBe(200)
@@ -163,7 +134,7 @@ describe('GET /api/workflows/endpoints', () => {
   })
 
   it('checks workflow definition view access in the selected organization', async () => {
-    await GET(request())
+    await GET(request(), { openApiDocument: buildOpenApiDocument([]) })
     expect(rbacService.userHasAllFeatures).toHaveBeenCalledWith(
       'user-1',
       ['workflows.definitions.view'],
@@ -171,11 +142,32 @@ describe('GET /api/workflows/endpoints', () => {
     )
   })
 
-  it('uses manifests passed by the API catch-all across the lazy route boundary', async () => {
-    registerModules(manifestBackedModules())
+  it('uses the generated OpenAPI document passed across the lazy route boundary', async () => {
     clearWorkflowEndpointCatalogForTests()
 
-    const response = await GET(request(), { apiRouteManifests: manifestBackedRoutes })
+    const response = await GET(request(), {
+      openApiDocument: buildOpenApiDocument([{
+        id: 'inventory',
+        apis: [{
+          path: '/inventory/items/[id]',
+          handlers: { PUT: noopHandler },
+          docs: {
+            tag: 'Inventory',
+            methods: {
+              PUT: {
+                summary: 'Update inventory item',
+                requestBody: { schema: z.object({ quantity: z.number() }) },
+                responses: [{
+                  status: 200,
+                  description: 'Updated',
+                  schema: z.object({ id: z.string(), quantity: z.number() }),
+                }],
+              },
+            },
+          },
+        }],
+      }]),
+    })
     const body = await response.json()
 
     expect(response.status).toBe(200)
@@ -188,6 +180,31 @@ describe('GET /api/workflows/endpoints', () => {
     })
     expect(body.items[0].requestSchema.properties.quantity.type).toBe('number')
     expect(body.items[0].responseSchema.properties.id.type).toBe('string')
+  })
+
+  it('does not duplicate the API prefix from the generated document', async () => {
+    const response = await GET(request(), {
+      openApiDocument: {
+        openapi: '3.1.0',
+        info: { title: 'Test', version: '1.0.0' },
+        paths: {
+          '/api/inventory/health': {
+            get: {
+              summary: 'Inventory health',
+              responses: {},
+            },
+          },
+        },
+      } as OpenApiDocument,
+    })
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body.items).toEqual([expect.objectContaining({
+      path: '/api/inventory/health',
+      method: 'GET',
+      hasRequestSchema: false,
+    })])
   })
 
   it.each([

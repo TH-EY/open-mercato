@@ -40,7 +40,7 @@ Workflow authors must already know internal paths, methods, parameter names, and
 
 | Decision | Rationale |
 |----------|-----------|
-| Build from registered route manifests | Keeps the picker aligned with the same source used by generated OpenAPI documentation. |
+| Build from `openapi.generated.json` | Keeps the picker aligned with the exact generated document while avoiding a second runtime route-loading pass. |
 | Cache per server process | The enabled route surface is structural and changes only on deploy/restart; rebuilding it on every keystroke would be wasteful. |
 | Omit undeclared response schemas | An honest “not declared” state is safer than presenting the generator's generic object fallback as a real contract. |
 | Preserve free-text endpoint editing | Existing workflows and custom internal endpoints must continue to round-trip without catalog coupling. |
@@ -66,10 +66,10 @@ Workflow authors must already know internal paths, methods, parameter names, and
 ## Architecture
 
 ```text
-registered modules + API manifests
+generated OpenAPI document
               |
               v
-attachOpenApiDocsToModules(route manifests, registered module APIs)
+project path, method, parameters, and declared schemas
               |
               v
 process-cached endpoint projection
@@ -81,7 +81,7 @@ GET /api/workflows/endpoints
 CALL_API endpoint picker -> existing activity.config
 ```
 
-`endpoint-catalog.ts` is server-only and projects path, method, summary, first tag, supported parameter locations, and declared JSON request/response schemas. The API catch-all passes its registered manifest list through the existing internal handler context so lazy Next.js route chunks assemble the catalog from the same exact runtime routes instead of depending on duplicated module-local registry state. Pure `endpoint-path.ts` helpers match a configured endpoint to a route template and compose path/query values without encoding workflow interpolation tokens.
+`endpoint-catalog.ts` is server-only and projects path, method, summary, first tag, supported parameter locations, and declared JSON request/response schemas. The API catch-all passes `openapi.generated.json` through the existing internal handler context so the lazy Next.js route chunk uses the exact build-time API document instead of depending on duplicated module-local registry state or loading every route module again. Pure `endpoint-path.ts` helpers match a configured endpoint to a route template and compose path/query values without encoding workflow interpolation tokens.
 
 The catalog API performs the normal request-container, authentication, organization-scope, and `workflows.definitions.view` checks before returning structural metadata. Catalog visibility does not grant permission to call an operation. At runtime, the unchanged `CALL_API` executor continues to apply the initiating actor's roles and the existing `/api/*`/same-host SSRF rules.
 
@@ -246,7 +246,7 @@ All picker labels, empty/loading/failure states, parameter validation, request s
 | `packages/core/src/modules/workflows/lib/endpoint-catalog.ts` | Create | Server-side OpenAPI projection/cache. |
 | `packages/core/src/modules/workflows/lib/call-api-editor-validation.ts` | Create | Shared unresolved-placeholder validation for classic and CrudForm hosts. |
 | `packages/core/src/modules/workflows/api/endpoints/route.ts` | Create | Authenticated endpoint catalog API. |
-| App and create-app API catch-all routes | Modify | Pass the registered manifest list across the lazy route-chunk boundary. |
+| App and create-app API catch-all routes | Modify | Pass the generated OpenAPI document across the lazy route-chunk boundary. |
 | `packages/core/src/modules/workflows/api/openapi.ts` | Modify | Zod schemas for the additive response contract. |
 | `packages/core/src/modules/workflows/components/fields/EndpointPicker.tsx` | Create | Structured interactive picker. |
 | `packages/core/src/modules/workflows/components/fields/EndpointPickerParts.tsx` | Create | Bounded presentation/helpers split from the interactive picker. |
@@ -298,7 +298,7 @@ All picker labels, empty/loading/failure states, parameter validation, request s
 - **Scenario**: A dynamically changed module surface is not reflected until process restart.
 - **Severity**: Low
 - **Affected area**: Picker results
-- **Mitigation**: The catalog is built from structural module registration, which already requires generation/restart/deploy; tests can clear the cache.
+- **Mitigation**: The catalog is built from `openapi.generated.json`, which already requires generation/restart/deploy; tests can clear the cache.
 - **Residual risk**: During local hot development a restart may be required, matching other generated structural registries.
 
 ### Incomplete OpenAPI Declarations
