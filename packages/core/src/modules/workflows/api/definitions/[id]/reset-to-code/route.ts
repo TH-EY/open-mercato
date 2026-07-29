@@ -15,6 +15,7 @@ import { resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/d
 import { validateCrudMutationGuard, runCrudMutationGuardAfterSuccess } from '@open-mercato/shared/lib/crud/mutation-guard'
 import { WorkflowDefinition, WorkflowInstance } from '../../../../data/entities'
 import { serializeCodeWorkflowDefinition } from '../../serialize'
+import { workflowDefinitionResetResponseSchema, workflowErrorSchema } from '../../../openapi'
 import { getCodeWorkflow } from '../../../../lib/code-registry'
 
 export const metadata = {
@@ -212,6 +213,7 @@ export const openApi = {
         {
           status: 200,
           description: 'Workflow definition reset to code version',
+          schema: workflowDefinitionResetResponseSchema,
           example: {
             data: {
               id: 'code:checkout-flow',
@@ -219,8 +221,34 @@ export const openApi = {
               workflowName: 'Checkout Flow',
               description: 'Code-defined checkout workflow',
               version: 1,
+              definition: {
+                steps: [
+                  { stepId: 'start', stepName: 'Start', stepType: 'START' },
+                  { stepId: 'end', stepName: 'End', stepType: 'END' },
+                ],
+                transitions: [
+                  {
+                    transitionId: 'start-to-end',
+                    fromStepId: 'start',
+                    toStepId: 'end',
+                    trigger: 'auto',
+                  },
+                ],
+              },
+              metadata: null,
+              enabled: true,
+              effectiveFrom: null,
+              effectiveTo: null,
+              tenantId: null,
+              organizationId: null,
+              createdBy: null,
+              updatedBy: null,
+              createdAt: null,
+              updatedAt: null,
+              deletedAt: null,
               source: 'code',
               isCodeBased: true,
+              codeModuleId: 'workflows',
             },
             message: 'Workflow definition reset to code version',
           },
@@ -228,6 +256,7 @@ export const openApi = {
         {
           status: 400,
           description: 'Definition is not a code-based override',
+          schema: workflowErrorSchema,
           example: {
             error: 'This workflow definition is not a code-based override and cannot be reset',
           },
@@ -235,6 +264,7 @@ export const openApi = {
         {
           status: 404,
           description: 'Workflow definition not found',
+          schema: workflowErrorSchema,
           example: {
             error: 'Workflow definition not found',
           },
@@ -242,6 +272,7 @@ export const openApi = {
         {
           status: 409,
           description: 'Cannot reset - active workflow instances exist',
+          schema: workflowErrorSchema,
           example: {
             error: 'Cannot reset workflow definition with 3 active instance(s)',
           },

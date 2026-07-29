@@ -19,6 +19,12 @@ import {
   type UpdateWorkflowDefinitionApiInput,
 } from '../../../data/validators'
 import { serializeWorkflowDefinition, serializeCodeWorkflowDefinition } from '../serialize'
+import {
+  workflowDefinitionDetailResponseSchema,
+  workflowDefinitionMutationResponseSchema,
+  workflowDefinitionDeleteResponseSchema,
+  workflowErrorSchema,
+} from '../../openapi'
 import { invalidateTriggerCache } from '../../../lib/event-trigger-service'
 import { getCodeWorkflow } from '../../../lib/code-registry'
 import { createGenericOptimisticLockReader } from '@open-mercato/shared/lib/crud/optimistic-lock'
@@ -521,6 +527,7 @@ export const openApi = {
         {
           status: 200,
           description: 'Workflow definition found',
+          schema: workflowDefinitionDetailResponseSchema,
           example: {
             data: {
               id: '123e4567-e89b-12d3-a456-426614174000',
@@ -577,6 +584,7 @@ export const openApi = {
                     trigger: 'auto',
                     activities: [
                       {
+                        activityId: 'send-order-confirmation',
                         activityName: 'Send Order Confirmation',
                         activityType: 'SEND_EMAIL',
                         config: {
@@ -589,17 +597,27 @@ export const openApi = {
                   },
                 ],
               },
+              metadata: null,
               enabled: true,
+              effectiveFrom: null,
+              effectiveTo: null,
               tenantId: '123e4567-e89b-12d3-a456-426614174001',
               organizationId: '123e4567-e89b-12d3-a456-426614174002',
+              createdBy: '123e4567-e89b-12d3-a456-426614174003',
+              updatedBy: '123e4567-e89b-12d3-a456-426614174003',
               createdAt: '2025-12-08T10:00:00.000Z',
               updatedAt: '2025-12-08T10:00:00.000Z',
+              deletedAt: null,
+              source: 'user',
+              isCodeBased: false,
+              codeModuleId: null,
             },
           },
         },
         {
           status: 404,
           description: 'Workflow definition not found',
+          schema: workflowErrorSchema,
           example: {
             error: 'Workflow definition not found',
           },
@@ -678,6 +696,7 @@ export const openApi = {
         {
           status: 200,
           description: 'Workflow definition updated successfully',
+          schema: workflowDefinitionMutationResponseSchema,
           example: {
             data: {
               id: '123e4567-e89b-12d3-a456-426614174000',
@@ -732,11 +751,20 @@ export const openApi = {
                   },
                 ],
               },
+              metadata: null,
               enabled: true,
+              effectiveFrom: null,
+              effectiveTo: null,
               tenantId: '123e4567-e89b-12d3-a456-426614174001',
               organizationId: '123e4567-e89b-12d3-a456-426614174002',
+              createdBy: '123e4567-e89b-12d3-a456-426614174003',
+              updatedBy: '123e4567-e89b-12d3-a456-426614174003',
               createdAt: '2025-12-08T10:00:00.000Z',
               updatedAt: '2025-12-08T11:30:00.000Z',
+              deletedAt: null,
+              source: 'user',
+              isCodeBased: false,
+              codeModuleId: null,
             },
             message: 'Workflow definition updated successfully',
           },
@@ -744,6 +772,7 @@ export const openApi = {
         {
           status: 400,
           description: 'Validation error',
+          schema: workflowErrorSchema,
           example: {
             error: 'Validation failed',
             details: [
@@ -758,6 +787,7 @@ export const openApi = {
         {
           status: 404,
           description: 'Workflow definition not found',
+          schema: workflowErrorSchema,
           example: {
             error: 'Workflow definition not found',
           },
@@ -775,6 +805,7 @@ export const openApi = {
         {
           status: 200,
           description: 'Workflow definition deleted successfully',
+          schema: workflowDefinitionDeleteResponseSchema,
           example: {
             message: 'Workflow definition deleted successfully',
           },
@@ -782,6 +813,7 @@ export const openApi = {
         {
           status: 404,
           description: 'Workflow definition not found',
+          schema: workflowErrorSchema,
           example: {
             error: 'Workflow definition not found',
           },
@@ -789,6 +821,7 @@ export const openApi = {
         {
           status: 409,
           description: 'Cannot delete - active workflow instances exist',
+          schema: workflowErrorSchema,
           example: {
             error: 'Cannot delete workflow definition with 3 active instance(s)',
           },

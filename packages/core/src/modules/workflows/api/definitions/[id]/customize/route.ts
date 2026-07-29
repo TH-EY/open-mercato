@@ -16,6 +16,7 @@ import { resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/d
 import { validateCrudMutationGuard, runCrudMutationGuardAfterSuccess } from '@open-mercato/shared/lib/crud/mutation-guard'
 import { WorkflowDefinition } from '../../../../data/entities'
 import { serializeWorkflowDefinition } from '../../serialize'
+import { workflowDefinitionMutationResponseSchema, workflowErrorSchema } from '../../../openapi'
 import { getCodeWorkflow } from '../../../../lib/code-registry'
 
 export const metadata = {
@@ -171,12 +172,42 @@ export const openApi = {
         {
           status: 200,
           description: 'Workflow definition customized successfully',
+          schema: workflowDefinitionMutationResponseSchema,
           example: {
             data: {
               id: '123e4567-e89b-12d3-a456-426614174000',
               workflowId: 'workflows.simple-approval',
               workflowName: 'Simple Approval Workflow',
+              description: 'Code-defined approval workflow',
+              version: 1,
+              definition: {
+                steps: [
+                  { stepId: 'start', stepName: 'Start', stepType: 'START' },
+                  { stepId: 'end', stepName: 'End', stepType: 'END' },
+                ],
+                transitions: [
+                  {
+                    transitionId: 'start-to-end',
+                    fromStepId: 'start',
+                    toStepId: 'end',
+                    trigger: 'auto',
+                  },
+                ],
+              },
+              metadata: null,
+              enabled: true,
+              effectiveFrom: null,
+              effectiveTo: null,
+              tenantId: '123e4567-e89b-12d3-a456-426614174001',
+              organizationId: '123e4567-e89b-12d3-a456-426614174002',
+              createdBy: '123e4567-e89b-12d3-a456-426614174003',
+              updatedBy: '123e4567-e89b-12d3-a456-426614174003',
+              createdAt: '2025-12-08T10:00:00.000Z',
+              updatedAt: '2025-12-08T10:00:00.000Z',
+              deletedAt: null,
               source: 'code_override',
+              isCodeBased: true,
+              codeModuleId: 'workflows',
             },
             message: 'Workflow definition customized successfully',
           },
@@ -184,11 +215,13 @@ export const openApi = {
         {
           status: 400,
           description: 'Not a code-based id',
+          schema: workflowErrorSchema,
           example: { error: 'Customize is only supported for code-based workflow definitions' },
         },
         {
           status: 404,
           description: 'Code workflow not found',
+          schema: workflowErrorSchema,
           example: { error: 'Workflow definition not found' },
         },
       ],
