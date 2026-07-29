@@ -81,7 +81,7 @@ GET /api/workflows/endpoints
 CALL_API endpoint picker -> existing activity.config
 ```
 
-`endpoint-catalog.ts` is server-only and projects path, method, summary, first tag, supported parameter locations, and declared JSON request/response schemas. Pure `endpoint-path.ts` helpers match a configured endpoint to a route template and compose path/query values without encoding workflow interpolation tokens.
+`endpoint-catalog.ts` is server-only and projects path, method, summary, first tag, supported parameter locations, and declared JSON request/response schemas. The API catch-all passes its registered manifest list through the existing internal handler context so lazy Next.js route chunks assemble the catalog from the same exact runtime routes instead of depending on duplicated module-local registry state. Pure `endpoint-path.ts` helpers match a configured endpoint to a route template and compose path/query values without encoding workflow interpolation tokens.
 
 The catalog API performs the normal request-container, authentication, organization-scope, and `workflows.definitions.view` checks before returning structural metadata. Catalog visibility does not grant permission to call an operation. At runtime, the unchanged `CALL_API` executor continues to apply the initiating actor's roles and the existing `/api/*`/same-host SSRF rules.
 
@@ -246,6 +246,7 @@ All picker labels, empty/loading/failure states, parameter validation, request s
 | `packages/core/src/modules/workflows/lib/endpoint-catalog.ts` | Create | Server-side OpenAPI projection/cache. |
 | `packages/core/src/modules/workflows/lib/call-api-editor-validation.ts` | Create | Shared unresolved-placeholder validation for classic and CrudForm hosts. |
 | `packages/core/src/modules/workflows/api/endpoints/route.ts` | Create | Authenticated endpoint catalog API. |
+| App and create-app API catch-all routes | Modify | Pass the registered manifest list across the lazy route-chunk boundary. |
 | `packages/core/src/modules/workflows/api/openapi.ts` | Modify | Zod schemas for the additive response contract. |
 | `packages/core/src/modules/workflows/components/fields/EndpointPicker.tsx` | Create | Structured interactive picker. |
 | `packages/core/src/modules/workflows/components/fields/EndpointPickerParts.tsx` | Create | Bounded presentation/helpers split from the interactive picker. |

@@ -458,19 +458,7 @@ export function getFrontendRouteManifests(): FrontendRouteManifestEntry[] {
   return _frontendRouteManifests ?? []
 }
 
-const API_ROUTE_MANIFESTS_GLOBAL_KEY = '__openMercatoApiRouteManifestsRegistry__'
-
-type ApiRouteManifestsGlobal = typeof globalThis & {
-  __openMercatoApiRouteManifestsRegistry__?: ApiRouteManifestEntry[]
-}
-
-function setGlobalApiRouteManifests(routes: ApiRouteManifestEntry[]): void {
-  ;(globalThis as ApiRouteManifestsGlobal)[API_ROUTE_MANIFESTS_GLOBAL_KEY] = routes
-}
-
-function getGlobalApiRouteManifests(): ApiRouteManifestEntry[] | null {
-  return (globalThis as ApiRouteManifestsGlobal)[API_ROUTE_MANIFESTS_GLOBAL_KEY] ?? null
-}
+let _apiRouteManifests: ApiRouteManifestEntry[] | null = null
 
 export function registerApiRouteManifests(routes: ApiRouteManifestEntry[]) {
   // Apply any `entry.overrides.routes.api` overrides registered through the
@@ -481,11 +469,11 @@ export function registerApiRouteManifests(routes: ApiRouteManifestEntry[]) {
   const finalRoutes = Object.keys(routeOverrides).length === 0
     ? routes
     : applyApiOverridesToManifests(routes, routeOverrides)
-  setGlobalApiRouteManifests(sortRoutesBySpecificity(finalRoutes))
+  _apiRouteManifests = sortRoutesBySpecificity(finalRoutes)
 }
 
 export function getApiRouteManifests(): ApiRouteManifestEntry[] {
-  return getGlobalApiRouteManifests() ?? []
+  return _apiRouteManifests ?? []
 }
 
 // CLI modules registry - shared between CLI and module workers

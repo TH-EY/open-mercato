@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
+import type { ApiRouteManifestEntry } from '@open-mercato/shared/modules/registry'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { getAuthFromRequest } from '@open-mercato/shared/lib/auth/server'
 import { resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/directory/utils/organizationScope'
@@ -11,7 +12,10 @@ export const metadata = {
   requireFeatures: ['workflows.definitions.view'],
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(
+  request: NextRequest,
+  context?: { apiRouteManifests?: ApiRouteManifestEntry[] },
+) {
   try {
     const container = await createRequestContainer()
     const auth = await getAuthFromRequest(request)
@@ -39,7 +43,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 
-    return NextResponse.json(await getWorkflowEndpointCatalog())
+    return NextResponse.json(
+      await getWorkflowEndpointCatalog(context?.apiRouteManifests),
+    )
   } catch (error) {
     console.error('Error listing workflow endpoint catalog:', error)
     return NextResponse.json({ error: 'Failed to list workflow endpoint catalog' }, { status: 500 })

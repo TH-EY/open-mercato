@@ -1,5 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { findApiRouteManifestMatch, getApiRouteManifests, registerApiRouteManifests, type HttpMethod } from '@open-mercato/shared/modules/registry'
+import {
+  findApiRouteManifestMatch,
+  getApiRouteManifests,
+  registerApiRouteManifests,
+  type ApiRouteManifestEntry,
+  type HttpMethod,
+} from '@open-mercato/shared/modules/registry'
 import { isCrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { apiRoutes } from '@/.mercato/generated/api-routes.generated'
 import { resolveAuthFromRequestDetailed } from '@open-mercato/shared/lib/auth/server'
@@ -49,6 +55,7 @@ type MethodMetadata = {
 type HandlerContext = {
   params: Record<string, string | string[]>
   auth: AuthContext
+  apiRouteManifests: ApiRouteManifestEntry[]
 }
 
 type LifecycleEventBus = {
@@ -417,7 +424,11 @@ async function handleRequest(
   }
 
   try {
-    const handlerContext: HandlerContext = { params: match.params, auth }
+    const handlerContext: HandlerContext = {
+      params: match.params,
+      auth,
+      apiRouteManifests: getApiRouteManifests(),
+    }
     const runHandler = () => runWithCacheTenant(auth?.tenantId ?? null, () => handler(req, handlerContext))
     const response = methodMetadata?.skipModuleResourceUsageTracking !== true
       ? await withModuleResourceUsage(

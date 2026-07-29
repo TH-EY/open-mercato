@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
-import type { Module } from '@open-mercato/shared/modules/registry'
+import type { ApiRouteManifestEntry, Module } from '@open-mercato/shared/modules/registry'
 import { registerModules } from '@open-mercato/shared/lib/modules/registry'
 import { GET } from '../endpoints/route'
 import {
@@ -80,6 +80,39 @@ function testModules(): Module[] {
   } as unknown as Module]
 }
 
+function manifestBackedModules(): Module[] {
+  return [{
+    id: 'inventory',
+    apis: [{
+      path: '/inventory/items/[id]',
+      handlers: { PUT: noopHandler },
+    }],
+  } as unknown as Module]
+}
+
+const manifestBackedRoutes: ApiRouteManifestEntry[] = [{
+  moduleId: 'inventory',
+  kind: 'route-file',
+  path: '/inventory/items/[id]',
+  methods: ['PUT'],
+  load: async () => ({
+    openApi: {
+      tag: 'Inventory',
+      methods: {
+        PUT: {
+          summary: 'Update inventory item',
+          requestBody: { schema: z.object({ quantity: z.number() }) },
+          responses: [{
+            status: 200,
+            description: 'Updated',
+            schema: z.object({ id: z.string(), quantity: z.number() }),
+          }],
+        },
+      },
+    },
+  }),
+}]
+
 describe('GET /api/workflows/endpoints', () => {
   const request = () => new NextRequest('http://localhost/api/workflows/endpoints')
   const rbacService = { userHasAllFeatures: jest.fn() }
@@ -136,6 +169,25 @@ describe('GET /api/workflows/endpoints', () => {
       ['workflows.definitions.view'],
       { tenantId: 'tenant-1', organizationId: 'org-1' },
     )
+  })
+
+  it('uses manifests passed by the API catch-all across the lazy route boundary', async () => {
+    registerModules(manifestBackedModules())
+    clearWorkflowEndpointCatalogForTests()
+
+    const response = await GET(request(), { apiRouteManifests: manifestBackedRoutes })
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body.items).toHaveLength(1)
+    expect(body.items[0]).toMatchObject({
+      path: '/api/inventory/items/{id}',
+      method: 'PUT',
+      summary: 'Update inventory item',
+      hasRequestSchema: true,
+    })
+    expect(body.items[0].requestSchema.properties.quantity.type).toBe('number')
+    expect(body.items[0].responseSchema.properties.id.type).toBe('string')
   })
 
   it.each([

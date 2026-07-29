@@ -1,4 +1,4 @@
-import type { Module } from '@open-mercato/shared/modules/registry'
+import type { ApiRouteManifestEntry, Module } from '@open-mercato/shared/modules/registry'
 import { getApiRouteManifests } from '@open-mercato/shared/modules/registry'
 import { getModules } from '@open-mercato/shared/lib/modules/registry'
 import {
@@ -143,14 +143,18 @@ export function buildEndpointCatalog(modules: Module[]): WorkflowEndpointCatalog
 
 let catalogPromise: Promise<WorkflowEndpointCatalog> | null = null
 
-async function assembleCatalog(): Promise<WorkflowEndpointCatalog> {
-  const modules = await attachOpenApiDocsToModules(getModules(), getApiRouteManifests())
+async function assembleCatalog(
+  apiRouteManifests: ApiRouteManifestEntry[],
+): Promise<WorkflowEndpointCatalog> {
+  const modules = await attachOpenApiDocsToModules(getModules(), apiRouteManifests)
   return buildEndpointCatalog(modules)
 }
 
-export async function getWorkflowEndpointCatalog(): Promise<WorkflowEndpointCatalog> {
+export async function getWorkflowEndpointCatalog(
+  apiRouteManifests: ApiRouteManifestEntry[] = getApiRouteManifests(),
+): Promise<WorkflowEndpointCatalog> {
   if (!catalogPromise) {
-    catalogPromise = assembleCatalog().catch((error: unknown) => {
+    catalogPromise = assembleCatalog(apiRouteManifests).catch((error: unknown) => {
       catalogPromise = null
       throw error
     })
