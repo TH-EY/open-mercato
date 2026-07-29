@@ -19,7 +19,7 @@ import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { useConfirmDialog } from '@open-mercato/ui/backend/confirm-dialog'
 import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
 import {
-  workflowDefinitionFormSchema,
+  createWorkflowDefinitionFormSchema,
   createFormGroups,
   createFieldDefinitions,
   parseWorkflowToFormValues,
@@ -213,6 +213,7 @@ export default function EditWorkflowDefinitionPage() {
   }
 
   const fields = React.useMemo(() => createFieldDefinitions(t), [t])
+  const formSchema = React.useMemo(() => createWorkflowDefinitionFormSchema(t), [t])
 
   const formGroups = React.useMemo(
     () => isMobile ? [] : createFormGroups(t, StepsEditor, TransitionsEditor),
@@ -331,7 +332,7 @@ export default function EditWorkflowDefinitionPage() {
           key={definitionId}
           title={isCodeOnly ? definition?.workflowName || t('workflows.edit.title') : t('workflows.edit.title')}
           backHref="/backend/definitions"
-          schema={workflowDefinitionFormSchema}
+          schema={formSchema}
           fields={fields}
           initialValues={initialValues}
           onSubmit={handleSubmit}

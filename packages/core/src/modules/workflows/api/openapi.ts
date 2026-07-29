@@ -383,3 +383,25 @@ export const sendSignalByCorrelationResponseSchema = z.object({
   message: z.string(),
   count: z.number().int().nonnegative(),
 })
+
+export const workflowEndpointParamSchema = z.object({
+  name: z.string().min(1).describe('Parameter name'),
+  in: z.enum(['path', 'query', 'header']).describe('Where the parameter is sent'),
+  required: z.boolean().describe('Whether the endpoint requires the parameter'),
+  type: z.string().describe('JSON-schema primitive type of the parameter, or "unknown"'),
+})
+
+export const workflowEndpointSchema = z.object({
+  path: z.string().min(1).describe('Endpoint path with the /api prefix and {param} placeholders'),
+  method: z.string().min(1).describe('HTTP method'),
+  summary: z.string().describe('Human-readable endpoint summary'),
+  tag: z.string().describe('OpenAPI tag used to group endpoints in the picker'),
+  params: z.array(workflowEndpointParamSchema),
+  hasRequestSchema: z.boolean(),
+  requestSchema: z.record(z.string(), z.unknown()).optional(),
+  responseSchema: z.record(z.string(), z.unknown()).optional(),
+})
+
+export const workflowEndpointListResponseSchema = z.object({
+  items: z.array(workflowEndpointSchema),
+})

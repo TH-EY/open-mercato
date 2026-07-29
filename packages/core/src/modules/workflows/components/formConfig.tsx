@@ -5,6 +5,7 @@ import { z } from 'zod'
 import type { CrudField, CrudFormGroup } from '@open-mercato/ui/backend/CrudForm'
 import type { WorkflowDefinitionTrigger } from '../data/entities'
 import { normalizeActivityDefinitions } from '../lib/activity-retry-policy'
+import { firstCallApiTransitionValidationKey } from '../lib/call-api-editor-validation'
 
 /**
  * Form Values Type
@@ -37,7 +38,7 @@ export type WorkflowDefinitionFormValues = {
  * Form Validation Schema
  * Extends the API schema with additional client-side validation
  */
-export const workflowDefinitionFormSchema = z.object({
+const workflowDefinitionFormBaseSchema = z.object({
   workflowId: z.string()
     .min(1, 'Workflow ID is required')
     .max(100, 'Workflow ID must be 100 characters or less')
@@ -62,6 +63,20 @@ export const workflowDefinitionFormSchema = z.object({
   transitions: z.array(z.any()),
   triggers: z.array(z.any()).default([]),
 })
+
+export function createWorkflowDefinitionFormSchema(translate: (key: string) => string) {
+  return workflowDefinitionFormBaseSchema.superRefine((values, context) => {
+    const key = firstCallApiTransitionValidationKey(values.transitions)
+    if (!key) return
+    context.addIssue({
+      code: 'custom',
+      message: translate(key),
+      path: ['transitions'],
+    })
+  })
+}
+
+export const workflowDefinitionFormSchema = createWorkflowDefinitionFormSchema((key) => key)
 
 /**
  * Default Form Values

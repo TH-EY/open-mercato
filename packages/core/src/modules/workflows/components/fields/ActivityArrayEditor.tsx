@@ -18,6 +18,7 @@ import { JsonBuilder } from '@open-mercato/ui/backend/JsonBuilder'
 import type { CrudCustomFieldRenderProps } from '@open-mercato/ui/backend/CrudForm'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { createDefaultActivityRetryPolicy } from '../../lib/activity-retry-policy'
+import { EndpointPicker, endpointPickerHeaders } from './EndpointPicker'
 
 /**
  * Activity definition structure
@@ -138,7 +139,6 @@ export function ActivityArrayEditor({ id, value = [], error, setValue, disabled 
           {t('workflows.fieldEditors.activities.addActivity')}
         </Button>
       </div>
-
       {activities.length === 0 ? (
         <div className="p-4 text-center text-sm text-muted-foreground bg-muted rounded-lg border">
           {t('workflows.fieldEditors.activities.emptyState')}
@@ -362,7 +362,19 @@ export function ActivityArrayEditor({ id, value = [], error, setValue, disabled 
                     </div>
 
                     {/* Configuration JSON */}
-                    <div className="border-t border-gray-200 pt-3">
+                    <div className="border-t border-border pt-3">
+                      {activity.activityType === 'CALL_API' && (
+                        <div className="mb-3">
+                          <EndpointPicker
+                            id={`${id}-${index}-endpoint`}
+                            endpoint={typeof activity.config?.endpoint === 'string' ? activity.config.endpoint : ''}
+                            method={typeof activity.config?.method === 'string' ? activity.config.method : 'GET'}
+                            headers={endpointPickerHeaders(activity.config?.headers)}
+                            onApply={(patch) => updateActivity(index, 'config', { ...activity.config, ...patch })}
+                            disabled={disabled}
+                          />
+                        </div>
+                      )}
                       <Label className="text-xs font-medium mb-1">
                         {t('workflows.fieldEditors.activities.configurationJson')}
                       </Label>

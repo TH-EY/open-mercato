@@ -8,7 +8,7 @@ import { apiFetch } from '@open-mercato/ui/backend/utils/api'
 import { readJsonSafe } from '@open-mercato/ui/backend/utils/serverErrors'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import {
-  workflowDefinitionFormSchema,
+  createWorkflowDefinitionFormSchema,
   createFormGroups,
   createFieldDefinitions,
   defaultFormValues,
@@ -44,6 +44,7 @@ export default function CreateWorkflowDefinitionPage() {
   }
 
   const fields = React.useMemo(() => createFieldDefinitions(t), [t])
+  const formSchema = React.useMemo(() => createWorkflowDefinitionFormSchema(t), [t])
 
   const formGroups = React.useMemo(
     () => createFormGroups(t, StepsEditor, TransitionsEditor),
@@ -62,7 +63,7 @@ export default function CreateWorkflowDefinitionPage() {
         <CrudForm
           title={t('workflows.create.title')}
           backHref="/backend/definitions"
-          schema={workflowDefinitionFormSchema}
+          schema={formSchema}
           fields={fields}
           initialValues={defaultFormValues}
           onSubmit={handleSubmit}

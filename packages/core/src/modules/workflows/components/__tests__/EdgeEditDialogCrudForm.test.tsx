@@ -95,4 +95,40 @@ describe('EdgeEditDialogCrudForm', () => {
       )
     })
   })
+
+  it('blocks saving unresolved CALL_API parameter placeholders', async () => {
+    const onSave = jest.fn()
+
+    renderWithProviders(
+      <EdgeEditDialogCrudForm
+        edge={{
+          id: 'start_to_end',
+          source: 'start',
+          target: 'end',
+          data: {
+            transitionName: 'Start to End',
+            trigger: 'auto',
+            priority: 100,
+            activities: [{
+              activityId: 'load_order',
+              activityName: 'Load order',
+              activityType: 'CALL_API',
+              config: { endpoint: '/api/sales/orders/{__om_required_id}', method: 'GET' },
+            }],
+          },
+        } as any}
+        isOpen
+        onClose={jest.fn()}
+        onSave={onSave}
+        onDelete={jest.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Transition' }))
+
+    await waitFor(() => {
+      expect(onSave).not.toHaveBeenCalled()
+      expect(screen.getByText('workflows.endpointPicker.requiredParametersMissing')).toBeInTheDocument()
+    })
+  })
 })

@@ -11,6 +11,8 @@ import { JsonBuilder } from '@open-mercato/ui/backend/JsonBuilder'
 import { BusinessRuleConditionsEditor } from './fields/BusinessRuleConditionsEditor'
 import { ActivityArrayEditor } from './fields/ActivityArrayEditor'
 import { edgeToFormValues, formValuesToEdgeUpdates, type EdgeFormValues } from '../lib/edgeFormTransforms'
+import { useT } from '@open-mercato/shared/lib/i18n/context'
+import { createCallApiActivitiesFormSchema } from '../lib/call-api-editor-validation'
 
 /**
  * JsonConfigEditor - Custom field wrapper for JsonBuilder
@@ -51,7 +53,9 @@ export interface EdgeEditDialogCrudFormProps {
  * - Keyboard shortcuts (Cmd/Ctrl+Enter save, Escape cancel)
  */
 export function EdgeEditDialogCrudForm({ edge, isOpen, onClose, onSave, onDelete }: EdgeEditDialogCrudFormProps) {
+  const t = useT()
   const [initialValues, setInitialValues] = useState<Partial<EdgeFormValues>>({})
+  const formSchema = useMemo(() => createCallApiActivitiesFormSchema(t), [t])
 
   // Load edge data when dialog opens
   useEffect(() => {
@@ -232,6 +236,7 @@ export function EdgeEditDialogCrudForm({ edge, isOpen, onClose, onSave, onDelete
 
         <div className="flex-1 overflow-y-auto min-h-0 px-6 ">
           <CrudForm
+            schema={formSchema}
             fields={fields}
             groups={groups}
             initialValues={initialValues}

@@ -1,5 +1,6 @@
 import {
   buildWorkflowPayload,
+  createWorkflowDefinitionFormSchema,
   parseWorkflowToFormValues,
   defaultFormValues,
   type WorkflowDefinitionFormValues,
@@ -8,6 +9,26 @@ import { buildOptimisticLockHeader } from '@open-mercato/ui/backend/utils/optimi
 import { OPTIMISTIC_LOCK_HEADER_NAME } from '@open-mercato/shared/lib/crud/optimistic-lock-headers'
 
 describe('workflow definition formConfig', () => {
+  test('blocks unresolved generated CALL_API placeholders in transitions', () => {
+    const result = createWorkflowDefinitionFormSchema((key) => key).safeParse({
+      ...defaultFormValues,
+      workflowId: 'wf',
+      workflowName: 'Workflow',
+      transitions: [{
+        activities: [{
+          activityType: 'CALL_API',
+          config: { endpoint: '/api/orders/{__om_required_id}' },
+        }],
+      }],
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.error?.issues[0]).toMatchObject({
+      path: ['transitions'],
+      message: 'workflows.endpointPicker.requiredParametersMissing',
+    })
+  })
+
   describe('parseWorkflowToFormValues', () => {
     test('reads embedded triggers from definition.triggers', () => {
       const trigger = {

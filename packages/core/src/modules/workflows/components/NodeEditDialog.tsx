@@ -27,6 +27,8 @@ import {useConfirmDialog} from '@open-mercato/ui/backend/confirm-dialog'
 import {isFutureIsoDateString, isValidDurationString} from '../data/validators'
 import {mergeAdvancedNodeConfig} from '../lib/nodeConfigMerge'
 import {EventPatternInput} from '@open-mercato/ui/backend/inputs/EventPatternInput'
+import {EndpointPicker, endpointPickerHeaders} from './fields/EndpointPicker'
+import {firstCallApiActivityValidationKey} from '../lib/call-api-editor-validation'
 
 export interface NodeEditDialogProps {
   node: Node | null
@@ -364,6 +366,13 @@ export function NodeEditDialog({ node, isOpen, onClose, onSave, onDelete }: Node
         const message = t('workflows.validation.signalCorrelationPairRequired')
         errors.signalCorrelationContextPath = message
         errors.signalCorrelationPayloadPath = message
+      }
+    }
+
+    if (node.type === 'automated') {
+      const callApiValidationKey = firstCallApiActivityValidationKey(stepActivities)
+      if (callApiValidationKey) {
+        errors.stepActivities = t(callApiValidationKey)
       }
     }
 
@@ -921,6 +930,12 @@ export function NodeEditDialog({ node, isOpen, onClose, onSave, onDelete }: Node
                       </Button>
                     </div>
 
+                    {fieldErrors.stepActivities && (
+                      <p role="alert" className="mb-2 text-xs text-status-error-text">
+                        {fieldErrors.stepActivities}
+                      </p>
+                    )}
+
                     {stepActivities.length === 0 && (
                       <div className="p-4 text-center text-sm text-muted-foreground bg-muted rounded-lg border border-border">
                         {t('workflows.nodeEditor.noActivities')}
@@ -1182,6 +1197,29 @@ export function NodeEditDialog({ node, isOpen, onClose, onSave, onDelete }: Node
                                 {/* Activity Config JSON (hidden for WAIT) */}
                                 {activity.activityType !== 'WAIT' && (
                                 <div>
+                                  {activity.activityType === 'CALL_API' && (
+                                    <div className="mb-3">
+                                      <EndpointPicker
+                                        id={`node-${node.id}-${index}-endpoint`}
+                                        endpoint={typeof activity.config?.endpoint === 'string' ? activity.config.endpoint : ''}
+                                        method={typeof activity.config?.method === 'string' ? activity.config.method : 'GET'}
+                                        headers={endpointPickerHeaders(activity.config?.headers)}
+                                        onApply={(patch) => {
+                                          const updated = [...stepActivities]
+                                          updated[index] = {
+                                            ...updated[index],
+                                            config: { ...updated[index].config, ...patch },
+                                          }
+                                          setStepActivities(updated)
+                                          setFieldErrors((current) => {
+                                            const next = { ...current }
+                                            delete next.stepActivities
+                                            return next
+                                          })
+                                        }}
+                                      />
+                                    </div>
+                                  )}
                                   <label className="block text-xs font-medium text-foreground mb-1">
                                     {t('workflows.form.configuration')}
                                   </label>
@@ -1191,6 +1229,11 @@ export function NodeEditDialog({ node, isOpen, onClose, onSave, onDelete }: Node
                                       const updated = [...stepActivities]
                                       updated[index].config = config
                                       setStepActivities(updated)
+                                      setFieldErrors((current) => {
+                                        const next = { ...current }
+                                        delete next.stepActivities
+                                        return next
+                                      })
                                     }}
                                   />
                                   <p className="text-xs text-muted-foreground mt-1">

@@ -5570,6 +5570,13 @@
         "auth": {}
       },
       {
+        "path": "/workflows/endpoints",
+        "methods": [
+          "GET"
+        ],
+        "auth": {}
+      },
+      {
         "path": "/workflows/events",
         "methods": [
           "GET"

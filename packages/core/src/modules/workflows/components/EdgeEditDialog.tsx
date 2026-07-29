@@ -30,6 +30,8 @@ import {useT} from '@open-mercato/shared/lib/i18n/context'
 import {useDialogKeyHandler} from '@open-mercato/ui/hooks/useDialogKeyHandler'
 import {useConfirmDialog} from '@open-mercato/ui/backend/confirm-dialog'
 import {omitManagedEdgeDataKeys} from '../lib/edgeFormTransforms'
+import {EndpointPicker, endpointPickerHeaders} from './fields/EndpointPicker'
+import {firstCallApiActivityValidationKey} from '../lib/call-api-editor-validation'
 
 export interface EdgeEditDialogProps {
   edge: Edge | null
@@ -73,6 +75,7 @@ export function EdgeEditDialog({ edge, isOpen, onClose, onSave, onDelete }: Edge
   const [showRuleSelector, setShowRuleSelector] = useState(false)
   const [ruleSelectorMode, setRuleSelectorMode] = useState<'pre' | 'post'>('pre')
   const [ruleDetailsCache, setRuleDetailsCache] = useState<Map<string, BusinessRule>>(new Map())
+  const [callApiValidationError, setCallApiValidationError] = useState('')
 
   // Generate a readable name from edge ID (e.g., "start_to_cart" -> "Start to Cart")
   const generateNameFromId = (edgeId: string): string => {
@@ -101,6 +104,7 @@ export function EdgeEditDialog({ edge, isOpen, onClose, onSave, onDelete }: Edge
       }
 
       setTransitionName(loadedTransitionName)
+      setCallApiValidationError('')
 
       setTrigger(edgeData?.trigger || 'auto')
       setPriority((edgeData?.priority || 100).toString())
@@ -274,6 +278,11 @@ export function EdgeEditDialog({ edge, isOpen, onClose, onSave, onDelete }: Edge
 
   const handleSave = () => {
     if (!edge) return
+    const callApiValidationKey = firstCallApiActivityValidationKey(activities)
+    if (callApiValidationKey) {
+      setCallApiValidationError(t(callApiValidationKey))
+      return
+    }
 
     const updates: Partial<Edge['data']> = {
       transitionName,
@@ -712,6 +721,12 @@ export function EdgeEditDialog({ edge, isOpen, onClose, onSave, onDelete }: Edge
                 </Button>
               </div>
 
+              {callApiValidationError && (
+                <p role="alert" className="mb-2 text-xs text-status-error-text">
+                  {callApiValidationError}
+                </p>
+              )}
+
               {activities.length === 0 && (
                 <div className="p-4 text-center text-sm text-muted-foreground bg-muted rounded-lg border border-border">
                   {t('workflows.edgeEditor.noActivities')}
@@ -891,6 +906,25 @@ export function EdgeEditDialog({ edge, isOpen, onClose, onSave, onDelete }: Edge
 
                           {/* Configuration */}
                           <div className="border-t border-border pt-3">
+                            {activity.activityType === 'CALL_API' && (
+                              <div className="mb-3">
+                                <EndpointPicker
+                                  id={`edge-${edge.id}-${index}-endpoint`}
+                                  endpoint={typeof activity.config?.endpoint === 'string' ? activity.config.endpoint : ''}
+                                  method={typeof activity.config?.method === 'string' ? activity.config.method : 'GET'}
+                                  headers={endpointPickerHeaders(activity.config?.headers)}
+                                  onApply={(patch) => {
+                                    const updated = [...activities]
+                                    updated[index] = {
+                                      ...updated[index],
+                                      config: { ...updated[index].config, ...patch },
+                                    }
+                                    setActivities(updated)
+                                    setCallApiValidationError('')
+                                  }}
+                                />
+                              </div>
+                            )}
                             <label className="block text-xs font-medium text-foreground mb-1">{t('workflows.edgeEditor.configurationJson')}</label>
                             <JsonBuilder
                               value={activity.config || {}}
@@ -898,6 +932,7 @@ export function EdgeEditDialog({ edge, isOpen, onClose, onSave, onDelete }: Edge
                                 const updated = [...activities]
                                 updated[index] = { ...updated[index], config }
                                 setActivities(updated)
+                                setCallApiValidationError('')
                               }}
                             />
                             <p className="text-xs text-muted-foreground mt-0.5">{t('workflows.edgeEditor.configurationHint')}</p>

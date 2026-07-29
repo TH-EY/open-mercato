@@ -48,6 +48,38 @@ describe('NodeEditDialogCrudForm', () => {
     })
   })
 
+  it('blocks saving unresolved CALL_API parameter placeholders', async () => {
+    const onSave = jest.fn()
+
+    renderWithProviders(
+      <NodeEditDialogCrudForm
+        node={{
+          id: 'load_order',
+          type: 'automated',
+          data: {
+            label: 'Load order',
+            activities: [{
+              activityId: 'load_order_api',
+              activityName: 'Load order API',
+              activityType: 'CALL_API',
+              config: { endpoint: '/api/sales/orders/{__om_required_id}', method: 'GET' },
+            }],
+          },
+        } as any}
+        isOpen
+        onClose={jest.fn()}
+        onSave={onSave}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Step' }))
+
+    await waitFor(() => {
+      expect(onSave).not.toHaveBeenCalled()
+      expect(screen.getByText('workflows.endpointPicker.requiredParametersMissing')).toBeInTheDocument()
+    })
+  })
+
   it('selects and saves a declared signal from the event catalog', async () => {
     const onSave = jest.fn()
 

@@ -15,6 +15,7 @@ import { Textarea } from '@open-mercato/ui/primitives/textarea'
 import { Trash2, Plus, ChevronUp, ChevronDown } from 'lucide-react'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { createDefaultActivityRetryPolicy } from '../lib/activity-retry-policy'
+import { EndpointPicker, endpointPickerHeaders } from './fields/EndpointPicker'
 
 interface Activity {
   activityId: string
@@ -178,7 +179,7 @@ export function TransitionsEditor({ value = [], onChange, steps = [], error }: T
           <p className="text-sm text-muted-foreground">
             {t('workflows.form.descriptions.transitions')}
           </p>
-          {error && <p className="text-sm text-red-600 mt-1">{error}</p>}
+          {error && <p className="mt-1 text-sm text-status-error-text">{error}</p>}
         </div>
         <Button type="button" onClick={addTransition} variant="outline" size="sm" className="w-full sm:w-auto">
           <Plus className="h-4 w-4 mr-1" />
@@ -536,6 +537,22 @@ export function TransitionsEditor({ value = [], onChange, steps = [], error }: T
                         </div>
 
                         <div>
+                          {activity.activityType === 'CALL_API' && (
+                            <div className="mb-3">
+                              <EndpointPicker
+                                id={`transition-${index}-activity-${activityIndex}-endpoint`}
+                                endpoint={typeof activity.config?.endpoint === 'string' ? activity.config.endpoint : ''}
+                                method={typeof activity.config?.method === 'string' ? activity.config.method : 'GET'}
+                                headers={endpointPickerHeaders(activity.config?.headers)}
+                                onApply={(patch) => updateActivity(
+                                  index,
+                                  activityIndex,
+                                  'config',
+                                  { ...activity.config, ...patch },
+                                )}
+                              />
+                            </div>
+                          )}
                           <Label htmlFor={`activity-${index}-${activityIndex}-config`} className="text-xs">
                             {t('workflows.activities.config')} (JSON)
                           </Label>

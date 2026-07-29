@@ -18,6 +18,7 @@ import { nodeToFormValues, formValuesToNodeUpdates, isJsonSchemaFormat, type Nod
 import { sanitizeId } from '../lib/graph-utils'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { EventPatternInput } from '@open-mercato/ui/backend/inputs/EventPatternInput'
+import { createCallApiActivitiesFormSchema } from '../lib/call-api-editor-validation'
 
 /**
  * JsonConfigEditor - Custom field wrapper for JsonBuilder
@@ -74,6 +75,7 @@ export function NodeEditDialogCrudForm({ node, isOpen, onClose, onSave, onDelete
   const t = useT()
   const [initialValues, setInitialValues] = useState<Partial<NodeFormValues>>({})
   const [showJsonSchemaWarning, setShowJsonSchemaWarning] = useState(false)
+  const formSchema = useMemo(() => createCallApiActivitiesFormSchema(t), [t])
 
   // Load node data when dialog opens
   useEffect(() => {
@@ -530,6 +532,7 @@ export function NodeEditDialogCrudForm({ node, isOpen, onClose, onSave, onDelete
           )}
 
           <CrudForm
+            schema={formSchema}
             fields={fields}
             groups={groups}
             initialValues={initialValues}
