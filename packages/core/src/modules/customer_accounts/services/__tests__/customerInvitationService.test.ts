@@ -8,6 +8,8 @@ import {
   CustomerUserRole,
 } from '@open-mercato/core/modules/customer_accounts/data/entities'
 
+const mockIsOwnedCompanyEntity = jest.fn()
+
 jest.mock('@open-mercato/core/modules/customer_accounts/lib/tokenGenerator', () => ({
   generateSecureToken: jest.fn(() => 'raw-token'),
   hashToken: jest.fn((value: string) => `hashed-${value}`),
@@ -25,6 +27,10 @@ jest.mock('@open-mercato/shared/lib/encryption/find', () => ({
   findWithDecryption: (em: any, entity: any, where: any, options?: any) => em.find(entity, where, options),
   findOneWithDecryption: (em: any, entity: any, where: any, options?: any) => em.findOne(entity, where, options),
   findAndCountWithDecryption: (em: any, entity: any, where: any, options?: any) => em.findAndCount(entity, where, options),
+}))
+
+jest.mock('@open-mercato/core/modules/customer_accounts/lib/customerEntityOwnership', () => ({
+  isOwnedCompanyEntity: (...args: unknown[]) => mockIsOwnedCompanyEntity(...args),
 }))
 
 describe('CustomerInvitationService.acceptInvitation — role lookup batching', () => {
@@ -50,6 +56,7 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
       nativeUpdate: jest.fn(async () => 1),
       transactional: jest.fn(async (fn: (tx: EntityManager) => unknown) => fn(mockEm as unknown as EntityManager)),
     } as unknown as jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush' | 'nativeUpdate' | 'transactional'>>
+    mockIsOwnedCompanyEntity.mockResolvedValue(true)
     service = new CustomerInvitationService(mockEm as unknown as EntityManager)
   })
 
@@ -184,7 +191,7 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
       )
     })
 
-    it('does not claim an invitation when stored role ids are outside the invitation organization', async () => {
+  it('does not claim an invitation when stored role ids are outside the invitation organization', async () => {
       const invitation = {
         id: 'inv-foreign-role',
         email: 'new@example.com',
@@ -206,10 +213,38 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
       const result = await service.acceptInvitation('raw-token', 'Secret123!', 'New User')
 
       expect(result).toBeNull()
-      expect(mockEm.nativeUpdate).not.toHaveBeenCalled()
-      expect(mockEm.create).not.toHaveBeenCalledWith(CustomerUser, expect.anything())
-    })
+    expect(mockEm.nativeUpdate).not.toHaveBeenCalled()
+    expect(mockEm.create).not.toHaveBeenCalledWith(CustomerUser, expect.anything())
   })
+
+  it('does not claim an invitation when stored customerEntityId is outside the invitation organization', async () => {
+    const foreignCustomerEntityId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+    const invitation = {
+      id: 'inv-foreign-company',
+      email: 'new@example.com',
+      tenantId,
+      organizationId,
+      customerEntityId: foreignCustomerEntityId,
+      roleIdsJson: [],
+      expiresAt: new Date(Date.now() + 60_000),
+      acceptedAt: null,
+      cancelledAt: null,
+    } as unknown as CustomerUserInvitation
+
+    ;(mockEm.findOne as jest.Mock).mockResolvedValueOnce(invitation)
+    mockIsOwnedCompanyEntity.mockResolvedValueOnce(false)
+
+    const result = await service.acceptInvitation('raw-token', 'Secret123!', 'New User')
+
+    expect(result).toBeNull()
+    expect(mockIsOwnedCompanyEntity).toHaveBeenCalledWith(mockEm, foreignCustomerEntityId, {
+      tenantId,
+      organizationId,
+    })
+    expect(mockEm.nativeUpdate).not.toHaveBeenCalled()
+    expect(mockEm.create).not.toHaveBeenCalledWith(CustomerUser, expect.anything())
+  })
+})
 
 describe('CustomerInvitationService.createInvitation — pending-invitation dedupe', () => {
   const roleIds = [

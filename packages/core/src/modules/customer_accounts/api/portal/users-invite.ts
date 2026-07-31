@@ -17,6 +17,7 @@ import {
 } from '@open-mercato/core/modules/customer_accounts/lib/rateLimiter'
 import { readNormalizedEmailFromJsonRequest } from '@open-mercato/core/modules/customer_accounts/lib/rateLimitIdentifier'
 import { sendCustomerInvitationEmail } from '@open-mercato/core/modules/customer_accounts/lib/invitationEmail'
+import { isOwnedCompanyEntity } from '@open-mercato/core/modules/customer_accounts/lib/customerEntityOwnership'
 
 export const metadata: { path?: string; requireAuth?: boolean } = { requireAuth: false }
 
@@ -61,6 +62,14 @@ export async function POST(req: Request) {
   }
 
   const em = container.resolve('em') as import('@mikro-orm/postgresql').EntityManager
+
+  const ownsCustomerEntity = await isOwnedCompanyEntity(em, auth.customerEntityId, {
+    tenantId: auth.tenantId,
+    organizationId: auth.orgId,
+  })
+  if (!ownsCustomerEntity) {
+    return NextResponse.json({ ok: false, error: 'Company not found' }, { status: 400 })
+  }
 
   // Validate all roles are customer_assignable
   const requestedRoleIds = parsed.data.roleIds

@@ -9,6 +9,7 @@ const mockGetCustomerAuthFromRequest = jest.fn()
 const mockRequireCustomerFeature = jest.fn()
 const mockFindWithDecryption = jest.fn()
 const mockSendCustomerInvitationEmail = jest.fn()
+const mockIsOwnedCompanyEntity = jest.fn()
 
 const tenantId = '22222222-2222-4222-8222-222222222222'
 const organizationId = '33333333-3333-4333-8333-333333333333'
@@ -51,6 +52,10 @@ jest.mock('@open-mercato/core/modules/customer_accounts/lib/invitationEmail', ()
   sendCustomerInvitationEmail: (...args: unknown[]) => mockSendCustomerInvitationEmail(...args),
 }))
 
+jest.mock('@open-mercato/core/modules/customer_accounts/lib/customerEntityOwnership', () => ({
+  isOwnedCompanyEntity: (...args: unknown[]) => mockIsOwnedCompanyEntity(...args),
+}))
+
 jest.mock('@open-mercato/shared/lib/di/container', () => ({
   createRequestContainer: jest.fn(async () => mockContainer),
 }))
@@ -85,6 +90,7 @@ describe('portal customer account user invite route', () => {
     mockFindWithDecryption.mockResolvedValue([
       { id: roleId, name: 'Portal buyer', customerAssignable: true },
     ])
+    mockIsOwnedCompanyEntity.mockResolvedValue(true)
     mockCreateInvitation.mockResolvedValue({
       invitation: {
         id: '66666666-6666-4666-8666-666666666666',
@@ -127,16 +133,33 @@ describe('portal customer account user invite route', () => {
         email: 'buyer@example.com',
         rawToken: 'raw-invite-token',
       })
-      expect(mockFindWithDecryption).toHaveBeenCalledWith(
-        {},
-        expect.anything(),
-        expect.objectContaining({ tenantId, organizationId, deletedAt: null }),
-        undefined,
-        { tenantId, organizationId },
-      )
-    })
+    expect(mockFindWithDecryption).toHaveBeenCalledWith(
+      {},
+      expect.anything(),
+      expect.objectContaining({ tenantId, organizationId, deletedAt: null }),
+      undefined,
+      { tenantId, organizationId },
+    )
+  })
 
-    it('rejects a requested role outside the portal organization', async () => {
+  it('rejects a portal auth customer entity outside the portal organization', async () => {
+    mockIsOwnedCompanyEntity.mockResolvedValueOnce(false)
+    const { POST } = await import('../users-invite')
+
+    const response = await POST(makeInviteRequest())
+    const json = await response.json()
+
+    expect(response.status).toBe(400)
+    expect(json).toEqual({ ok: false, error: 'Company not found' })
+    expect(mockIsOwnedCompanyEntity).toHaveBeenCalledWith({}, customerEntityId, {
+      tenantId,
+      organizationId,
+    })
+    expect(mockCreateInvitation).not.toHaveBeenCalled()
+    expect(mockSendCustomerInvitationEmail).not.toHaveBeenCalled()
+  })
+
+  it('rejects a requested role outside the portal organization', async () => {
       mockFindWithDecryption.mockResolvedValueOnce([])
       const { POST } = await import('../users-invite')
 

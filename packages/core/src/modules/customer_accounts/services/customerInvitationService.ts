@@ -9,6 +9,7 @@ import {
 import { generateSecureToken, hashToken } from '@open-mercato/core/modules/customer_accounts/lib/tokenGenerator'
 import { hashForLookup } from '@open-mercato/shared/lib/encryption/aes'
 import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { isOwnedCompanyEntity } from '@open-mercato/core/modules/customer_accounts/lib/customerEntityOwnership'
 
 const BCRYPT_COST = 10
 const INVITATION_TTL_MS = 72 * 60 * 60 * 1000 // 72 hours
@@ -237,6 +238,13 @@ export class CustomerInvitationService {
         : []
       const foundRoleIds = new Set(roles.map((role) => role.id))
       if (roleIds.some((roleId) => !foundRoleIds.has(roleId))) return null
+      if (invitation.customerEntityId) {
+        const ownsCustomerEntity = await isOwnedCompanyEntity(tx, invitation.customerEntityId, {
+          tenantId: invitation.tenantId,
+          organizationId: invitation.organizationId,
+        })
+        if (!ownsCustomerEntity) return null
+      }
 
       const affected = await tx.nativeUpdate(
         CustomerUserInvitation,
