@@ -3,7 +3,7 @@
  */
 
 import * as React from 'react'
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { AppShell, ApplyBreadcrumb } from '../AppShell'
 import { renderWithProviders } from '@open-mercato/shared/lib/testing/renderWithProviders'
 
@@ -89,6 +89,7 @@ jest.mock('../devtools', () => ({
 const dict = {
   'appShell.productName': 'Mercato',
   'appShell.menu': 'Menu',
+  'appShell.openMenu': 'Open menu',
   'appShell.toggleSidebar': 'Toggle sidebar',
   'appShell.collapseSidebar': 'Collapse',
   'appShell.expandSidebar': 'Expand',
@@ -310,8 +311,14 @@ describe('AppShell', () => {
         expect(logo).toHaveAttribute('data-unoptimized', 'true')
         expect(logo).toHaveClass('object-cover')
         expect(logo).toHaveClass('rounded-full')
+        expect(logo).toHaveClass('h-10')
+        expect(logo).toHaveClass('w-10')
         expect(logo).not.toHaveClass('object-contain')
       })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+      const mobileLogo = screen.getAllByAltText('Acme logo').find((logo) => logo.classList.contains('h-7'))
+      expect(mobileLogo).toHaveClass('w-7')
     } finally {
       global.fetch = previousFetch
       window.fetch = previousWindowFetch

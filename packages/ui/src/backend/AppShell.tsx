@@ -205,7 +205,7 @@ function ShellBrandLogo({
         alt={alt}
         width={mobile ? 28 : 40}
         height={mobile ? 28 : 40}
-        className={`${mobile ? 'rounded' : 'rounded-full'} shrink-0 object-cover`}
+        className={`${mobile ? 'h-7 w-7 rounded' : 'h-10 w-10 rounded-full'} shrink-0 object-cover`}
         unoptimized={unoptimized ? true : undefined}
       />
     )
