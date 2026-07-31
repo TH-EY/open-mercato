@@ -16,6 +16,7 @@ const mockEmit = jest.fn(async () => undefined)
 const mockSendCustomerInvitationEmail = jest.fn()
 const mockRemoveInvitation = jest.fn()
 const mockCancelInvitationAttempt = jest.fn()
+const mockIsOwnedCompanyEntity = jest.fn()
 
 jest.mock('@open-mercato/core/modules/customer_accounts/lib/rateLimiter', () => ({
   checkAuthRateLimit: (...args: unknown[]) => mockCheckAuthRateLimit(...args),
@@ -68,6 +69,10 @@ jest.mock('@open-mercato/core/modules/customer_accounts/lib/invitationEmail', ()
   sendCustomerInvitationEmail: (...args: unknown[]) => mockSendCustomerInvitationEmail(...args),
 }))
 
+jest.mock('@open-mercato/core/modules/customer_accounts/lib/customerEntityOwnership', () => ({
+  isOwnedCompanyEntity: (...args: unknown[]) => mockIsOwnedCompanyEntity(...args),
+}))
+
 const tenantId = '22222222-2222-4222-8222-222222222222'
 const organizationId = '33333333-3333-4333-8333-333333333333'
 const customerEntityId = '44444444-4444-4444-8444-444444444444'
@@ -118,6 +123,7 @@ describe('customer invitation endpoints — invitation-created event', () => {
     mockSendCustomerInvitationEmail.mockResolvedValue(undefined)
     mockRemoveInvitation.mockResolvedValue(undefined)
     mockFindWithDecryption.mockResolvedValue([{ id: roleId, name: 'Buyer', customerAssignable: true }])
+    mockIsOwnedCompanyEntity.mockResolvedValue(true)
   })
 
   it('admin route emits the invitation-created event once with staff context and no raw token', async () => {
