@@ -220,6 +220,24 @@ export class CustomerInvitationService {
 
     return this.em.transactional(async (tx) => {
       const acceptedAt = new Date()
+      const roleIds = Array.isArray(invitation.roleIdsJson) ? invitation.roleIdsJson : []
+      const roles = roleIds.length > 0
+        ? await findWithDecryption(
+            tx,
+            CustomerRole,
+            {
+              id: { $in: roleIds } as any,
+              tenantId: invitation.tenantId,
+              organizationId: invitation.organizationId,
+              deletedAt: null,
+            } as any,
+            undefined,
+            { tenantId: invitation.tenantId, organizationId: invitation.organizationId },
+          )
+        : []
+      const foundRoleIds = new Set(roles.map((role) => role.id))
+      if (roleIds.some((roleId) => !foundRoleIds.has(roleId))) return null
+
       const affected = await tx.nativeUpdate(
         CustomerUserInvitation,
         {
@@ -251,20 +269,6 @@ export class CustomerInvitationService {
       } as any) as CustomerUser
       tx.persist(user)
 
-      const roleIds = Array.isArray(invitation.roleIdsJson) ? invitation.roleIdsJson : []
-      const roles = roleIds.length > 0
-        ? await findWithDecryption(
-            tx,
-            CustomerRole,
-            {
-              id: { $in: roleIds } as any,
-              tenantId: invitation.tenantId,
-              deletedAt: null,
-            } as any,
-            undefined,
-            { tenantId: invitation.tenantId, organizationId: invitation.organizationId },
-          )
-        : []
       for (const role of roles) {
         const userRole = tx.create(CustomerUserRole, {
           user,

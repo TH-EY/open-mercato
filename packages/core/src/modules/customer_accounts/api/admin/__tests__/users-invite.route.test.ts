@@ -10,6 +10,9 @@ const mockCancelInvitationAttempt = jest.fn()
 const mockUserHasAllFeatures = jest.fn()
 const mockGetAuthFromRequest = jest.fn()
 const mockSendCustomerInvitationEmail = jest.fn()
+const mockFindWithDecryption = jest.fn()
+const mockIsOwnedCompanyEntity = jest.fn()
+const mockEm = {}
 
 const tenantId = '22222222-2222-4222-8222-222222222222'
 const organizationId = '33333333-3333-4333-8333-333333333333'
@@ -25,12 +28,13 @@ const mockContainer = {
         createInvitation: mockCreateInvitation,
         removeInvitation: mockRemoveInvitation,
         restoreInvitation: mockRestoreInvitation,
-        cancelInvitationAttempt: mockCancelInvitationAttempt,
+          cancelInvitationAttempt: mockCancelInvitationAttempt,
+        }
       }
-    }
-    return null
-  }),
-}
+      if (token === 'em') return mockEm
+      return null
+    }),
+  }
 
 jest.mock('@open-mercato/core/modules/customer_accounts/lib/rateLimiter', () => ({
   checkAuthRateLimit: (...args: unknown[]) => mockCheckAuthRateLimit(...args),
@@ -46,6 +50,14 @@ jest.mock('@open-mercato/core/modules/customer_accounts/lib/invitationEmail', ()
   sendCustomerInvitationEmail: (...args: unknown[]) => mockSendCustomerInvitationEmail(...args),
 }))
 
+jest.mock('@open-mercato/shared/lib/encryption/find', () => ({
+  findWithDecryption: (...args: unknown[]) => mockFindWithDecryption(...args),
+}))
+
+jest.mock('@open-mercato/core/modules/customer_accounts/lib/customerEntityOwnership', () => ({
+  isOwnedCompanyEntity: (...args: unknown[]) => mockIsOwnedCompanyEntity(...args),
+}))
+
 jest.mock('@open-mercato/shared/lib/di/container', () => ({
   createRequestContainer: jest.fn(async () => mockContainer),
 }))
@@ -54,7 +66,7 @@ jest.mock('@open-mercato/shared/lib/auth/server', () => ({
   getAuthFromRequest: (...args: unknown[]) => mockGetAuthFromRequest(...args),
 }))
 
-function makeInviteRequest(): Request {
+function makeInviteRequest(overrides: Record<string, unknown> = {}): Request {
   return new Request('http://localhost/api/customer_accounts/admin/users-invite', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -62,6 +74,7 @@ function makeInviteRequest(): Request {
       email: 'buyer@example.com',
       roleIds: [roleId],
       displayName: 'Buyer User',
+      ...overrides,
     }),
   })
 }
@@ -87,11 +100,13 @@ describe('admin customer account user invite route', () => {
       rawToken: 'raw-invite-token',
       attemptTokenHash: 'hashed-raw-invite-token',
       reused: false,
+      })
+      mockSendCustomerInvitationEmail.mockResolvedValue(undefined)
+      mockRemoveInvitation.mockResolvedValue(undefined)
+      mockRestoreInvitation.mockResolvedValue(undefined)
+      mockFindWithDecryption.mockResolvedValue([{ id: roleId }])
+      mockIsOwnedCompanyEntity.mockResolvedValue(true)
     })
-    mockSendCustomerInvitationEmail.mockResolvedValue(undefined)
-    mockRemoveInvitation.mockResolvedValue(undefined)
-    mockRestoreInvitation.mockResolvedValue(undefined)
-  })
 
   it('keeps API-key RBAC subject and stores the backing user id as invitedByUserId', async () => {
     const { POST } = await import('../users-invite')
@@ -147,6 +162,44 @@ describe('admin customer account user invite route', () => {
       rawToken: 'raw-invite-token',
     })
     expect(JSON.stringify(json)).not.toContain('raw-invite-token')
+  })
+
+  it('rejects a requested customer role outside the caller organization', async () => {
+    mockFindWithDecryption.mockResolvedValueOnce([])
+    const { POST } = await import('../users-invite')
+
+    const response = await POST(makeInviteRequest())
+    const json = await response.json()
+
+    expect(response.status).toBe(400)
+    expect(json).toEqual({ ok: false, error: `Role ${roleId} not found` })
+    expect(mockFindWithDecryption).toHaveBeenCalledWith(
+      mockEm,
+      expect.anything(),
+      expect.objectContaining({ tenantId, organizationId, deletedAt: null }),
+      undefined,
+      { tenantId, organizationId },
+    )
+    expect(mockCreateInvitation).not.toHaveBeenCalled()
+    expect(mockSendCustomerInvitationEmail).not.toHaveBeenCalled()
+  })
+
+  it('rejects a requested customer entity outside the caller organization', async () => {
+    const foreignCustomerEntityId = '77777777-7777-4777-8777-777777777777'
+    mockIsOwnedCompanyEntity.mockResolvedValueOnce(false)
+    const { POST } = await import('../users-invite')
+
+    const response = await POST(makeInviteRequest({ customerEntityId: foreignCustomerEntityId }))
+    const json = await response.json()
+
+    expect(response.status).toBe(400)
+    expect(json).toEqual({ ok: false, error: 'Company not found' })
+    expect(mockIsOwnedCompanyEntity).toHaveBeenCalledWith(mockEm, foreignCustomerEntityId, {
+      tenantId,
+      organizationId,
+    })
+    expect(mockCreateInvitation).not.toHaveBeenCalled()
+    expect(mockSendCustomerInvitationEmail).not.toHaveBeenCalled()
   })
 
   it('returns 502 when the invitation email cannot be sent', async () => {

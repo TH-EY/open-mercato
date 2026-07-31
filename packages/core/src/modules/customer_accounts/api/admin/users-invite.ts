@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
+import type { EntityManager } from '@mikro-orm/postgresql'
 import type { OpenApiRouteDoc, OpenApiMethodDoc } from '@open-mercato/shared/lib/openapi'
 import { getAuthFromRequest } from '@open-mercato/shared/lib/auth/server'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { RbacService } from '@open-mercato/core/modules/auth/services/rbacService'
 import { CustomerInvitationService } from '@open-mercato/core/modules/customer_accounts/services/customerInvitationService'
 import { emitCustomerAccountsEvent } from '@open-mercato/core/modules/customer_accounts/events'
+import { CustomerRole } from '@open-mercato/core/modules/customer_accounts/data/entities'
 import { inviteUserSchema } from '@open-mercato/core/modules/customer_accounts/data/validators'
+import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { rateLimitErrorSchema } from '@open-mercato/shared/lib/ratelimit/helpers'
 import {
   checkAuthRateLimit,
@@ -15,6 +18,7 @@ import {
 } from '@open-mercato/core/modules/customer_accounts/lib/rateLimiter'
 import { readNormalizedEmailFromJsonRequest } from '@open-mercato/core/modules/customer_accounts/lib/rateLimitIdentifier'
 import { sendCustomerInvitationEmail } from '@open-mercato/core/modules/customer_accounts/lib/invitationEmail'
+import { isOwnedCompanyEntity } from '@open-mercato/core/modules/customer_accounts/lib/customerEntityOwnership'
 
 export const metadata = {}
 
@@ -58,6 +62,37 @@ export async function POST(req: Request) {
   }
 
   const customerInvitationService = container.resolve('customerInvitationService') as CustomerInvitationService
+  const em = container.resolve('em') as EntityManager
+
+  if (parsed.data.roleIds.length > 0) {
+    const roles = await findWithDecryption(
+      em,
+      CustomerRole,
+      {
+        id: { $in: parsed.data.roleIds } as any,
+        tenantId: auth.tenantId,
+        organizationId: auth.orgId,
+        deletedAt: null,
+      } as any,
+      undefined,
+      { tenantId: auth.tenantId, organizationId: auth.orgId },
+    )
+    const foundRoleIds = new Set(roles.map((role) => role.id))
+    const missingRoleId = parsed.data.roleIds.find((roleId) => !foundRoleIds.has(roleId))
+    if (missingRoleId) {
+      return NextResponse.json({ ok: false, error: `Role ${missingRoleId} not found` }, { status: 400 })
+    }
+  }
+
+  if (parsed.data.customerEntityId) {
+    const owned = await isOwnedCompanyEntity(em, parsed.data.customerEntityId, {
+      tenantId: auth.tenantId,
+      organizationId: auth.orgId,
+    })
+    if (!owned) {
+      return NextResponse.json({ ok: false, error: 'Company not found' }, { status: 400 })
+    }
+  }
 
   const { invitation, rawToken, attemptTokenHash, reused, rollbackSnapshot } = await customerInvitationService.createInvitation(
     parsed.data.email,

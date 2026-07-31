@@ -67,10 +67,10 @@ export async function POST(req: Request) {
   const roles = requestedRoleIds.length > 0
     ? await findWithDecryption(
         em,
-        CustomerRole,
-        { id: { $in: requestedRoleIds }, tenantId: auth.tenantId, deletedAt: null } as any,
-        undefined,
-        { tenantId: auth.tenantId, organizationId: auth.orgId },
+          CustomerRole,
+          { id: { $in: requestedRoleIds }, tenantId: auth.tenantId, organizationId: auth.orgId, deletedAt: null } as any,
+          undefined,
+          { tenantId: auth.tenantId, organizationId: auth.orgId },
       )
     : []
   const rolesById = new Map(roles.map((role) => [role.id, role]))

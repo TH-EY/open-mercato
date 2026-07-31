@@ -82,11 +82,12 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
 
     const roleFinds = (mockEm.find as jest.Mock).mock.calls.filter((call) => call[0] === CustomerRole)
     expect(roleFinds).toHaveLength(1)
-    expect(roleFinds[0][1]).toMatchObject({
-      id: { $in: roleIds },
-      tenantId,
-      deletedAt: null,
-    })
+      expect(roleFinds[0][1]).toMatchObject({
+        id: { $in: roleIds },
+        tenantId,
+        organizationId,
+        deletedAt: null,
+      })
     expect(mockEm.findOne).not.toHaveBeenCalledWith(CustomerRole, expect.anything())
     expect(mockEm.nativeUpdate).toHaveBeenCalledWith(
       CustomerUserInvitation,
@@ -129,7 +130,7 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
     expect(roleFinds).toHaveLength(0)
   })
 
-  it('does not create a user when a looked-up token was rotated before acceptance claim', async () => {
+    it('does not create a user when a looked-up token was rotated before acceptance claim', async () => {
     const invitation = {
       id: 'inv-race',
       email: 'new@example.com',
@@ -143,8 +144,14 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
       cancelledAt: null,
     } as unknown as CustomerUserInvitation
 
-    ;(mockEm.findOne as jest.Mock).mockResolvedValueOnce(invitation)
-    ;(mockEm.nativeUpdate as jest.Mock).mockResolvedValueOnce(0)
+      ;(mockEm.findOne as jest.Mock).mockResolvedValueOnce(invitation)
+      ;(mockEm.find as jest.Mock).mockImplementation(async (entity: unknown, where: any) => {
+        if (entity === CustomerRole) {
+          return (where.id.$in as string[]).map((id: string) => ({ id, tenantId, organizationId, deletedAt: null }))
+        }
+        return []
+      })
+      ;(mockEm.nativeUpdate as jest.Mock).mockResolvedValueOnce(0)
 
     const result = await service.acceptInvitation('stale-token', 'Secret123!', 'New User')
 
@@ -167,17 +174,42 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
       token: 'hashed-fresh-token',
     })
     ;(mockEm.nativeUpdate as jest.Mock).mockResolvedValueOnce(1)
-    ;(mockEm.find as jest.Mock).mockResolvedValue([])
 
     const freshResult = await service.acceptInvitation('fresh-token', 'Secret123!', 'New User')
 
     expect(freshResult).not.toBeNull()
-    expect(mockEm.create).toHaveBeenCalledWith(
-      CustomerUser,
-      expect.objectContaining({ email: 'new@example.com', passwordHash: 'hashed-Secret123!' }),
-    )
+      expect(mockEm.create).toHaveBeenCalledWith(
+        CustomerUser,
+        expect.objectContaining({ email: 'new@example.com', passwordHash: 'hashed-Secret123!' }),
+      )
+    })
+
+    it('does not claim an invitation when stored role ids are outside the invitation organization', async () => {
+      const invitation = {
+        id: 'inv-foreign-role',
+        email: 'new@example.com',
+        tenantId,
+        organizationId,
+        customerEntityId: null,
+        roleIdsJson: roleIds,
+        expiresAt: new Date(Date.now() + 60_000),
+        acceptedAt: null,
+        cancelledAt: null,
+      } as unknown as CustomerUserInvitation
+
+      ;(mockEm.findOne as jest.Mock).mockResolvedValueOnce(invitation)
+      ;(mockEm.find as jest.Mock).mockImplementation(async (entity: unknown) => {
+        if (entity === CustomerRole) return [{ id: roleIds[0], tenantId, organizationId, deletedAt: null }]
+        return []
+      })
+
+      const result = await service.acceptInvitation('raw-token', 'Secret123!', 'New User')
+
+      expect(result).toBeNull()
+      expect(mockEm.nativeUpdate).not.toHaveBeenCalled()
+      expect(mockEm.create).not.toHaveBeenCalledWith(CustomerUser, expect.anything())
+    })
   })
-})
 
 describe('CustomerInvitationService.createInvitation — pending-invitation dedupe', () => {
   const roleIds = [

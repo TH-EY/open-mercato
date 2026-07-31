@@ -100,8 +100,8 @@ describe('portal customer account user invite route', () => {
     mockRestoreInvitation.mockResolvedValue(undefined)
   })
 
-  it('creates a portal-admin invitation and sends the invitation email', async () => {
-    const { POST } = await import('../users-invite')
+    it('creates a portal-admin invitation and sends the invitation email', async () => {
+      const { POST } = await import('../users-invite')
 
     const response = await POST(makeInviteRequest())
 
@@ -121,13 +121,33 @@ describe('portal customer account user invite route', () => {
         displayName: 'Buyer User',
       }),
     )
-    expect(mockSendCustomerInvitationEmail).toHaveBeenCalledWith({
-      container: mockContainer,
-      organizationId,
-      email: 'buyer@example.com',
-      rawToken: 'raw-invite-token',
+      expect(mockSendCustomerInvitationEmail).toHaveBeenCalledWith({
+        container: mockContainer,
+        organizationId,
+        email: 'buyer@example.com',
+        rawToken: 'raw-invite-token',
+      })
+      expect(mockFindWithDecryption).toHaveBeenCalledWith(
+        {},
+        expect.anything(),
+        expect.objectContaining({ tenantId, organizationId, deletedAt: null }),
+        undefined,
+        { tenantId, organizationId },
+      )
     })
-  })
+
+    it('rejects a requested role outside the portal organization', async () => {
+      mockFindWithDecryption.mockResolvedValueOnce([])
+      const { POST } = await import('../users-invite')
+
+      const response = await POST(makeInviteRequest())
+      const json = await response.json()
+
+      expect(response.status).toBe(400)
+      expect(json).toEqual({ ok: false, error: `Role ${roleId} not found` })
+      expect(mockCreateInvitation).not.toHaveBeenCalled()
+      expect(mockSendCustomerInvitationEmail).not.toHaveBeenCalled()
+    })
 
   it('keeps customerAssignable validation for portal-selected roles', async () => {
     mockFindWithDecryption.mockResolvedValueOnce([
