@@ -9,9 +9,13 @@ const workflow = fs.readFileSync(path.resolve('.github/workflows/fork-finoo-demo
 const deployScript = fs.readFileSync(path.resolve('infra/aws-upstream-baseline/finoo-demo-provision.sh'), 'utf8')
 const provision = fs.readFileSync(path.resolve('infra/aws-upstream-baseline/docker-compose.finoo-provision.yml'), 'utf8')
 
-test('manual workflow binds the exact private Finoo lane and immutable image', () => {
-  assert.match(workflow, /workflow_dispatch:/)
-  assert.doesNotMatch(workflow, /^\s{2}push:/m)
+test('branch-bound workflow binds the exact private Finoo lane and immutable image', () => {
+  const eventConfig = workflow.slice(workflow.indexOf('on:\n'), workflow.indexOf('\nconcurrency:'))
+  assert.equal(eventConfig, 'on:\n  push:\n    branches:\n      - fork/finoo\n  workflow_dispatch:\n')
+  assert.match(
+    workflow,
+    /deploy-demo:\n\s{4}if: github\.ref == 'refs\/heads\/fork\/finoo' && \(github\.event_name == 'workflow_dispatch' \|\| \(github\.event_name == 'push' && github\.event\.deleted == false\)\)/,
+  )
   assert.match(workflow, /https:\/\/finoo\.om\.they\.dev/)
   assert.match(workflow, /finoo-\$\{GITHUB_SHA\}/)
   assert.match(workflow, /DEPLOY_APP_DIGEST: \$\{\{ steps\.build\.outputs\.digest \}\}/)

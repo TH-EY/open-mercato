@@ -26,7 +26,7 @@ There is no Finoo AWS/Docker/ALB/Secrets Manager state. A normal preview is insu
 
 ## Proposed Solution
 
-Create `fork/finoo` from a freshly fetched `upstream/develop` commit and add a manual, first-provision-only workflow. The workflow builds a `linux/amd64` image, pushes a SHA-tagged immutable image to the existing ECR repository, and supplies only secret identifiers plus commit/image provenance to an SSM script.
+Create `fork/finoo` from a freshly fetched `upstream/develop` commit and add a branch-bound, first-provision-only workflow with an optional manual dispatch entry point. The workflow builds a `linux/amd64` image, pushes a SHA-tagged immutable image to the existing ECR repository, and supplies only secret identifiers plus commit/image provenance to an SSM script.
 
 The host reads three independent passwords directly from Secrets Manager, validates a bounded single-line alphabet, and passes them only as transient bootstrap environment variables. The application initialization output is redacted. After all three authenticated role checks pass, the app container is force-recreated without bootstrap passwords and all checks run again. Only then does the workflow create and verify the Finoo ALB target group and listener rule.
 
@@ -34,7 +34,7 @@ The host reads three independent passwords directly from Secrets Manager, valida
 
 | Decision | Rationale |
 |----------|-----------|
-| Manual first-provision-only workflow | Matches the requested capability and prevents a later branch push from mutating persistent customer data or credentials. |
+| Branch-bound first-provision-only workflow | Makes the initial branch publication executable while exact absence preflights prevent later pushes or manual dispatches from mutating persistent customer data or credentials. |
 | Exact Finoo resource names and port | Makes collision checks and rollback literal and auditable on the shared host. |
 | Secrets Manager values read only on the host | Secret values never enter GitHub expressions, workflow outputs, SSM command parameters, or source control. |
 | Temporary bootstrap container configuration | The initializer requires credentials once; recreating the app removes them from running container configuration and removes the bootstrap container/log artifact. |
@@ -45,7 +45,7 @@ The host reads three independent passwords directly from Secrets Manager, valida
 | Alternative | Why Rejected |
 |-------------|--------------|
 | Reuse the Manoj lifecycle updater | It requires an existing stack and exact existing accounts, which Finoo does not have. |
-| Run on every `fork/finoo` push | It would silently turn a creation task into ongoing mutation of persistent customer state. |
+| Perform lifecycle deployment on every `fork/finoo` push | It would silently turn a creation task into ongoing mutation of persistent customer state; this workflow instead reruns only fail-closed first-provision admission. |
 | Store passwords in GitHub environment secrets or `.env` | It broadens secret exposure and leaves bootstrap credentials in persistent runtime state. |
 | Create dedicated DNS/TLS resources | The live wildcard DNS and issued `*.om.they.dev` certificate already cover the hostname; no DNS or certificate change is needed. |
 
@@ -59,7 +59,7 @@ The host reads three independent passwords directly from Secrets Manager, valida
 
 ```text
 fork/finoo exact commit
-  -> manual GitHub Actions job (production environment + OIDC)
+  -> branch push or manual GitHub Actions job (production environment + OIDC)
   -> SHA-tagged linux/amd64 ECR image + digest
   -> SSM on openmercato-upstream-baseline-dokploy
        -> /opt/openmercato-demos/finoo
@@ -123,9 +123,9 @@ The private branch contains a minimal initializer-output redaction guard require
 3. Prove there is no existing Finoo state and that host/port/wildcard DNS/TLS capacity is available.
 
 ### Phase 2: Secure first-provision automation
-1. Add the manual pinned-action workflow, first-provision script, Compose provisioning overlay, initializer redaction, authenticated smoke, and focused tests.
+1. Add the branch-bound pinned-action workflow with manual dispatch, first-provision script, Compose provisioning overlay, initializer redaction, authenticated smoke, and focused tests.
 2. Obtain explicit approval for three Secrets Manager writes, one exact-ARN `GetSecretValue` host-role policy, deployment resources, and exact failed-provision rollback.
-3. Generate independent passwords locally, create the secrets, read back metadata/policy, commit/push `fork/finoo`, and dispatch the workflow for that branch.
+3. Generate independent passwords locally, create the secrets, read back metadata/policy, commit and push `fork/finoo`, and let that branch push start the first-provision workflow.
 
 ### Phase 3: Verification and handoff
 1. Read back GitHub run, ECR digest, remote commit/image, container health/restart policy, empty bootstrap credential configuration, target health, HTTPS, and three role smokes.
@@ -136,7 +136,7 @@ The private branch contains a minimal initializer-output redaction guard require
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `.github/workflows/fork-finoo-demo-provision.yml` | Create | Manual immutable image build and first provision. |
+| `.github/workflows/fork-finoo-demo-provision.yml` | Create | Branch-bound immutable image build and first provision with manual dispatch restricted to the same ref. |
 | `infra/aws-upstream-baseline/finoo-demo-provision.sh` | Create | Collision checks, host provisioning, role proof, ALB routing, and exact rollback. |
 | `infra/aws-upstream-baseline/docker-compose.finoo-provision.yml` | Create | Restart policy and transient bootstrap credential mapping. |
 | `scripts/smoke-auth-dashboard.mjs` | Create | Auth/profile/role/backend verifier. |
@@ -168,7 +168,7 @@ Finoo uses a dedicated PostgreSQL volume and standard first initialization, so a
 
 ### Migration & Deployment Risks
 
-The exact Git commit and ECR digest are checked before routing. The target group and public rule are created only after two complete sets of authenticated role smokes, including one after removing bootstrap credentials from the app container. A future update is intentionally out of scope and cannot be triggered by branch push.
+The exact Git commit and ECR digest are checked before routing. The target group and public rule are created only after two complete sets of authenticated role smokes, including one after removing bootstrap credentials from the app container. A future update is intentionally out of scope: later branch pushes or manual dispatches reach the workflow but fail closed during exact first-provision admission before image mutation.
 
 ### Operational Risks
 

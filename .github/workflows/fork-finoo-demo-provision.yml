@@ -1,6 +1,9 @@
 name: Provision Finoo demo
 
 on:
+  push:
+    branches:
+      - fork/finoo
   workflow_dispatch:
 
 concurrency:
@@ -17,6 +20,7 @@ env:
 
 jobs:
   deploy-demo:
+    if: github.ref == 'refs/heads/fork/finoo' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.event.deleted == false))
     runs-on: ubuntu-latest
     environment: production
     permissions:
