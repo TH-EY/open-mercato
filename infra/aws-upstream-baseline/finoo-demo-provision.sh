@@ -551,7 +551,11 @@ run_role_smoke() {
       -e "EXPECTED_ROLE=${role}" \
       -e BASE_URL=http://127.0.0.1:3000 \
       app sh -lc \
-        'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /app/scripts/smoke-auth-dashboard.mjs --run-smoke'
+        'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /tmp/finoo-smoke-auth-dashboard.mjs --run-smoke'
+}
+
+install_smoke_script() {
+  "${compose[@]}" cp scripts/smoke-auth-dashboard.mjs app:/tmp/finoo-smoke-auth-dashboard.mjs
 }
 
 export FINOO_BOOTSTRAP_SUPERADMIN_PASSWORD="$superadmin_password"
@@ -565,6 +569,7 @@ touch .finoo-first-provision-owned
 chmod 600 .finoo-first-provision-owned
 "${compose[@]}" up -d --no-build --remove-orphans
 wait_for_login
+install_smoke_script
 run_role_smoke superadmin superadmin@finoo.om.they.dev "$superadmin_password"
 run_role_smoke admin admin@finoo.om.they.dev "$admin_password"
 run_role_smoke employee employee@finoo.om.they.dev "$employee_password"
@@ -572,6 +577,7 @@ run_role_smoke employee employee@finoo.om.they.dev "$employee_password"
 unset FINOO_BOOTSTRAP_SUPERADMIN_PASSWORD FINOO_BOOTSTRAP_ADMIN_PASSWORD FINOO_BOOTSTRAP_EMPLOYEE_PASSWORD
 "${compose[@]}" up -d --no-deps --no-build --force-recreate app
 wait_for_login
+install_smoke_script
 run_role_smoke superadmin superadmin@finoo.om.they.dev "$superadmin_password"
 run_role_smoke admin admin@finoo.om.they.dev "$admin_password"
 run_role_smoke employee employee@finoo.om.they.dev "$employee_password"
