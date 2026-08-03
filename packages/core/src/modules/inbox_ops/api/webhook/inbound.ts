@@ -12,12 +12,23 @@ import { InboxSettings, InboxEmail } from '../../data/entities'
 import { parseInboundEmail } from '../../lib/emailParser'
 import { checkRateLimit } from '../../lib/rateLimiter'
 import { emitInboxOpsEvent } from '../../events'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+import {
+  readBoundedRequestBody,
+  resolveWebhookBodyLimitBytes,
+  WebhookBodyTooLargeError,
+} from '@open-mercato/shared/lib/webhooks'
+
+const logger = createLogger('inbox_ops').child({ component: 'webhook' })
 
 export const metadata = {
   POST: { requireAuth: false },
 }
 
-const MAX_PAYLOAD_SIZE = 2 * 1024 * 1024 // 2MB
+const MAX_PAYLOAD_SIZE = resolveWebhookBodyLimitBytes(
+  process.env.INBOX_OPS_WEBHOOK_MAX_BODY_BYTES ?? process.env.OM_WEBHOOK_MAX_BODY_BYTES,
+  2 * 1024 * 1024,
+)
 const REPLAY_WINDOW_MS = 5 * 60 * 1000 // 5 minutes
 
 function isTimestampFresh(timestamp: string): boolean {
@@ -145,7 +156,7 @@ async function verifyAndParse(req: Request, rawBody: string): Promise<
   if (customSig) {
     const webhookSecret = process.env.INBOX_OPS_WEBHOOK_SECRET
     if (!webhookSecret) {
-      console.error('[inbox_ops:webhook] INBOX_OPS_WEBHOOK_SECRET not configured')
+      logger.error('INBOX_OPS_WEBHOOK_SECRET not configured')
       return { ok: false, response: NextResponse.json({ error: 'Service unavailable' }, { status: 503 }) }
     }
     const timestamp = req.headers.get('x-webhook-timestamp') || ''
@@ -168,7 +179,7 @@ async function verifyAndParse(req: Request, rawBody: string): Promise<
   if (svixId) {
     const signingSecret = process.env.RESEND_WEBHOOK_SIGNING_SECRET
     if (!signingSecret) {
-      console.error('[inbox_ops:webhook] RESEND_WEBHOOK_SIGNING_SECRET not configured')
+      logger.error('RESEND_WEBHOOK_SIGNING_SECRET not configured')
       return { ok: false, response: NextResponse.json({ error: 'Service unavailable' }, { status: 503 }) }
     }
     const headers: Record<string, string> = {
@@ -204,24 +215,18 @@ export async function POST(req: Request) {
   const hasCustomSecret = Boolean(process.env.INBOX_OPS_WEBHOOK_SECRET)
   const hasResendSecret = Boolean(process.env.RESEND_WEBHOOK_SIGNING_SECRET)
   if (!hasCustomSecret && !hasResendSecret) {
-    console.error('[inbox_ops:webhook] Neither INBOX_OPS_WEBHOOK_SECRET nor RESEND_WEBHOOK_SIGNING_SECRET is configured')
+    logger.error('Neither INBOX_OPS_WEBHOOK_SECRET nor RESEND_WEBHOOK_SIGNING_SECRET is configured')
     return NextResponse.json({ error: 'Service unavailable' }, { status: 503 })
-  }
-
-  const contentLength = parseInt(req.headers.get('content-length') || '0', 10)
-  if (contentLength > MAX_PAYLOAD_SIZE) {
-    return NextResponse.json({ error: 'Payload too large' }, { status: 413 })
   }
 
   let rawBody: string
   try {
-    rawBody = await req.text()
-  } catch {
+    rawBody = await readBoundedRequestBody(req, { maxBytes: MAX_PAYLOAD_SIZE })
+  } catch (error) {
+    if (error instanceof WebhookBodyTooLargeError) {
+      return NextResponse.json({ error: 'Payload too large' }, { status: 413 })
+    }
     return NextResponse.json({ error: 'Bad request' }, { status: 400 })
-  }
-
-  if (rawBody.length > MAX_PAYLOAD_SIZE) {
-    return NextResponse.json({ error: 'Payload too large' }, { status: 413 })
   }
 
   const verified = await verifyAndParse(req, rawBody)
@@ -351,7 +356,7 @@ export async function POST(req: Request) {
         toAddress,
       })
     } catch (eventError) {
-      console.error('[inbox_ops:webhook] Failed to emit deduplicated event:', eventError)
+      logger.error('Failed to emit deduplicated event', { err: eventError })
     }
     return NextResponse.json({ ok: true })
   }
@@ -393,7 +398,7 @@ export async function POST(req: Request) {
       subject: parsed.subject,
     })
   } catch (eventError) {
-    console.error('[inbox_ops:webhook] Failed to emit email.received event:', eventError)
+    logger.error('Failed to emit email.received event', { err: eventError })
   }
 
   return NextResponse.json({ ok: true })

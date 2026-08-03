@@ -97,6 +97,7 @@ import { dispatchBackendMutationError } from './injection/mutationEvents'
 import { VersionHistoryAction } from './version-history/VersionHistoryAction'
 import { parseBooleanWithDefault } from '@open-mercato/shared/lib/boolean'
 import { cn } from '@open-mercato/shared/lib/utils'
+import { createLogger } from '@open-mercato/shared/lib/logger'
 import { useInjectionDataWidgets } from './injection/useInjectionDataWidgets'
 import { CollapsibleGroup, type CollapsibleGroupHandle } from './crud/CollapsibleGroup'
 import { SortableGroupHandleProvider, type SortableGroupHandleProps } from './crud/SortableGroupHandle'
@@ -106,10 +107,13 @@ import type { InjectionFieldDefinition, FieldContext } from '@open-mercato/share
 import { insertByInjectionPlacement } from '@open-mercato/shared/modules/widgets/injection-position'
 import { evaluateInjectedVisibility } from './injection/visibility-utils'
 import { ComponentReplacementHandles } from '@open-mercato/shared/modules/widgets/component-registry'
+import { crudFormExtensionSpotId, extensionSpotChildId } from '@open-mercato/shared/modules/widgets/extension-points'
 import { RichEditor, type RichEditorLabels } from '../primitives/rich-editor'
 import MarkdownField from './inputs/MarkdownField'
 
 // Stable empty options array to avoid creating a new [] every render
+const logger = createLogger('ui').child({ component: 'CrudForm' })
+
 const EMPTY_OPTIONS: CrudFieldOption[] = []
 // Sentinel for the optional-Select clear affordance. Radix Select forbids
 // empty-string item values, so we use a stable non-empty token that maps to
@@ -382,6 +386,14 @@ export type CrudFormProps<TValues extends Record<string, unknown>> = {
   readOnlyOverlay?: React.ReactNode
   // Optional mapping of entityId -> form value key storing the selected fieldset code
   customFieldsetBindings?: Record<string, { valueKey: string }>
+  /**
+   * How the custom-fields "Manage fields" affordance behaves:
+   * - 'inline' (default) — opens the embedded fieldset quick-editor dialog.
+   * - 'page' — navigates straight to the full custom-fields editor page in a
+   *   new tab. Use for end-user dialogs (e.g. the calendar event editor) where
+   *   the nested admin quick-editor is out of place.
+   */
+  customFieldsManageMode?: 'inline' | 'page'
   // Optional injection spot ID for widget injection
   injectionSpotId?: string
   replacementHandle?: string
@@ -724,6 +736,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
   readOnly = false,
   readOnlyOverlay,
   customFieldsetBindings,
+  customFieldsManageMode = 'inline',
   injectionSpotId,
   replacementHandle,
   collapsibleGroups,
@@ -804,7 +817,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
     if (injectionSpotId) return injectionSpotId
     if (resolvedEntityIds.length) {
       const normalized = resolvedEntityIds[0].replace(/[:]+/g, '.')
-      return `crud-form:${normalized}`
+      return crudFormExtensionSpotId(normalized)
     }
     return undefined
   }, [injectionSpotId, resolvedEntityIds])
@@ -813,7 +826,9 @@ export function CrudForm<TValues extends Record<string, unknown>>({
     if (resolvedEntityIds.length) return ComponentReplacementHandles.crudForm(resolvedEntityIds[0].replace(/[:]+/g, '.'))
     return ComponentReplacementHandles.crudForm('unknown')
   }, [replacementHandle, resolvedEntityIds])
-  const headerInjectionSpotId = resolvedInjectionSpotId ? `${resolvedInjectionSpotId}:header` : undefined
+  const headerInjectionSpotId = resolvedInjectionSpotId
+    ? extensionSpotChildId(resolvedInjectionSpotId, 'header')
+    : undefined
   
   const recordId = React.useMemo(() => {
     const raw = values.id
@@ -1071,7 +1086,9 @@ export function CrudForm<TValues extends Record<string, unknown>>({
     triggerOnLoad: true,
   })
   const { widgets: injectedFieldWidgets } = useInjectionDataWidgets(
-    resolvedInjectionSpotId ? `${resolvedInjectionSpotId}:fields` : '__disabled__:fields'
+    resolvedInjectionSpotId
+      ? extensionSpotChildId(resolvedInjectionSpotId, 'fields')
+      : '__disabled__:fields'
   )
   
   const { triggerEvent: triggerInjectionEvent } = useInjectionSpotEvents(resolvedInjectionSpotId ?? '', injectionWidgets)
@@ -1106,7 +1123,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
           Object.entries(transformed as Record<string, unknown>).map(([key, value]) => [key, String(value)]),
         )
       } catch (err) {
-        console.error('[CrudForm] Error in transformValidation:', err)
+        logger.error('Error in transformValidation', { err })
         return fieldErrors
       }
     },
@@ -1186,7 +1203,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
       void triggerInjectionEvent('onAppEvent', valuesRef.current as TValues, injectionContextRef.current, {
         appEvent: customEvent.detail,
       }).catch((err) => {
-        console.error('[CrudForm] Error in onAppEvent:', err)
+        logger.error('Error in onAppEvent', { err })
       })
     }
     window.addEventListener('om:event', handleEvent as EventListener)
@@ -1201,7 +1218,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
       void triggerInjectionEvent('onVisibilityChange', valuesRef.current as TValues, injectionContextRef.current, {
         visible: document.visibilityState === 'visible',
       }).catch((err) => {
-        console.error('[CrudForm] Error in onVisibilityChange:', err)
+        logger.error('Error in onVisibilityChange', { err })
       })
     }
     document.addEventListener('visibilitychange', emitVisibility)
@@ -1325,7 +1342,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
           }
           injectionRequestHeaders = result.requestHeaders
         } catch (err) {
-          console.error('[CrudForm] Error in onBeforeDelete:', err)
+          logger.error('Error in onBeforeDelete', { err })
           flash(t('ui.forms.flash.saveBlocked', 'Save blocked by validation'), 'error')
           return
         }
@@ -1336,7 +1353,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
         try {
           await triggerInjectionEvent('onDelete', deletePayload, injectionContext)
         } catch (err) {
-          console.error('[CrudForm] Error in onDelete:', err)
+          logger.error('Error in onDelete', { err })
           flash(t('ui.forms.flash.saveBlocked', 'Save blocked by validation'), 'error')
           return
         }
@@ -1359,7 +1376,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
         try {
           await triggerInjectionEvent('onAfterDelete', deletePayload, injectionContext)
         } catch (err) {
-          console.error('[CrudForm] Error in onAfterDelete:', err)
+          logger.error('Error in onAfterDelete', { err })
         }
       }
       try { flash(deleteSuccessMessage, 'success') } catch {}
@@ -1372,7 +1389,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
         try {
           await triggerInjectionEvent('onDeleteError', deletePayload, injectionContext, { error: err })
         } catch (hookError) {
-          console.error('[CrudForm] Error in onDeleteError:', hookError)
+          logger.error('Error in onDeleteError', { err: hookError })
         }
       }
       try {
@@ -2000,7 +2017,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
       const targetIndex = cloned.findIndex((group) => group.id === definition.group)
       const index = targetIndex >= 0 ? targetIndex : fallbackIndex
       if (targetIndex < 0 && process.env.NODE_ENV !== 'production') {
-        console.warn(`[CrudForm] Injected field "${definition.id}" targets group "${definition.group}" which does not exist. Appended to last group.`)
+        logger.warn('Injected field targets a group that does not exist; appended to last group', { fieldId: definition.id, group: definition.group })
       }
       if (index < 0) continue
       const fieldEntries = cloned[index].fields ?? []
@@ -2380,7 +2397,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
         flash(message.text, message.severity)
       }
     }).catch((err) => {
-      console.error('[CrudForm] Error in onFieldChange:', err)
+      logger.error('Error in onFieldChange', { err })
     })
   }, [embedded, extendedInjectionEventsEnabled, flash, t, trackDirtyWhenEmbedded, translateValidationMessage, triggerInjectionEvent, updateEditedFieldMarker])
 
@@ -2390,10 +2407,19 @@ export function CrudForm<TValues extends Record<string, unknown>>({
 
   const handleFieldsetSelectionChange = React.useCallback(
     (entityId: string, nextCode: string | null) => {
+      // The fieldset selector never renders an empty option, so a user can never
+      // pick "no fieldset". An empty/null value here only comes from Radix's
+      // hidden native <select>, which fires a spurious onChange when the
+      // controlled value is changed programmatically after mount (e.g. when the
+      // persisted customFieldsetCode arrives via async initialValues and the
+      // binding hydrates the selection). Honoring that reset would wipe both the
+      // selection and the bound value, collapsing the form back to the default
+      // fieldset (#2646). Ignore it.
+      if (!nextCode) return
       setCfFieldsetSelections((prev) => ({ ...prev, [entityId]: nextCode }))
       const bindingKey = customFieldsetBindings?.[entityId]?.valueKey
       if (bindingKey) {
-        setValue(bindingKey, nextCode ?? undefined)
+        setValue(bindingKey, nextCode)
       }
     },
     [customFieldsetBindings, setValue],
@@ -2403,9 +2429,16 @@ export function CrudForm<TValues extends Record<string, unknown>>({
     (entityId: string, fieldsetCode: string | null, view: 'entity' | 'fieldset' = 'entity') => {
       const href = buildCustomFieldsManageHref(entityId)
       if (!href) return
+      if (customFieldsManageMode === 'page') {
+        // End-user dialogs skip the nested quick-editor and go straight to the
+        // full custom-fields editor page, keeping the unsaved form intact.
+        const params = fieldsetCode ? `${href.includes('?') ? '&' : '?'}fieldset=${encodeURIComponent(fieldsetCode)}` : ''
+        if (typeof window !== 'undefined') window.open(`${href}${params}`, '_blank', 'noopener')
+        return
+      }
       setFieldsetEditorTarget({ entityId, fieldsetCode, view })
     },
-    [buildCustomFieldsManageHref],
+    [buildCustomFieldsManageHref, customFieldsManageMode],
   )
 
   const appliedInitialValuesSnapshotRef = React.useRef<string | undefined>(undefined)
@@ -2501,7 +2534,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
         dirtyBaselineValuesRef.current = { ...(transformed as Record<string, unknown>) }
         setValues(transformed as CrudFormValues<TValues>)
       } catch (err) {
-        console.error('[CrudForm] Error in transformDisplayData:', err)
+        logger.error('Error in transformDisplayData', { err })
       }
     }
     void run()
@@ -2647,7 +2680,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
     }
     if (Object.keys(requiredErrors).length) {
       if (process.env.NODE_ENV !== 'production') {
-        console.debug('[crud-form] Required field errors prevented submit', requiredErrors)
+        logger.debug('Required field errors prevented submit', { requiredErrors })
       }
       const transformedErrors = await transformValidationErrors(requiredErrors)
       setErrors(transformedErrors)
@@ -2724,7 +2757,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
           if (path) fieldErrors[path] = issue.message
         })
         if (process.env.NODE_ENV !== 'production') {
-          console.debug('[crud-form] Schema validation failed', res.error.issues)
+          logger.debug('Schema validation failed', { issues: res.error.issues })
         }
         const transformedErrors = await transformValidationErrors(fieldErrors)
         setErrors(translateValidationErrors(transformedErrors))
@@ -2760,7 +2793,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
           }
         }
       } catch (err) {
-        console.error('[CrudForm] Error in transformFormData:', err)
+        logger.error('Error in transformFormData', { err })
       }
     }
 
@@ -2799,7 +2832,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
         }
         injectionRequestHeaders = result.requestHeaders
       } catch (err) {
-        console.error('[CrudForm] Error in onBeforeSave:', err)
+        logger.error('Error in onBeforeSave', { err })
         flash(t('ui.forms.flash.saveBlocked', 'Save blocked by validation'), 'error')
         setPending(false)
         return
@@ -2834,7 +2867,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
       try {
         await triggerInjectionEvent('onSave', submitValues, injectionContext)
       } catch (err) {
-        console.error('[CrudForm] Error in onSave:', err)
+        logger.error('Error in onSave', { err })
         flash(t('ui.forms.flash.saveBlocked', 'Save blocked by validation'), 'error')
         setPending(false)
         return
@@ -2861,7 +2894,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
         try {
           await triggerInjectionEvent('onAfterSave', submitValues, injectionContext)
         } catch (err) {
-          console.error('[CrudForm] Error in onAfterSave:', err)
+          logger.error('Error in onAfterSave', { err })
         }
       }
 
@@ -2903,7 +2936,7 @@ export function CrudForm<TValues extends Record<string, unknown>>({
         const transformedErrors = await transformValidationErrors(combinedFieldErrors)
         setErrors(translateValidationErrors(transformedErrors))
         if (process.env.NODE_ENV !== 'production') {
-          console.debug('[crud-form] Submission failed with field errors', transformedErrors)
+          logger.debug('Submission failed with field errors', { fieldErrors: transformedErrors })
         }
       }
 

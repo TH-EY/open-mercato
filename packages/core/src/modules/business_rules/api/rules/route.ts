@@ -21,6 +21,10 @@ import {
   invalidateBusinessRuleDiscoveryCache,
   resolveBusinessRuleDiscoveryCache,
 } from '../../lib/rule-engine'
+import { validateOpenMercatoCallActions } from '../../lib/openmercato-call-options'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('business_rules').child({ component: 'rules-api' })
 
 const querySchema = z.looseObject({
   id: z.uuid().optional(),
@@ -83,6 +87,41 @@ const routeMetadata = {
 }
 
 export const metadata = routeMetadata
+
+function hasOpenMercatoCallAction(actions: unknown): boolean {
+  return Array.isArray(actions)
+    && actions.some((action) => action && typeof action === 'object' && (action as { type?: unknown }).type === 'CALL_OPEN_MERCATO')
+}
+
+async function requireOpenMercatoCallConfiguratorAccess(
+  container: ReturnType<typeof createRequestContainer> extends Promise<infer T> ? T : never,
+  auth: NonNullable<Awaited<ReturnType<typeof getAuthFromRequest>>>,
+): Promise<Response | null> {
+  if (!auth.sub) {
+    return NextResponse.json(
+      { error: 'Forbidden', requiredFeatures: ['api_keys.create'] },
+      { status: 403 },
+    )
+  }
+
+  const rbac = container.resolve('rbacService') as {
+    userHasAllFeatures?: (
+      userId: string,
+      required: string[],
+      scope: { tenantId: string | null; organizationId: string | null },
+    ) => Promise<boolean>
+  } | undefined
+  const allowed = await rbac?.userHasAllFeatures?.(auth.sub, ['api_keys.create'], {
+    tenantId: auth.tenantId ?? null,
+    organizationId: auth.orgId ?? null,
+  })
+  if (allowed) return null
+
+  return NextResponse.json(
+    { error: 'Forbidden', requiredFeatures: ['api_keys.create'] },
+    { status: 403 },
+  )
+}
 
 export async function GET(req: Request) {
   const auth = await getAuthFromRequest(req)
@@ -183,6 +222,11 @@ export async function POST(req: Request) {
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  if (!auth.tenantId || !auth.orgId) {
+    return NextResponse.json({ error: 'Tenant and organization context required' }, { status: 400 })
+  }
+  const tenantId = auth.tenantId
+  const organizationId = auth.orgId
 
   const container = await createRequestContainer()
   const em = container.resolve('em') as EntityManager
@@ -197,8 +241,8 @@ export async function POST(req: Request) {
 
   const payload = {
     ...body,
-    tenantId: auth.tenantId,
-    organizationId: auth.orgId,
+    tenantId,
+    organizationId,
     createdBy: auth.sub ?? auth.email ?? null,
   }
 
@@ -208,6 +252,25 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     const errors = parsed.error.issues.map(e => `${e.path.join('.')}: ${e.message}`)
     return NextResponse.json({ error: `Validation failed: ${errors.join(', ')}` }, { status: 400 })
+  }
+
+  if (hasOpenMercatoCallAction(parsed.data.successActions) || hasOpenMercatoCallAction(parsed.data.failureActions)) {
+    const accessError = await requireOpenMercatoCallConfiguratorAccess(container, auth)
+    if (accessError) return accessError
+  }
+
+  const actionErrors = [
+    ...await validateOpenMercatoCallActions(em as EntityManager, parsed.data.successActions, {
+      tenantId,
+      organizationId,
+    }),
+    ...await validateOpenMercatoCallActions(em as EntityManager, parsed.data.failureActions, {
+      tenantId,
+      organizationId,
+    }),
+  ]
+  if (actionErrors.length > 0) {
+    return NextResponse.json({ error: `Validation failed: ${actionErrors.join(', ')}` }, { status: 400 })
   }
 
   const data = {
@@ -221,7 +284,7 @@ export async function POST(req: Request) {
     await em.persist(rule).flush()
     await invalidateBusinessRuleDiscoveryCache(cache, rule.tenantId, rule.organizationId)
   } catch (error) {
-    console.error('[business_rules.rules] Failed to persist new rule:', error)
+    logger.error('Failed to persist new rule', { err: error })
     return NextResponse.json(
       { error: t('business_rules.errors.createFailed') },
       { status: 500 },
@@ -236,6 +299,11 @@ export async function PUT(req: Request) {
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  if (!auth.tenantId || !auth.orgId) {
+    return NextResponse.json({ error: 'Tenant and organization context required' }, { status: 400 })
+  }
+  const tenantId = auth.tenantId
+  const organizationId = auth.orgId
 
   const container = await createRequestContainer()
   const em = container.resolve('em') as EntityManager
@@ -270,13 +338,36 @@ export async function PUT(req: Request) {
 
   const rule = await em.findOne(BusinessRule, {
     id: parsed.data.id,
-    tenantId: auth.tenantId,
-    organizationId: auth.orgId,
+    tenantId,
+    organizationId,
     deletedAt: null,
   })
 
   if (!rule) {
     return NextResponse.json({ error: 'Rule not found' }, { status: 404 })
+  }
+
+  const touchesOpenMercatoCall = hasOpenMercatoCallAction(parsed.data.successActions)
+    || hasOpenMercatoCallAction(parsed.data.failureActions)
+    || hasOpenMercatoCallAction(rule.successActions)
+    || hasOpenMercatoCallAction(rule.failureActions)
+  if (touchesOpenMercatoCall) {
+    const accessError = await requireOpenMercatoCallConfiguratorAccess(container, auth)
+    if (accessError) return accessError
+  }
+
+  const actionErrors = [
+    ...await validateOpenMercatoCallActions(em as EntityManager, parsed.data.successActions, {
+      tenantId,
+      organizationId,
+    }),
+    ...await validateOpenMercatoCallActions(em as EntityManager, parsed.data.failureActions, {
+      tenantId,
+      organizationId,
+    }),
+  ]
+  if (actionErrors.length > 0) {
+    return NextResponse.json({ error: `Validation failed: ${actionErrors.join(', ')}` }, { status: 400 })
   }
 
   try {
@@ -299,7 +390,7 @@ export async function PUT(req: Request) {
     await em.persist(rule).flush()
     await invalidateBusinessRuleDiscoveryCache(cache, rule.tenantId, rule.organizationId)
   } catch (error) {
-    console.error('[business_rules.rules] Failed to persist rule update:', error)
+    logger.error('Failed to persist rule update', { err: error })
     return NextResponse.json(
       { error: t('business_rules.errors.updateFailed') },
       { status: 500 },
