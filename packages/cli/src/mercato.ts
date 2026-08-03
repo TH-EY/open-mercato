@@ -205,6 +205,13 @@ function formatCliFailureMessage(modName: string, cmdName: string, error: unknow
   return fallbackMessage
 }
 
+export function formatInitCredentialPassword(password: string, env = process.env): string {
+  const redact = parseBooleanToken(env.OM_INIT_REDACT_CREDENTIAL_OUTPUT ?? '') === true
+  return redact
+    ? '║       Password: [redacted; see operator handoff]       ║'
+    : `║       Password: ${password.padEnd(44)} ║`
+}
+
 function formatInitFailureMessage(error: unknown): string {
   const fallbackMessage = getFallbackErrorMessage(error)
   const databaseIssue = detectDatabaseConnectionIssue(error)
@@ -1312,7 +1319,7 @@ export async function run(argv = process.argv) {
         const labelPad = padByCodePointWidth(label, 13)
         const entryPassword = createdPasswords.get(entry.email.toLowerCase()) ?? password
         console.log(`║    ${labelPad}${entry.email.padEnd(42)} ║`)
-        console.log(`║       Password: ${entryPassword.padEnd(44)} ║`)
+        console.log(formatInitCredentialPassword(entryPassword))
       }
       console.log('║                                                              ║')
       console.log('║  Happy coding!                                               ║')

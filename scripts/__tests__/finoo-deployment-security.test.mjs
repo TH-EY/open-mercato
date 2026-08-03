@@ -1,0 +1,135 @@
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
+import test from 'node:test'
+
+import { runSmoke } from '../smoke-auth-dashboard.mjs'
+
+const workflow = fs.readFileSync(path.resolve('.github/workflows/fork-finoo-demo-provision.yml'), 'utf8')
+const deployScript = fs.readFileSync(path.resolve('infra/aws-upstream-baseline/finoo-demo-provision.sh'), 'utf8')
+const provision = fs.readFileSync(path.resolve('infra/aws-upstream-baseline/docker-compose.finoo-provision.yml'), 'utf8')
+
+test('manual workflow binds the exact private Finoo lane and immutable image', () => {
+  assert.match(workflow, /workflow_dispatch:/)
+  assert.doesNotMatch(workflow, /^\s{2}push:/m)
+  assert.match(workflow, /https:\/\/finoo\.om\.they\.dev/)
+  assert.match(workflow, /finoo-\$\{GITHUB_SHA\}/)
+  assert.match(workflow, /DEPLOY_APP_DIGEST: \$\{\{ steps\.build\.outputs\.digest \}\}/)
+  assert.match(workflow, /group: om-dokploy-host-deploy/)
+  assert.match(workflow, /FINOO_PREFLIGHT_ONLY: 'true'/)
+  assert.doesNotMatch(workflow, /:finoo-latest/)
+  const actionRefs = [...workflow.matchAll(/uses:\s+[^@\s]+@([^\s]+)/g)].map((match) => match[1])
+  assert.ok(actionRefs.length > 0)
+  assert.ok(actionRefs.every((reference) => /^[0-9a-f]{40}$/.test(reference)))
+})
+
+test('workflow and SSM payload contain secret identifiers, never secret values', () => {
+  assert.match(workflow, /FINOO_SUPERADMIN_PASSWORD_SECRET_ID/)
+  assert.match(workflow, /FINOO_ADMIN_PASSWORD_SECRET_ID/)
+  assert.match(workflow, /FINOO_EMPLOYEE_PASSWORD_SECRET_ID/)
+  assert.doesNotMatch(workflow, /FINOO_(SUPERADMIN|ADMIN|EMPLOYEE)_PASSWORD:\s*\$\{\{ secrets\./)
+  assert.match(deployScript, /aws secretsmanager get-secret-value/)
+  assert.match(deployScript, /aws ecr get-login-password/)
+  assert.doesNotMatch(deployScript, /printf '.*password=%q/)
+})
+
+test('first provision isolates data and never writes bootstrap passwords to dotenv', () => {
+  assert.match(deployScript, /PROJECT_NAME=demo-finoo/)
+  assert.match(deployScript, /DEPLOY_ENV=finoo/)
+  assert.match(deployScript, /WORKDIR=\/opt\/openmercato-demos\/finoo/)
+  assert.match(deployScript, /this workflow is first-provision only/)
+  assert.match(deployScript, /test ! -e \/opt\/openmercato-demos\/finoo/)
+  assert.doesNotMatch(deployScript, /set_env_value OM_INIT_(SUPERADMIN|ADMIN|EMPLOYEE)_PASSWORD/)
+  assert.match(provision, /FINOO_BOOTSTRAP_SUPERADMIN_PASSWORD/)
+  assert.match(provision, /FINOO_BOOTSTRAP_ADMIN_PASSWORD/)
+  assert.match(provision, /FINOO_BOOTSTRAP_EMPLOYEE_PASSWORD/)
+  assert.match(provision, /OM_INIT_REDACT_CREDENTIAL_OUTPUT: "true"/)
+  assert.match(provision, /restart: unless-stopped/)
+})
+
+test('deployment fails closed, rolls back only new resources, and proves all three roles after scrubbing', () => {
+  assert.match(deployScript, /Port \$\{PORT\} is already owned/)
+  assert.match(deployScript, /Pulled Finoo image does not match/)
+  assert.match(deployScript, /trap cleanup_on_exit EXIT/)
+  assert.match(deployScript, /rollback failed Finoo first provision/)
+  assert.match(deployScript, /TARGET_GROUP_CREATE_ATTEMPTED=true/)
+  assert.match(deployScript, /RULE_CREATE_ATTEMPTED=true/)
+  assert.match(deployScript, /reconciled_target_group_shape/)
+  assert.match(deployScript, /find_rule_for_hostname/)
+  assert.match(deployScript, /down --remove-orphans --volumes/)
+  assert.match(deployScript, /delete-rule/)
+  assert.match(deployScript, /delete-target-group/)
+  assert.match(deployScript, /stop_active_provision/)
+  assert.match(deployScript, /ACTIVE_PROVISION_TERMINAL=true/)
+  assert.match(deployScript, /Skipping destructive host rollback while the original SSM command may still be running/)
+  const postScrub = deployScript.indexOf('unset FINOO_BOOTSTRAP_SUPERADMIN_PASSWORD')
+  assert.ok(postScrub > -1)
+  const afterScrub = deployScript.slice(postScrub)
+  assert.match(afterScrub, /run_role_smoke superadmin/)
+  assert.match(afterScrub, /run_role_smoke admin/)
+  assert.match(afterScrub, /run_role_smoke employee/)
+})
+
+test('password and ECR handling reject injection and clean temporary auth state', () => {
+  assert.match(deployScript, /\^\[A-Za-z0-9\._!@%\+=:-\]\+\$/)
+  assert.match(deployScript, /Refusing a multiline Finoo environment value/)
+  assert.match(deployScript, /docker_config="\$\(mktemp -d\)"/)
+  assert.match(deployScript, /export DOCKER_CONFIG="\$docker_config"/)
+  assert.match(deployScript, /rm -rf -- "\$docker_config"/)
+  assert.doesNotMatch(deployScript, /-e SMOKE_TEST_PASSWORD=/)
+  assert.match(deployScript, /docker image ls -q open-mercato\/app:\$\{deploy_env\}/)
+  assert.match(deployScript, /ss -ltnH "sport = :\$\{demo_port\}"/)
+  assert.match(deployScript, /mercato-postgres-data-finoo/)
+  assert.match(deployScript, /mercato-attachments-storage-finoo/)
+  assert.match(deployScript, /mercato-network-finoo/)
+  assert.match(deployScript, /assert_literal_runtime_absent/)
+  assert.match(deployScript, /\.finoo-first-provision-owned/)
+  assert.match(deployScript, /base64 --decode \| bash/)
+})
+
+test('authenticated smoke verifies email, role, and backend access', async () => {
+  const responses = [
+    new Response('', { status: 200 }),
+    new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'set-cookie': 'auth_token=token; Path=/; HttpOnly' },
+    }),
+    new Response(JSON.stringify({ email: 'admin@finoo.om.they.dev', roles: ['admin'] }), { status: 200 }),
+    new Response('<html>backend</html>', { status: 200 }),
+  ]
+  await runSmoke({
+    env: {
+      BASE_URL: 'https://finoo.om.they.dev',
+      SMOKE_TEST_EMAIL: 'admin@finoo.om.they.dev',
+      SMOKE_TEST_PASSWORD: 'not-a-real-secret',
+      EXPECTED_ROLE: 'admin',
+    },
+    fetch: async () => responses.shift(),
+    log: () => {},
+  })
+  assert.equal(responses.length, 0)
+})
+
+test('authenticated smoke rejects a mismatched role', async () => {
+  const responses = [
+    new Response('', { status: 200 }),
+    new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'set-cookie': 'auth_token=token; Path=/; HttpOnly' },
+    }),
+    new Response(JSON.stringify({ email: 'employee@finoo.om.they.dev', roles: ['employee'] }), { status: 200 }),
+  ]
+  await assert.rejects(
+    runSmoke({
+      env: {
+        BASE_URL: 'https://finoo.om.they.dev',
+        SMOKE_TEST_EMAIL: 'employee@finoo.om.they.dev',
+        SMOKE_TEST_PASSWORD: 'not-a-real-secret',
+        EXPECTED_ROLE: 'admin',
+      },
+      fetch: async () => responses.shift(),
+      log: () => {},
+    }),
+    /did not prove admin access/,
+  )
+})

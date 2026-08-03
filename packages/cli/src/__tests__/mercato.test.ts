@@ -3,10 +3,25 @@ import {
   registerCliModules,
   getCliModules,
   hasCliModules,
+  formatInitCredentialPassword,
   padByCodePointWidth,
   run,
 } from '../mercato'
 import { pathIncludes } from '../lib/__tests__/path-helpers'
+
+describe('mercato init credential redaction', () => {
+  it('redacts init credentials deterministically without changing the default output', () => {
+    const password = 'Finoo-Init-Secret-2026!'
+
+    expect(formatInitCredentialPassword(password, { OM_INIT_REDACT_CREDENTIAL_OUTPUT: 'true' })).toBe(
+      '║       Password: [redacted; see operator handoff]       ║',
+    )
+    expect(formatInitCredentialPassword(password, { OM_INIT_REDACT_CREDENTIAL_OUTPUT: 'true' })).not.toContain(password)
+    expect(formatInitCredentialPassword(password, {})).toBe(
+      `║       Password: ${password.padEnd(44)} ║`,
+    )
+  })
+})
 
 type MockChildAutoExit = { code: number | null; signal?: NodeJS.Signals | null } | undefined
 type MockChildSpawnRouter = (args: string[]) => MockChildAutoExit
