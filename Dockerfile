@@ -363,6 +363,7 @@ COPY --from=builder /app/apps/mercato/postcss.config.mjs ./apps/mercato/
 COPY --from=builder /app/apps/mercato/.mercato/generated ./apps/mercato/.mercato/generated
 COPY --from=builder /app/apps/mercato/src ./apps/mercato/src
 COPY --from=builder /app/apps/mercato/types ./apps/mercato/types
+COPY --from=builder /app/apps/mercato/scripts/mercato-cli.mjs ./apps/mercato/scripts/mercato-cli.mjs
 
 # Copy runtime configuration files
 COPY --from=builder /app/newrelic.js ./
