@@ -91,6 +91,11 @@ test('password and ECR handling reject injection and clean temporary auth state'
   assert.match(deployScript, /base64 --decode \| bash/)
 })
 
+test('host checkout uses the public HTTPS endpoint without SSH host trust', () => {
+  assert.match(deployScript, /REPO_URL=https:\/\/github\.com\/TH-EY\/open-mercato\.git/)
+  assert.doesNotMatch(deployScript, /git@github\.com/)
+})
+
 test('authenticated smoke verifies email, role, and backend access', async () => {
   const responses = [
     new Response('', { status: 200 }),

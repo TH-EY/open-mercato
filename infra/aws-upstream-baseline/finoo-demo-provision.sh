@@ -19,7 +19,7 @@ TARGET_GROUP_NAME=om-demo-finoo
 PROJECT_NAME=demo-finoo
 DEPLOY_ENV=finoo
 WORKDIR=/opt/openmercato-demos/finoo
-REPO_URL=git@github.com:TH-EY/open-mercato.git
+REPO_URL=https://github.com/TH-EY/open-mercato.git
 SECRET_PREFIX=openmercato-upstream-baseline-dokploy/finoo-demo
 
 require_value() {
