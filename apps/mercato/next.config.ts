@@ -5,6 +5,8 @@ import { resolveAllowedDevOrigins } from './src/lib/dev-origins'
 const isDevelopment = process.env.NODE_ENV !== 'production'
 const allowedDevOrigins = isDevelopment ? resolveAllowedDevOrigins() : []
 
+const privateSearchBlockedHosts = ['finoo.om.they.dev']
+
 const contentSecurityPolicy = [
   "default-src 'self'",
   "base-uri 'self'",
@@ -57,7 +59,15 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     const originHeaderName = (process.env.CUSTOMER_DOMAIN_ORIGIN_HEADER ?? 'X-Open-Mercato-Origin').trim()
+    const privateSearchIndexingHeaders = privateSearchBlockedHosts.map((host) => ({
+      source: '/:path*',
+      has: [{ type: 'host' as const, value: host.replaceAll('.', '\\.') }],
+      headers: [
+        { key: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive' },
+      ],
+    }))
     return [
+      ...privateSearchIndexingHeaders,
       {
         source: '/:path*',
         headers: [
