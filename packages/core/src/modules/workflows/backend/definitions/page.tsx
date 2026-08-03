@@ -427,6 +427,9 @@ export default function WorkflowDefinitionsListPage() {
       header: t('workflows.fields.createdAt'),
       accessorKey: 'createdAt',
       cell: ({ row }) => {
+        if (row.original.source === 'code') {
+          return <span className="text-sm text-muted-foreground">-</span>
+        }
         const date = new Date(row.original.createdAt)
         return <span className="text-sm text-muted-foreground">{date.toLocaleDateString()}</span>
       },

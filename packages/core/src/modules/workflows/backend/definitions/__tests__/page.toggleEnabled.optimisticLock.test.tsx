@@ -158,3 +158,18 @@ describe('WorkflowDefinitionsListPage — toggle enabled sends optimistic-lock h
     expect(flashMock).not.toHaveBeenCalledWith(expect.anything(), 'error')
   })
 })
+
+describe('WorkflowDefinitionsListPage — code definition creation date', () => {
+  it('renders a dash instead of the epoch sentinel for code definitions', () => {
+    const columns = renderColumns()
+    const createdAtColumn = columns.find((col) => col.id === 'createdAt')
+    expect(createdAtColumn?.cell).toBeTruthy()
+
+    render(createdAtColumn!.cell!({
+      row: { original: buildDefinition({ source: 'code', createdAt: '1970-01-01T00:00:00.000Z' }) },
+    }) as React.ReactElement)
+
+    expect(screen.getByText('-')).toBeInTheDocument()
+    expect(screen.queryByText(/1970/)).not.toBeInTheDocument()
+  })
+})
