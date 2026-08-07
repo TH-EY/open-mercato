@@ -1,14 +1,13 @@
 import nextConfig from '../../next.config'
 
 describe('apps/mercato search indexing headers', () => {
-  it('marks only the private Open Mercato hosts as non-indexable', async () => {
+  it('keeps CRM indexable while blocking the configured private hosts', async () => {
     if (!nextConfig.headers) {
       throw new Error('[internal] next.config headers are not configured')
     }
 
     const rules = await nextConfig.headers()
     const expectedHosts = [
-      'crm.they.dev',
       'epc-preview.om.they.dev',
       'manoj.om.they.dev',
       'om.they.dev',
@@ -39,6 +38,12 @@ describe('apps/mercato search indexing headers', () => {
         value: 'noindex, nofollow, noarchive',
       })
     }
+
+    expect(
+      configuredHostPatterns.some((pattern) =>
+        new RegExp(`^${pattern}$`).test('crm.they.dev'),
+      ),
+    ).toBe(false)
 
     for (const unrelatedHost of [
       'crmXtheyYdev',

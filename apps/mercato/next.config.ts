@@ -6,7 +6,6 @@ const isDevelopment = process.env.NODE_ENV !== 'production'
 const allowedDevOrigins = isDevelopment ? resolveAllowedDevOrigins() : []
 
 const privateSearchBlockedHosts = [
-  'crm.they.dev',
   'epc-preview.om.they.dev',
   'manoj.om.they.dev',
   'om.they.dev',
