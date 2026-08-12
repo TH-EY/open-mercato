@@ -4,7 +4,7 @@ import PortalTransactionsWidget from './widget.client'
 const widget: InjectionWidgetModule = {
   metadata: {
     id: 'finoo_affiliates.portal.transactions',
-    title: 'Transactions per week',
+    title: 'finooAffiliates.portal.dashboard.transactions',
     features: ['portal.finoo_affiliates.view'],
     priority: 10,
   },

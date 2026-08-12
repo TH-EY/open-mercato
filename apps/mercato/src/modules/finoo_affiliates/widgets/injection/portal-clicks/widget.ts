@@ -4,7 +4,7 @@ import PortalClicksWidget from './widget.client'
 const widget: InjectionWidgetModule = {
   metadata: {
     id: 'finoo_affiliates.portal.clicks',
-    title: 'Unique link clicks per week',
+    title: 'finooAffiliates.portal.dashboard.clicks',
     features: ['portal.finoo_affiliates.view'],
     priority: 20,
   },
