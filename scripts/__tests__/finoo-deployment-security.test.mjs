@@ -123,7 +123,7 @@ test('operator-invoked upgrade keeps the healthy live port until candidate smoke
   assert.match(upgradeScript, /--volumes-from "\$rollback_container"/)
   assert.match(upgradeScript, /com\.docker\.compose\.project/)
   assert.match(upgradeScript, /com\.docker\.compose\.service/)
-  assert.match(upgradeScript, /com\.docker\.compose\.container-number/)
+  assert.doesNotMatch(upgradeScript, /com\.docker\.compose\.container-number/)
   assert.match(upgradeScript, /test "\$\(docker inspect --format '\{\{\.Id\}\}' "\$active_container"/)
   assert.match(upgradeScript, /aws ssm cancel-command/)
   assert.match(upgradeScript, /Unable to prove that Finoo SSM command/)

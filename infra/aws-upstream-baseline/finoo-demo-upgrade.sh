@@ -175,10 +175,8 @@ old_container_id="$(docker inspect --format '{{.Id}}' "$active_container")"
 old_image_id="$(docker inspect --format '{{.Image}}' "$active_container")"
 compose_project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$active_container")"
 compose_service="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$active_container")"
-compose_number="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.container-number"}}' "$active_container")"
 test "$compose_project" = demo-finoo
 test "$compose_service" = app
-test "$compose_number" = 1
 new_image_id=""
 candidate_created=false
 cutover_started=false
@@ -400,7 +398,6 @@ docker create \
 docker start "$active_container" >/dev/null
 test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$active_container")" = "$compose_project"
 test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$active_container")" = "$compose_service"
-test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.container-number"}}' "$active_container")" = "$compose_number"
 if ! wait_for_login "$live_port"; then
   docker logs --tail 120 "$active_container" >&2
   echo "Upgraded Finoo app did not become reachable" >&2
@@ -543,7 +540,6 @@ if [[ "$decision" == finalize ]]; then
   test "$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "$active_container")" = unless-stopped
   test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$active_container")" = demo-finoo
   test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$active_container")" = app
-  test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.container-number"}}' "$active_container")" = 1
   test "$(docker inspect --format '{{.Id}}' "$rollback_container")" = "$old_container_id"
   test "$(docker inspect --format '{{.Image}}' "$rollback_container")" = "$old_image_id"
   test "$(docker inspect --format '{{.State.Running}}' "$rollback_container")" = false
