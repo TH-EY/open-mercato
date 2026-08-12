@@ -106,7 +106,7 @@ test('operator-invoked upgrade keeps the healthy live port until candidate smoke
   assert.match(upgradeScript, /immutable_image="\$\{deploy_app_image%:\*\}@\$\{deploy_app_digest\}"/)
   assert.match(upgradeScript, /org\.opencontainers\.image\.revision/)
   assert.match(upgradeScript, /image revision does not match the requested commit/)
-  assert.match(upgradeScript, /exact approved role password secret identifiers/)
+  assert.match(upgradeScript, /exact approved smoke-role password secret identifiers/)
   assert.match(upgradeScript, /checkout does not match the requested immutable commit/)
   assert.match(upgradeScript, /upgrade requires a clean checkout/)
   assert.match(upgradeScript, /Finoo rollback target is not healthy before upgrade/)
@@ -138,6 +138,9 @@ test('operator-invoked upgrade keeps the healthy live port until candidate smoke
   assert.match(upgradeScript, /if signup_code="\$\(curl/)
   assert.doesNotMatch(upgradeScript, /down --remove-orphans --volumes/)
   assert.doesNotMatch(upgradeScript, /delete-target-group|modify-rule|delete-rule/)
+  assert.doesNotMatch(upgradeScript, /FINOO_ADMIN_PASSWORD_SECRET_ID/)
+  assert.doesNotMatch(upgradeScript, /run_role_smoke admin/)
+  assert.match(upgradeScript, /Existing admin role assignment verified without password access/)
 })
 
 test('upgrade configures Finoo attribution securely without logging credentials', () => {

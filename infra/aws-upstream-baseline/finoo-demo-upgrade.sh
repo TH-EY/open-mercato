@@ -8,7 +8,6 @@ DEPLOY_APP_DIGEST="${DEPLOY_APP_DIGEST:-}"
 OM_FINOO_AFFILIATE_REDIRECT_HOSTS="${OM_FINOO_AFFILIATE_REDIRECT_HOSTS:-}"
 RATE_LIMIT_TRUST_PROXY_DEPTH="${RATE_LIMIT_TRUST_PROXY_DEPTH:-}"
 FINOO_SUPERADMIN_PASSWORD_SECRET_ID="${FINOO_SUPERADMIN_PASSWORD_SECRET_ID:-}"
-FINOO_ADMIN_PASSWORD_SECRET_ID="${FINOO_ADMIN_PASSWORD_SECRET_ID:-}"
 FINOO_EMPLOYEE_PASSWORD_SECRET_ID="${FINOO_EMPLOYEE_PASSWORD_SECRET_ID:-}"
 
 INSTANCE_NAME=openmercato-upstream-baseline-dokploy
@@ -33,8 +32,7 @@ require_value() {
 for required_name in \
   DEPLOY_COMMIT DEPLOY_APP_IMAGE DEPLOY_APP_DIGEST \
   OM_FINOO_AFFILIATE_REDIRECT_HOSTS RATE_LIMIT_TRUST_PROXY_DEPTH \
-  FINOO_SUPERADMIN_PASSWORD_SECRET_ID FINOO_ADMIN_PASSWORD_SECRET_ID \
-  FINOO_EMPLOYEE_PASSWORD_SECRET_ID; do
+  FINOO_SUPERADMIN_PASSWORD_SECRET_ID FINOO_EMPLOYEE_PASSWORD_SECRET_ID; do
   require_value "$required_name" "${!required_name}"
 done
 
@@ -51,9 +49,8 @@ if [[ "$DEPLOY_APP_IMAGE" != *":finoo-${DEPLOY_COMMIT}" ]]; then
   exit 1
 fi
 if [[ "$FINOO_SUPERADMIN_PASSWORD_SECRET_ID" != openmercato-upstream-baseline-dokploy/finoo-demo/superadmin-password || \
-      "$FINOO_ADMIN_PASSWORD_SECRET_ID" != openmercato-upstream-baseline-dokploy/finoo-demo/admin-password || \
       "$FINOO_EMPLOYEE_PASSWORD_SECRET_ID" != openmercato-upstream-baseline-dokploy/finoo-demo/employee-password ]]; then
-  echo "Finoo upgrade requires the exact approved role password secret identifiers" >&2
+  echo "Finoo upgrade requires the exact approved smoke-role password secret identifiers" >&2
   exit 1
 fi
 if [[ "$OM_FINOO_AFFILIATE_REDIRECT_HOSTS" != finoo.pl ]]; then
@@ -135,7 +132,6 @@ trap 'rm -f -- "$REMOTE_SCRIPT"' EXIT
   printf 'redirect_hosts=%q\n' "$OM_FINOO_AFFILIATE_REDIRECT_HOSTS"
   printf 'proxy_depth=%q\n' "$RATE_LIMIT_TRUST_PROXY_DEPTH"
   printf 'superadmin_secret_id=%q\n' "$FINOO_SUPERADMIN_PASSWORD_SECRET_ID"
-  printf 'admin_secret_id=%q\n' "$FINOO_ADMIN_PASSWORD_SECRET_ID"
   printf 'employee_secret_id=%q\n' "$FINOO_EMPLOYEE_PASSWORD_SECRET_ID"
   printf 'workdir=%q\n' "$WORKDIR"
   printf 'live_port=%q\n' "$PORT"
@@ -420,8 +416,25 @@ run_role_smoke() {
   unset password
 }
 run_role_smoke superadmin superadmin@finoo.om.they.dev "$superadmin_secret_id"
-run_role_smoke admin admin@finoo.om.they.dev "$admin_secret_id"
 run_role_smoke employee employee@finoo.om.they.dev "$employee_secret_id"
+
+if ! user_listing="$(docker exec "$active_container" sh -lc 'yarn mercato auth list-users' 2>/dev/null)"; then
+  echo "Finoo admin account metadata could not be read" >&2
+  exit 1
+fi
+admin_roles="$(printf '%s\n' "$user_listing" | awk -F '|' '
+  $2 ~ /^[[:space:]]*admin@finoo[.]om[.]they[.]dev[[:space:]]*$/ {
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", $6)
+    print $6
+  }
+')"
+unset user_listing
+if ! printf '%s\n' "$admin_roles" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -Fxq admin; then
+  echo "Finoo admin account or role assignment is missing" >&2
+  exit 1
+fi
+unset admin_roles
+echo "[finoo-smoke] Existing admin role assignment verified without password access"
 
 if [[ "$(docker inspect --format '{{.Image}}' "$active_container")" != "$new_image_id" ]]; then
   echo "Finoo active container does not use the staged image" >&2
