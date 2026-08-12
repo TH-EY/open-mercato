@@ -1,7 +1,10 @@
 FROM node:24-alpine AS builder
 
+ARG NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION=true
+
 ENV NODE_ENV=production \
-    NEXT_TELEMETRY_DISABLED=1
+    NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION=${NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION}
 
 WORKDIR /app
 
@@ -177,6 +180,9 @@ CMD ["/bin/sh", "/app/docker/scripts/dev-entrypoint.sh"]
 FROM node:24-alpine AS runner
 
 ARG CONTAINER_PORT=3000
+ARG VCS_REF
+
+LABEL org.opencontainers.image.revision=${VCS_REF}
 
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
