@@ -21,7 +21,7 @@ jest.mock('next/link', () => {
   ))
 })
 
-jest.mock('next/image', () => (props: any) => <img alt={props.alt} {...props} />)
+jest.mock('next/image', () => ({ alt }: any) => <span role="img" aria-label={alt} />)
 
 jest.mock('next/navigation', () => ({
   usePathname: () => '/acme/portal/orders',
@@ -59,6 +59,25 @@ beforeEach(() => {
 })
 
 describe('PortalShell', () => {
+  it('hides the signup action when portal self-registration is disabled', () => {
+    const previous = process.env.NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION
+    process.env.NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION = 'false'
+
+    try {
+      render(
+        <PortalShell authenticated={false} orgSlug="acme" organizationName="Acme">
+          <div>Public portal</div>
+        </PortalShell>,
+      )
+
+      expect(screen.getByRole('link', { name: 'Log In' })).toBeInTheDocument()
+      expect(screen.queryByRole('link', { name: 'Sign Up' })).not.toBeInTheDocument()
+    } finally {
+      if (previous === undefined) delete process.env.NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION
+      else process.env.NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION = previous
+    }
+  })
+
   it('shows a loading skeleton until the portal nav payload arrives', async () => {
     const deferred = createDeferred<{
       ok: boolean

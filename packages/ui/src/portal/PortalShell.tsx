@@ -15,6 +15,7 @@ import { PortalNotificationBell } from './components/PortalNotificationBell'
 import { usePortalContext } from './PortalContext'
 import { apiCall } from '../backend/utils/apiCall'
 import type { PortalNavGroup } from './utils/nav'
+import { isPortalSelfRegistrationAllowed } from './selfRegistration'
 
 // Component replacement handle IDs (FROZEN once shipped)
 export const PORTAL_SHELL_HANDLE = 'page:portal:layout'
@@ -196,6 +197,7 @@ export function PortalShell({
   const portalHome = orgSlug ? `/${orgSlug}/portal` : '/portal'
   const loginHref = orgSlug ? `/${orgSlug}/portal/login` : '/portal/login'
   const signupHref = orgSlug ? `/${orgSlug}/portal/signup` : '/portal/signup'
+  const allowSelfRegistration = isPortalSelfRegistrationAllowed()
   // Always use the resolved organization name from the database.
   // Fall back to the generic portal title — never display the raw slug.
   const headerTitle = orgName || t('portal.title', 'Customer Portal')
@@ -273,9 +275,11 @@ export function PortalShell({
               <Button asChild variant="ghost" size="sm" className="text-sm">
                 <Link href={loginHref}>{t('portal.nav.login', 'Log In')}</Link>
               </Button>
-              <Button asChild size="sm" className="rounded-lg text-sm">
-                <Link href={signupHref}>{t('portal.nav.signup', 'Sign Up')}</Link>
-              </Button>
+              {allowSelfRegistration ? (
+                <Button asChild size="sm" className="rounded-lg text-sm">
+                  <Link href={signupHref}>{t('portal.nav.signup', 'Sign Up')}</Link>
+                </Button>
+              ) : null}
             </nav>
           </div>
         </header>

@@ -11,6 +11,7 @@ import { SearchX, ShoppingBag, User, Shield } from 'lucide-react'
 import { usePortalContext } from '@open-mercato/ui/portal/PortalContext'
 import { PortalFeatureCard } from '@open-mercato/ui/portal/components/PortalFeatureCard'
 import { InjectionSpot } from '@open-mercato/ui/backend/injection/InjectionSpot'
+import { isPortalSelfRegistrationAllowed } from '@open-mercato/ui/portal/selfRegistration'
 
 type Props = { params: { orgSlug: string } }
 
@@ -19,6 +20,7 @@ export default function PortalLandingPage({ params }: Props) {
   const router = useRouter()
   const orgSlug = params.orgSlug
   const { auth, tenant } = usePortalContext()
+  const allowSelfRegistration = isPortalSelfRegistrationAllowed()
 
   // Redirect authenticated users to dashboard
   useEffect(() => {
@@ -70,9 +72,11 @@ export default function PortalLandingPage({ params }: Props) {
           <Button asChild size="lg" className="rounded-lg px-6 text-sm">
             <Link href={`/${orgSlug}/portal/login`}>{t('portal.landing.cta.login', 'Sign In')}</Link>
           </Button>
-          <Button asChild variant="outline" size="lg" className="rounded-lg px-6 text-sm">
-            <Link href={`/${orgSlug}/portal/signup`}>{t('portal.landing.cta.signup', 'Create Account')}</Link>
-          </Button>
+          {allowSelfRegistration ? (
+            <Button asChild variant="outline" size="lg" className="rounded-lg px-6 text-sm">
+              <Link href={`/${orgSlug}/portal/signup`}>{t('portal.landing.cta.signup', 'Create Account')}</Link>
+            </Button>
+          ) : null}
         </div>
       </section>
 

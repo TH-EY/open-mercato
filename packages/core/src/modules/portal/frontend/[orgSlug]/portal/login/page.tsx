@@ -14,6 +14,7 @@ import { Spinner } from '@open-mercato/ui/primitives/spinner'
 import { apiCall } from '@open-mercato/ui/backend/utils/apiCall'
 import { usePortalContext } from '@open-mercato/ui/portal/PortalContext'
 import { InjectionSpot } from '@open-mercato/ui/backend/injection/InjectionSpot'
+import { isPortalSelfRegistrationAllowed } from '@open-mercato/ui/portal/selfRegistration'
 
 type Props = { params: { orgSlug: string } }
 
@@ -21,6 +22,7 @@ export default function PortalLoginPage({ params }: Props) {
   const t = useT()
   const orgSlug = params.orgSlug
   const { tenant } = usePortalContext()
+  const allowSelfRegistration = isPortalSelfRegistrationAllowed()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -120,12 +122,14 @@ export default function PortalLoginPage({ params }: Props) {
           {submitting ? t('portal.login.submitting', 'Signing in...') : t('portal.login.submit', 'Sign In')}
         </Button>
 
-        <p className="text-center text-sm text-muted-foreground">
-          {t('portal.login.noAccount', "Don't have an account?")}{' '}
-          <Link href={`/${orgSlug}/portal/signup`} className="font-medium text-foreground underline underline-offset-4 hover:opacity-80">
-            {t('portal.login.signupLink', 'Sign up')}
-          </Link>
-        </p>
+        {allowSelfRegistration ? (
+          <p className="text-center text-sm text-muted-foreground">
+            {t('portal.login.noAccount', "Don't have an account?")}{' '}
+            <Link href={`/${orgSlug}/portal/signup`} className="font-medium text-foreground underline underline-offset-4 hover:opacity-80">
+              {t('portal.login.signupLink', 'Sign up')}
+            </Link>
+          </p>
+        ) : null}
       </form>
 
       <InjectionSpot spotId={extensionPoints.hosts.loginAfter.spotId} context={injectionContext} />

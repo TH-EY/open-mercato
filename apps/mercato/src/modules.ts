@@ -127,6 +127,17 @@ export const enabledModules: ModuleEntry[] = [
   { id: 'customer_accounts', from: '@open-mercato/core' },
   { id: 'portal', from: '@open-mercato/core' },
   {
+    id: 'finoo_affiliates',
+    from: '@app',
+    overrides: {
+      routes: {
+        api: {
+          'POST /api/customer_accounts/signup': null,
+        },
+      },
+    },
+  },
+  {
     id: 'example',
     from: '@app',
     overrides: {
