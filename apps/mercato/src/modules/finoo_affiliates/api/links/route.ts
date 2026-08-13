@@ -68,7 +68,7 @@ const crud = makeCrudRoute({
     delete: {
       commandId: 'finoo_affiliates.links.delete',
       schema: rawBodySchema,
-      mapInput: ({ raw }) => z.object({ id: z.string().uuid() }).parse(raw),
+      mapInput: ({ raw }) => z.object({ id: z.string().uuid() }).parse(raw.body),
       response: () => ({ ok: true }),
     },
   },
