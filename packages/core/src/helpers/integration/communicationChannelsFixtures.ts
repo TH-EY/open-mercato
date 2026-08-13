@@ -37,6 +37,18 @@ export type CapturedTestSeedEmail = {
 
 const TEST_SEED_PATH = '/api/communication_channels/test-seed';
 
+function resolveSystemCaptureCredentials(): {
+  accessToken: string;
+  captureCorrelationToken: string;
+} {
+  const accessToken = process.env.OM_TEST_EMAIL_CAPTURE_ACCESS_TOKEN?.trim();
+  const captureCorrelationToken = process.env.OM_TEST_EMAIL_CAPTURE_CORRELATION_TOKEN?.trim();
+  if (!accessToken || !captureCorrelationToken) {
+    throw new Error('[internal] System email capture credentials are not configured by the integration harness');
+  }
+  return { accessToken, captureCorrelationToken };
+}
+
 /**
  * Probe whether the env-gated test-seed endpoint is enabled in the target app.
  * Returns false when the route answers 404 (flag off) so callers can `test.skip`.
@@ -95,10 +107,21 @@ export async function seedSystemEmailChannel(
 export async function clearCapturedSystemEmails(
   request: APIRequestContext,
   token: string,
+  options: { systemRecipient?: string } = {},
 ): Promise<void> {
+  const captureCredentials = options.systemRecipient ? resolveSystemCaptureCredentials() : null;
   const response = await apiRequest(request, 'POST', TEST_SEED_PATH, {
     token,
-    data: { action: 'clear-capture' },
+    data: {
+      action: 'clear-capture',
+      ...options,
+      ...(captureCredentials
+        ? { captureCorrelationToken: captureCredentials.captureCorrelationToken }
+        : {}),
+    },
+    headers: captureCredentials
+      ? { 'x-om-test-email-capture-access-token': captureCredentials.accessToken }
+      : undefined,
   });
   expect(response.ok(), 'POST /api/communication_channels/test-seed (clear-capture) should succeed').toBeTruthy();
 }
@@ -106,10 +129,21 @@ export async function clearCapturedSystemEmails(
 export async function listCapturedSystemEmails(
   request: APIRequestContext,
   token: string,
+  options: { systemRecipient?: string } = {},
 ): Promise<CapturedTestSeedEmail[]> {
+  const captureCredentials = options.systemRecipient ? resolveSystemCaptureCredentials() : null;
   const response = await apiRequest(request, 'POST', TEST_SEED_PATH, {
     token,
-    data: { action: 'list-capture' },
+    data: {
+      action: 'list-capture',
+      ...options,
+      ...(captureCredentials
+        ? { captureCorrelationToken: captureCredentials.captureCorrelationToken }
+        : {}),
+    },
+    headers: captureCredentials
+      ? { 'x-om-test-email-capture-access-token': captureCredentials.accessToken }
+      : undefined,
   });
   expect(response.ok(), 'POST /api/communication_channels/test-seed (list-capture) should succeed').toBeTruthy();
   const body = await readJsonSafe<{ items?: CapturedTestSeedEmail[] }>(response);
@@ -120,14 +154,21 @@ export async function waitForCapturedSystemEmail(
   request: APIRequestContext,
   token: string,
   predicate: (email: CapturedTestSeedEmail) => boolean,
-  options: { timeoutMs?: number; intervalMs?: number; description?: string } = {},
+  options: {
+    timeoutMs?: number;
+    intervalMs?: number;
+    description?: string;
+    systemRecipient?: string;
+  } = {},
 ): Promise<CapturedTestSeedEmail> {
-  const timeoutMs = options.timeoutMs ?? 10_000;
-  const intervalMs = options.intervalMs ?? 250;
+  const timeoutMs = options.timeoutMs ?? 20_000;
+  const intervalMs = options.intervalMs ?? 1_000;
   const deadline = Date.now() + timeoutMs;
   let lastItems: CapturedTestSeedEmail[] = [];
   while (Date.now() < deadline) {
-    lastItems = await listCapturedSystemEmails(request, token);
+    lastItems = await listCapturedSystemEmails(request, token, {
+      systemRecipient: options.systemRecipient,
+    });
     const found = lastItems.find(predicate);
     if (found) return found;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));

@@ -32,6 +32,7 @@ Maintainer feedback on PR #2448 requested this to be modeled as external integra
 `shared` exports a small transport registry and the existing `sendEmail(options)` function. It never imports `core`, Resend, Nodemailer, or AWS SDK code.
 
 `communication_channels` registers an email transport that resolves a tenant-wide email channel (`userId: null`) and calls the provider adapter synchronously. This preserves the old `await sendEmail(...)` behavior for security-sensitive flows like password reset and invites.
+Organization-scoped sends resolve only the exact organization channel. An organization-less auth send may use a provider channel only when exactly one matching channel exists in the tenant; multiple candidates fail closed as ambiguous.
 
 Provider packages implement outbound-only `ChannelAdapter`s and register their own system-email config resolvers:
 
@@ -84,6 +85,7 @@ Environment variables:
 
 - Existing `sendEmail()` imports continue to work.
 - Existing Resend deployments continue to work when `RESEND_API_KEY` and a sender address are set, because `SYSTEM_EMAIL_PROVIDER` defaults to `resend`.
+- Existing initialized containers idempotently seed the default Resend provider after migrations so the new persisted hub state is available during upgrade.
 - `shared` no longer contains provider delivery code or provider dependencies.
 - SES is additive through `@open-mercato/channel-ses`.
 - Inbox Ops inbound/reply Resend webhook behavior is unchanged.
@@ -92,15 +94,18 @@ Environment variables:
 
 - Shared tests cover transport delegation, disabled delivery, sender fallback, missing transport, configuration checks, attachments, `replyTo`, and scope propagation.
 - Resend adapter tests mock the Resend SDK and verify HTML/text rendering, `replyTo`, attachments, and provider failure handling.
-- SES adapter tests mock Nodemailer/AWS SDK and verify region resolution, HTML/text rendering, `replyTo`, attachments, configuration set mapping, and provider failure handling.
+- SES adapter tests mock Nodemailer/AWS SDK and verify region resolution, the credential-bound sender, HTML/text rendering, `replyTo`, attachments, configuration set mapping, disabled-sending health, and provider failure handling.
 - Communication hub tests cover system email dispatch through the adapter registry and pre-tenant env fallback.
+- Browser integration coverage visits `/start` at desktop and mobile widths and verifies the onboarding CTA, disabled superadmin control, connected database state, responsive layout, and absence of browser errors.
 - Run focused package tests/typechecks, `yarn check:dep-versions`, generated registry refresh, and the full contrib gate before moving the draft PR toward review.
 
 ## Risks & Impact Review
 
 | Risk | Severity | Mitigation | Residual Risk |
 | --- | --- | --- | --- |
-| Existing Resend deployments regress | High | Keep Resend as default provider and add adapter tests | Low |
+| Existing Resend deployments regress | High | Keep Resend as default provider and seed its persisted hub state after migrations | Low |
+| Organization-less auth mail crosses organization scope | High | Resolve only a single unambiguous tenant channel; otherwise fail closed | Low |
+| Per-message metadata impersonates another SES identity | High | Treat the encrypted provider `fromAddress` as authoritative and keep `replyTo` independent | Low |
 | Pre-tenant onboarding loses email delivery | High | Add env-backed hub adapter fallback for no-tenant sends | Low |
 | Provider code leaks into `shared` | Medium | Keep provider SDK dependencies only in provider packages | Low |
 | SES attachment formatting differs from Resend | Medium | Use Nodemailer SES transport and add attachment tests | Low |

@@ -2,7 +2,7 @@ import type { ChildProcess, StdioOptions } from 'node:child_process'
 import { createServer } from 'node:net'
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import path from 'node:path'
 import { createInterface, type Interface } from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
@@ -22,6 +22,11 @@ type EphemeralRuntimeOptions = {
   requiredExistingSource?: string
   environmentOverrides?: NodeJS.ProcessEnv
 }
+
+const TEST_EMAIL_CAPTURE_ACCESS_TOKEN =
+  process.env.OM_TEST_EMAIL_CAPTURE_ACCESS_TOKEN ?? randomBytes(32).toString('hex')
+const TEST_EMAIL_CAPTURE_CORRELATION_TOKEN =
+  process.env.OM_TEST_EMAIL_CAPTURE_CORRELATION_TOKEN ?? randomBytes(32).toString('hex')
 
 export type EphemeralEnvironmentHandle = {
   baseUrl: string
@@ -273,6 +278,10 @@ const EPHEMERAL_BUILD_CACHE_STATE_PATH = path.join(projectRootDirectory, '.ai', 
 const EPHEMERAL_CACHE_DB_PATH = path.join(projectRootDirectory, '.ai', 'qa', 'ephemeral-cache.sqlite')
 const EPHEMERAL_EMAIL_CAPTURE_PATH = path.join(projectRootDirectory, '.ai', 'qa', 'email-capture.jsonl')
 const EPHEMERAL_QUEUE_BASE_DIR = path.join(appDirectory, '.mercato', 'queue')
+const EPHEMERAL_CHANNEL_EMAIL_CAPTURE_PATH = path.join(
+  EPHEMERAL_QUEUE_BASE_DIR,
+  'channel-email-capture.jsonl',
+)
 const PRIVATE_ATTACHMENTS_PARTITION_ENV_KEY = 'ATTACHMENTS_PARTITION_PRIVATE_ATTACHMENTS_ROOT'
 const EPHEMERAL_PRIVATE_ATTACHMENTS_ROOT = path.join(
   resolveDefaultPrivateAttachmentsAppDirectory(),
@@ -1971,10 +1980,13 @@ function buildReusableEnvironment(
     OM_ENABLE_ENTERPRISE_MODULES_SECURITY: process.env.OM_ENABLE_ENTERPRISE_MODULES_SECURITY ?? enterpriseModulesFlag,
     OM_TEST_MODE: '1',
     OM_TEST_EMAIL_CAPTURE_PATH: EPHEMERAL_EMAIL_CAPTURE_PATH,
+    OM_TEST_CHANNEL_EMAIL_CAPTURE_PATH: EPHEMERAL_CHANNEL_EMAIL_CAPTURE_PATH,
     OM_TEST_AUTH_RATE_LIMIT_MODE: 'opt-in',
-    OM_ENABLE_CORS_VALIDATION: 'false',
     OM_DISABLE_EMAIL_DELIVERY: '0',
     OM_ENABLE_TEST_CHANNEL_SEEDING: 'true',
+    OM_ENABLE_TEST_EMAIL_CAPTURE_DELIVERY: 'true',
+    OM_TEST_EMAIL_CAPTURE_ACCESS_TOKEN: TEST_EMAIL_CAPTURE_ACCESS_TOKEN,
+    OM_TEST_EMAIL_CAPTURE_CORRELATION_TOKEN: TEST_EMAIL_CAPTURE_CORRELATION_TOKEN,
     SYSTEM_EMAIL_PROVIDER: '__test_seed__',
     EMAIL_FROM: process.env.EMAIL_FROM ?? 'system@test-seed.local',
     NOTIFICATIONS_EMAIL_FROM: process.env.NOTIFICATIONS_EMAIL_FROM ?? 'notifications@test-seed.local',
@@ -3334,10 +3346,13 @@ export async function startEphemeralEnvironment(options: EphemeralRuntimeOptions
       OM_ENABLE_ENTERPRISE_MODULES_SECURITY: process.env.OM_ENABLE_ENTERPRISE_MODULES_SECURITY ?? enterpriseModulesFlag,
       OM_TEST_MODE: '1',
       OM_TEST_EMAIL_CAPTURE_PATH: EPHEMERAL_EMAIL_CAPTURE_PATH,
+      OM_TEST_CHANNEL_EMAIL_CAPTURE_PATH: EPHEMERAL_CHANNEL_EMAIL_CAPTURE_PATH,
       OM_TEST_AUTH_RATE_LIMIT_MODE: 'opt-in',
-      OM_ENABLE_CORS_VALIDATION: 'false',
       OM_DISABLE_EMAIL_DELIVERY: '0',
       OM_ENABLE_TEST_CHANNEL_SEEDING: 'true',
+      OM_ENABLE_TEST_EMAIL_CAPTURE_DELIVERY: 'true',
+      OM_TEST_EMAIL_CAPTURE_ACCESS_TOKEN: TEST_EMAIL_CAPTURE_ACCESS_TOKEN,
+      OM_TEST_EMAIL_CAPTURE_CORRELATION_TOKEN: TEST_EMAIL_CAPTURE_CORRELATION_TOKEN,
       SYSTEM_EMAIL_PROVIDER: '__test_seed__',
       EMAIL_FROM: process.env.EMAIL_FROM ?? 'system@test-seed.local',
       NOTIFICATIONS_EMAIL_FROM: process.env.NOTIFICATIONS_EMAIL_FROM ?? 'notifications@test-seed.local',

@@ -13,6 +13,7 @@ import {
   seedSystemEmailChannel,
   waitForCapturedSystemEmail,
 } from '@open-mercato/core/helpers/integration/communicationChannelsFixtures'
+import { getTokenScope } from '@open-mercato/core/helpers/integration/generalFixtures'
 
 test.describe('TC-SEC-EMAIL-001: Enterprise security email OTP uses system channel', () => {
   let adminToken: string
@@ -53,8 +54,9 @@ test.describe('TC-SEC-EMAIL-001: Enterprise security email OTP uses system chann
       (email) => email.metadata?.to === userEmail && String(email.metadata?.subject ?? '').includes('verification code'),
       { description: 'security email OTP challenge' },
     )
-    expect(captured.scope.tenantId).toBe('system')
-    expect(captured.scope.organizationId).toBe('system')
+    const scope = getTokenScope(adminToken)
+    expect(captured.scope.tenantId).toBe(scope.tenantId)
+    expect(captured.scope.organizationId).toBe(scope.organizationId)
     expect(captured.content.bodyFormat).toBe('html')
   })
 })
