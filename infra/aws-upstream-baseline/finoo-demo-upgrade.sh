@@ -368,6 +368,8 @@ mapfile -d '' label_args < <(docker inspect "$active_container" | python3 -c '
 import json, sys
 labels = json.load(sys.stdin)[0]["Config"].get("Labels") or {}
 for key, value in labels.items():
+    if key.startswith("org.opencontainers.image."):
+        continue
     sys.stdout.buffer.write(b"--label\0")
     sys.stdout.buffer.write(f"{key}={value}".encode() + b"\0")
 ')
@@ -389,11 +391,13 @@ docker create \
   --workdir /app/apps/mercato \
   --user 0 \
   "${label_args[@]}" \
+  --label "org.opencontainers.image.revision=${deploy_commit}" \
   "$immutable_image" \
   /bin/sh -lc "INIT_COMMAND='yarn mercato init' sh /app/docker/scripts/init-or-migrate.sh && yarn start" >/dev/null
 docker start "$active_container" >/dev/null
 test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$active_container")" = "$compose_project"
 test "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$active_container")" = "$compose_service"
+test "$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$active_container")" = "$deploy_commit"
 if ! wait_for_login "$live_port"; then
   docker logs --tail 120 "$active_container" >&2
   echo "Upgraded Finoo app did not become reachable" >&2
