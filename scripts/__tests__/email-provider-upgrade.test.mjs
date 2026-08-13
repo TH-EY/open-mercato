@@ -8,6 +8,14 @@ const scriptPaths = [
   'packages/create-app/template/docker/scripts/init-or-migrate.sh',
 ]
 
+test('production image installs the Resend and SES provider workspaces', () => {
+  const source = fs.readFileSync(path.resolve('Dockerfile'), 'utf8')
+  for (const provider of ['channel-resend', 'channel-ses']) {
+    const manifest = `packages/${provider}/package.json`
+    assert.equal(source.split(manifest).length - 1, 3)
+  }
+})
+
 test('existing Resend deployments bootstrap provider state after migrations', () => {
   for (const scriptPath of scriptPaths) {
     const source = fs.readFileSync(path.resolve(scriptPath), 'utf8')
