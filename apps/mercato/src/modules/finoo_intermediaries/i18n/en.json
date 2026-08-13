@@ -1,0 +1,73 @@
+{
+  "finoo_intermediaries": {
+    "fields": {
+      "companyName": "Company",
+      "companyPhone": "Company phone",
+      "personMobile": "Person mobile",
+      "personEmail": "Person email",
+      "turnover": "Turnover",
+      "businessStartDate": "Business start date",
+      "arrears": "Arrears",
+      "industry": "Industry",
+      "partnerStatus": "Partner status"
+    },
+    "status": {
+      "new": "New",
+      "in_progress": "In progress",
+      "done": "Done",
+      "advance": {
+        "in_progress": "Start work",
+        "done": "Mark done"
+      }
+    },
+    "portal": {
+      "nav": { "deals": "Assigned deals" },
+      "deals": {
+        "label": "Intermediary",
+        "title": "Assigned deals",
+        "emptyTitle": "No assigned deals",
+        "emptyDescription": "Eligible deals assigned to you will appear here."
+      },
+      "deal": {
+        "label": "Assigned deal",
+        "title": "Deal details",
+        "untitled": "Deal details"
+      },
+      "status": { "updated": "Partner status updated." },
+      "notes": {
+        "title": "Private notes",
+        "add": "Add note",
+        "edit": "Edit note",
+        "saved": "Note saved.",
+        "empty": "No notes yet.",
+        "deleteConfirm": "Delete this note?"
+      },
+      "activities": {
+        "title": "Activities",
+        "empty": "No shared activities."
+      },
+      "errors": {
+        "load": "Unable to load assigned deals.",
+        "loadDetail": "Unable to load deal details.",
+        "blocked": "Operation blocked by validation."
+      },
+      "retryAvailable": "A blocked operation can be retried after resolving the conflict."
+    },
+    "staff": {
+      "tabLabel": "Intermediary",
+      "currentStatus": "Partner status",
+      "unassignedState": "Not assigned",
+      "intermediary": "Intermediary",
+      "selectIntermediary": "Select intermediary",
+      "unassign": "Unassign",
+      "unassignConfirm": "Remove this intermediary assignment?",
+      "saved": "Intermediary assignment saved.",
+      "unassigned": "Intermediary assignment removed.",
+      "blocked": "Assignment change blocked.",
+      "loadError": "Unable to load intermediary assignment.",
+      "missingDeal": "Deal context is unavailable.",
+      "notesTitle": "Partner notes",
+      "notesEmpty": "No partner notes."
+    }
+  }
+}
