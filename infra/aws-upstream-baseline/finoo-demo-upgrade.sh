@@ -6,6 +6,7 @@ DEPLOY_COMMIT="${DEPLOY_COMMIT:-}"
 DEPLOY_APP_IMAGE="${DEPLOY_APP_IMAGE:-}"
 DEPLOY_APP_DIGEST="${DEPLOY_APP_DIGEST:-}"
 OM_FINOO_AFFILIATE_REDIRECT_HOSTS="${OM_FINOO_AFFILIATE_REDIRECT_HOSTS:-}"
+OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL="${OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL:-}"
 RATE_LIMIT_TRUST_PROXY_DEPTH="${RATE_LIMIT_TRUST_PROXY_DEPTH:-}"
 FINOO_SUPERADMIN_PASSWORD_SECRET_ID="${FINOO_SUPERADMIN_PASSWORD_SECRET_ID:-}"
 FINOO_EMPLOYEE_PASSWORD_SECRET_ID="${FINOO_EMPLOYEE_PASSWORD_SECRET_ID:-}"
@@ -31,7 +32,8 @@ require_value() {
 
 for required_name in \
   DEPLOY_COMMIT DEPLOY_APP_IMAGE DEPLOY_APP_DIGEST \
-  OM_FINOO_AFFILIATE_REDIRECT_HOSTS RATE_LIMIT_TRUST_PROXY_DEPTH \
+  OM_FINOO_AFFILIATE_REDIRECT_HOSTS OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL \
+  RATE_LIMIT_TRUST_PROXY_DEPTH \
   FINOO_SUPERADMIN_PASSWORD_SECRET_ID FINOO_EMPLOYEE_PASSWORD_SECRET_ID; do
   require_value "$required_name" "${!required_name}"
 done
@@ -55,6 +57,10 @@ if [[ "$FINOO_SUPERADMIN_PASSWORD_SECRET_ID" != openmercato-upstream-baseline-do
 fi
 if [[ "$OM_FINOO_AFFILIATE_REDIRECT_HOSTS" != finoo.pl ]]; then
   echo "Finoo affiliate redirects must be restricted to finoo.pl" >&2
+  exit 1
+fi
+if [[ "$OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL" != https://finoo.pl/ ]]; then
+  echo "Finoo default affiliate destination must be https://finoo.pl/" >&2
   exit 1
 fi
 if [[ "$RATE_LIMIT_TRUST_PROXY_DEPTH" != 1 ]]; then
@@ -130,6 +136,7 @@ trap 'rm -f -- "$REMOTE_SCRIPT"' EXIT
   printf 'deploy_app_image=%q\n' "$DEPLOY_APP_IMAGE"
   printf 'deploy_app_digest=%q\n' "$DEPLOY_APP_DIGEST"
   printf 'redirect_hosts=%q\n' "$OM_FINOO_AFFILIATE_REDIRECT_HOSTS"
+  printf 'default_affiliate_destination=%q\n' "$OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL"
   printf 'proxy_depth=%q\n' "$RATE_LIMIT_TRUST_PROXY_DEPTH"
   printf 'superadmin_secret_id=%q\n' "$FINOO_SUPERADMIN_PASSWORD_SECRET_ID"
   printf 'employee_secret_id=%q\n' "$FINOO_EMPLOYEE_PASSWORD_SECRET_ID"
@@ -300,7 +307,7 @@ new_image_id="$(docker image inspect --format '{{.Id}}' "$immutable_image")"
 printf 'new_image_id=%s\n' "$new_image_id" >> "$pending_file"
 
 docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$active_container" > "$runtime_env"
-python3 - "$runtime_env" "$redirect_hosts" "$proxy_depth" <<'PY'
+python3 - "$runtime_env" "$redirect_hosts" "$default_affiliate_destination" "$proxy_depth" <<'PY'
 import sys
 from pathlib import Path
 
@@ -308,9 +315,10 @@ path = Path(sys.argv[1])
 updates = {
     'NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION': 'false',
     'OM_FINOO_AFFILIATE_REDIRECT_HOSTS': sys.argv[2],
+    'OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL': sys.argv[3],
     'RATE_LIMIT_ENABLED': 'true',
     'RATE_LIMIT_STRATEGY': 'redis',
-    'RATE_LIMIT_TRUST_PROXY_DEPTH': sys.argv[3],
+    'RATE_LIMIT_TRUST_PROXY_DEPTH': sys.argv[4],
     'REDIS_URL': 'redis://mercato-redis-finoo:6379',
 }
 lines = [line for line in path.read_text().splitlines() if line.split('=', 1)[0] not in updates]
@@ -341,7 +349,7 @@ if [[ "$signup_status" != 404 && "$signup_status" != 405 ]]; then
   exit 1
 fi
 
-python3 - .env "$redirect_hosts" "$proxy_depth" <<'PY'
+python3 - .env "$redirect_hosts" "$default_affiliate_destination" "$proxy_depth" <<'PY'
 import os
 import sys
 from pathlib import Path
@@ -350,9 +358,10 @@ path = Path(sys.argv[1])
 updates = {
     'NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION': 'false',
     'OM_FINOO_AFFILIATE_REDIRECT_HOSTS': sys.argv[2],
+    'OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL': sys.argv[3],
     'RATE_LIMIT_ENABLED': 'true',
     'RATE_LIMIT_STRATEGY': 'redis',
-    'RATE_LIMIT_TRUST_PROXY_DEPTH': sys.argv[3],
+    'RATE_LIMIT_TRUST_PROXY_DEPTH': sys.argv[4],
     'REDIS_URL': 'redis://mercato-redis-finoo:6379',
 }
 lines = [line for line in path.read_text().splitlines() if line.split('=', 1)[0] not in updates]

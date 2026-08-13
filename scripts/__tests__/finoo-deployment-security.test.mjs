@@ -102,6 +102,8 @@ test('host checkout uses the public HTTPS endpoint without SSH host trust', () =
 
 test('operator-invoked upgrade keeps the healthy live port until candidate smoke and has verified rollback', () => {
   assert.match(upgradeScript, /image tag must bind the exact deployment commit/)
+  assert.match(upgradeScript, /OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL/)
+  assert.match(upgradeScript, /default affiliate destination must be https:\/\/finoo\.pl\//)
   assert.match(upgradeScript, /approved ECR repository and exact commit tag/)
   assert.match(upgradeScript, /immutable_image="\$\{deploy_app_image%:\*\}@\$\{deploy_app_digest\}"/)
   assert.match(upgradeScript, /org\.opencontainers\.image\.revision/)
