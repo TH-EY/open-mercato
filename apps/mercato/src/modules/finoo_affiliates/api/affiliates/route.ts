@@ -4,6 +4,7 @@ import type { EntityManager, FilterQuery } from '@mikro-orm/postgresql'
 import { getAuthFromRequest } from '@open-mercato/shared/lib/auth/server'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
+import { toAbsoluteUrl } from '@open-mercato/shared/lib/url'
 import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { lookupHashCandidates } from '@open-mercato/shared/lib/encryption/aes'
 import { resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/directory/utils/organizationScope'
@@ -102,7 +103,7 @@ export async function GET(request: Request): Promise<Response> {
         lastName: name.lastName,
         code: affiliate.code,
         trackedUrl: affiliate.isActive
-          ? new URL(`/api/finoo_affiliates/r/${affiliate.code}`, request.url).toString()
+          ? toAbsoluteUrl(request, `/api/finoo_affiliates/r/${affiliate.code}`)
           : '',
         relatedDeals: countsByAffiliate.get(affiliate.id) ?? 0,
         state: affiliate.isActive ? 'active' : 'invited',

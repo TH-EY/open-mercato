@@ -17,6 +17,7 @@ import {
   resolveFinooAnalyticsRange,
 } from "../../../lib/analytics";
 import { reconcileAffiliateForUser } from "../../../lib/membership";
+import { toAbsoluteUrl } from "@open-mercato/shared/lib/url";
 
 export const metadata = { GET: { requireAuth: false } };
 
@@ -100,7 +101,7 @@ export async function GET(request: Request): Promise<Response> {
     ...series,
     generatedLink: primaryLink ? {
       code: primaryLink.code,
-      trackedUrl: new URL(`/api/finoo_affiliates/r/${primaryLink.code}`, request.url).toString(),
+      trackedUrl: toAbsoluteUrl(request, `/api/finoo_affiliates/r/${primaryLink.code}`),
     } : null,
   });
 }

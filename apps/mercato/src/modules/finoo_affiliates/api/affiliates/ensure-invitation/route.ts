@@ -8,6 +8,7 @@ import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import { bridgeLegacyGuard, runMutationGuards } from '@open-mercato/shared/lib/crud/mutation-guard-registry'
 import { isCrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { readJsonSafe } from '@open-mercato/shared/lib/http/readJsonSafe'
+import { toAbsoluteUrl } from '@open-mercato/shared/lib/url'
 import { resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/directory/utils/organizationScope'
 import type { EnsureAffiliateInvitationOutput } from '../../../commands/affiliate-memberships'
 
@@ -69,7 +70,7 @@ export async function POST(request: Request): Promise<Response> {
         metadata: callback.metadata ?? null,
       })
     }
-    const trackedUrl = new URL(`/api/finoo_affiliates/r/${result.affiliate.code}`, request.url).toString()
+    const trackedUrl = toAbsoluteUrl(request, `/api/finoo_affiliates/r/${result.affiliate.code}`)
     return NextResponse.json({
       ok: true,
       affiliate: {

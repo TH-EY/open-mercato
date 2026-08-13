@@ -31,7 +31,22 @@ jest.mock('@open-mercato/shared/lib/crud/mutation-guard-registry', () => ({
 import { metadata, POST } from '../route'
 
 describe('ensure affiliate invitation route', () => {
-  beforeEach(() => jest.clearAllMocks())
+  const originalAppUrl = process.env.APP_URL
+  const originalNextPublicAppUrl = process.env.NEXT_PUBLIC_APP_URL
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    delete process.env.NEXT_PUBLIC_APP_URL
+    if (originalAppUrl === undefined) delete process.env.APP_URL
+    else process.env.APP_URL = originalAppUrl
+  })
+
+  afterAll(() => {
+    if (originalAppUrl === undefined) delete process.env.APP_URL
+    else process.env.APP_URL = originalAppUrl
+    if (originalNextPublicAppUrl === undefined) delete process.env.NEXT_PUBLIC_APP_URL
+    else process.env.NEXT_PUBLIC_APP_URL = originalNextPublicAppUrl
+  })
 
   it('declares the manage feature and safely rejects malformed JSON', async () => {
     readJsonSafe.mockResolvedValue(null)
@@ -47,5 +62,29 @@ describe('ensure affiliate invitation route', () => {
     const response = await POST(new Request('https://example.test/api', { method: 'POST', body: '{}' }))
     expect(response.status).toBe(409)
     await expect(response.json()).resolves.toEqual({ error: 'INVITATION_NOT_FOR_AFFILIATE' })
+  })
+
+  it('builds the tracked URL from the configured public application URL', async () => {
+    process.env.APP_URL = 'https://finoo.example.test'
+    readJsonSafe.mockResolvedValue({ invitationId: '00000000-0000-4000-8000-000000000003' })
+    execute.mockResolvedValue({
+      result: {
+        created: true,
+        affiliate: {
+          id: '00000000-0000-4000-8000-000000000004',
+          code: 'PUBLIC123',
+          isActive: false,
+        },
+      },
+    })
+
+    const response = await POST(new Request('http://localhost:3000/api', { method: 'POST', body: '{}' }))
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toMatchObject({
+      affiliate: {
+        trackedUrl: 'https://finoo.example.test/api/finoo_affiliates/r/PUBLIC123',
+      },
+    })
   })
 })
