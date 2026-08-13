@@ -1939,7 +1939,6 @@ function buildReusableEnvironment(
 ): NodeJS.ProcessEnv {
   const enterpriseModulesFlag = process.env.OM_ENABLE_ENTERPRISE_MODULES ?? 'false'
   const privateAttachmentsRoot = resolvePrivateAttachmentsRootForQueueBaseDir(queueBaseDir)
-  const emailCapturePath = path.resolve(queueBaseDir, '..', 'test-email-capture.jsonl')
   return buildEnvironment({
     DATABASE_URL: databaseUrl,
     BASE_URL: baseUrl,
@@ -1976,7 +1975,6 @@ function buildReusableEnvironment(
     OM_ENABLE_CORS_VALIDATION: 'false',
     OM_DISABLE_EMAIL_DELIVERY: '0',
     OM_ENABLE_TEST_CHANNEL_SEEDING: 'true',
-    OM_TEST_EMAIL_CAPTURE_PATH: process.env.OM_TEST_EMAIL_CAPTURE_PATH ?? emailCapturePath,
     SYSTEM_EMAIL_PROVIDER: '__test_seed__',
     EMAIL_FROM: process.env.EMAIL_FROM ?? 'system@test-seed.local',
     NOTIFICATIONS_EMAIL_FROM: process.env.NOTIFICATIONS_EMAIL_FROM ?? 'notifications@test-seed.local',
@@ -3340,7 +3338,6 @@ export async function startEphemeralEnvironment(options: EphemeralRuntimeOptions
       OM_ENABLE_CORS_VALIDATION: 'false',
       OM_DISABLE_EMAIL_DELIVERY: '0',
       OM_ENABLE_TEST_CHANNEL_SEEDING: 'true',
-      OM_TEST_EMAIL_CAPTURE_PATH: process.env.OM_TEST_EMAIL_CAPTURE_PATH ?? path.resolve(EPHEMERAL_QUEUE_BASE_DIR, '..', 'test-email-capture.jsonl'),
       SYSTEM_EMAIL_PROVIDER: '__test_seed__',
       EMAIL_FROM: process.env.EMAIL_FROM ?? 'system@test-seed.local',
       NOTIFICATIONS_EMAIL_FROM: process.env.NOTIFICATIONS_EMAIL_FROM ?? 'notifications@test-seed.local',
