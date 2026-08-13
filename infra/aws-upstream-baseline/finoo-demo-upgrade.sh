@@ -195,6 +195,7 @@ candidate_created=false
 cutover_started=false
 env_modified=false
 stage_complete=false
+ses_preset_seeded=false
 
 wait_for_login() {
   local port="$1"
@@ -205,10 +206,32 @@ wait_for_login() {
   return 1
 }
 
+remove_seeded_ses_preset() {
+  if [[ "$ses_preset_seeded" != true ]]; then return 0; fi
+  local container_name
+  for container_name in "$@"; do
+    if [[ "$(docker inspect --format '{{.State.Running}}' "$container_name" 2>/dev/null || true)" != true ]]; then
+      continue
+    fi
+    if docker exec "$container_name" yarn mercato channel_ses remove-env-preset; then
+      ses_preset_seeded=false
+      return 0
+    fi
+  done
+  return 1
+}
+
 restore_old() {
   local failed=false
   local current_id=""
   current_id="$(docker inspect --format '{{.Id}}' "$active_container" 2>/dev/null || true)"
+  if [[ "$ses_preset_seeded" == true ]]; then
+    if [[ -n "$current_id" && "$current_id" != "$old_container_id" ]]; then
+      remove_seeded_ses_preset "$active_container" "$candidate_container" || failed=true
+    else
+      remove_seeded_ses_preset "$candidate_container" || failed=true
+    fi
+  fi
   if [[ -n "$current_id" && "$current_id" != "$old_container_id" ]]; then
     docker rm -f "$active_container" >/dev/null || failed=true
   fi
@@ -244,6 +267,7 @@ cleanup() {
   fi
   if [[ "$stage_complete" != true && "$cutover_started" != true ]]; then
     local pre_cutover_failed=false
+    remove_seeded_ses_preset "$candidate_container" || pre_cutover_failed=true
     if [[ "$env_modified" == true ]]; then
       cp -p -- "$env_backup" .env || pre_cutover_failed=true
       chmod 600 .env || pre_cutover_failed=true
@@ -358,6 +382,8 @@ if ! wait_for_login "$candidate_port"; then
   echo "Finoo candidate did not become reachable" >&2
   exit 1
 fi
+docker exec "$candidate_container" yarn mercato channel_ses assert-env-preset-absent
+ses_preset_seeded=true
 docker exec "$candidate_container" yarn mercato seed:defaults --module channel_ses
 signup_status="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${candidate_port}/api/customer_accounts/signup")"
 if [[ "$signup_status" != 404 && "$signup_status" != 405 ]]; then
@@ -404,8 +430,6 @@ for key, value in labels.items():
     sys.stdout.buffer.write(f"{key}={value}".encode() + b"\0")
 ')
 
-docker rm -f "$candidate_container" >/dev/null
-candidate_created=false
 docker tag "$immutable_image" open-mercato/app:finoo
 cutover_started=true
 docker stop --time 30 "$active_container" >/dev/null
@@ -433,6 +457,8 @@ if ! wait_for_login "$live_port"; then
   echo "Upgraded Finoo app did not become reachable" >&2
   exit 1
 fi
+docker rm -f "$candidate_container" >/dev/null
+candidate_created=false
 
 docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"
 run_role_smoke() {
@@ -604,6 +630,7 @@ if [[ "$decision" == finalize ]]; then
 fi
 
 failed=false
+docker exec "$active_container" yarn mercato channel_ses remove-env-preset || failed=true
 current_id="$(docker inspect --format '{{.Id}}' "$active_container" 2>/dev/null || true)"
 if [[ -n "$current_id" && "$current_id" != "$old_container_id" ]]; then
   docker rm -f "$active_container" >/dev/null || failed=true

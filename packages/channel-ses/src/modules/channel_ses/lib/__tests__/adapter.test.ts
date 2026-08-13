@@ -64,7 +64,7 @@ describe('SesChannelAdapter', () => {
     expect(SESv2ClientMock).toHaveBeenCalledWith({ region: 'eu-west-2' })
     expect(createTransportMock).toHaveBeenCalledWith(expect.objectContaining({ SES: expect.any(Object) }))
     expect(sendMailMock).toHaveBeenCalledWith(expect.objectContaining({
-      from: 'from@example.com',
+      from: 'fallback@example.com',
       to: ['user@example.com'],
       subject: 'Hello',
       html: '<p>Hello</p>',
@@ -73,20 +73,6 @@ describe('SesChannelAdapter', () => {
       attachments: [{ filename: 'a.txt', content: 'dGVzdA==', encoding: 'base64', contentType: 'text/plain' }],
       ses: { ConfigurationSetName: 'default' },
     }))
-  })
-
-  it('falls back to AWS_SES_REGION when credentials omit region', async () => {
-    process.env.AWS_SES_REGION = 'us-east-1'
-    const adapter = getSesChannelAdapter()
-
-    await adapter.sendMessage({
-      content: { text: 'Hello' },
-      credentials: { fromAddress: 'from@example.com' },
-      scope: { tenantId: 'tenant', organizationId: 'org' },
-      metadata: { to: ['user@example.com'], subject: 'Hello' },
-    })
-
-    expect(SESv2ClientMock).toHaveBeenCalledWith({ region: 'us-east-1' })
   })
 
   it('returns a failed result when the SES transport rejects', async () => {

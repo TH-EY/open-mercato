@@ -1,4 +1,5 @@
-import { mkdir, readFile, rm, appendFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { timingSafeEqual } from 'node:crypto'
 import path from 'node:path'
 import type {
   ChannelAdapter,
@@ -17,6 +18,7 @@ import type {
 } from './adapter'
 import { baseEmailCapabilities } from './email-capabilities'
 import { hasChannelAdapter, registerChannelAdapter } from './adapter-registry-singleton'
+import { registerSystemEmailProviderConfigResolver } from './system-email-provider-config'
 
 /**
  * Test-only channel seeding support.
@@ -45,6 +47,9 @@ export const TEST_SEED_PROVIDER_KEY = '__test_seed__'
 
 /** Env flag that unlocks test-only channel seeding. Off in production. */
 export const TEST_CHANNEL_SEEDING_ENV = 'OM_ENABLE_TEST_CHANNEL_SEEDING'
+export const TEST_CHANNEL_EMAIL_CAPTURE_PATH_ENV = 'OM_TEST_CHANNEL_EMAIL_CAPTURE_PATH'
+export const TEST_EMAIL_CAPTURE_ACCESS_TOKEN_ENV = 'OM_TEST_EMAIL_CAPTURE_ACCESS_TOKEN'
+export const TEST_EMAIL_CAPTURE_CORRELATION_TOKEN_ENV = 'OM_TEST_EMAIL_CAPTURE_CORRELATION_TOKEN'
 
 /**
  * True only when the test-seeding env flag is explicitly enabled. Accepts the
@@ -65,9 +70,40 @@ export type TestSeedCapturedMessage = {
   credentials: SendMessageInput['credentials']
   scope: SendMessageInput['scope']
   metadata?: SendMessageInput['metadata']
+  captureCorrelationToken?: string
 }
 
+type TestSeedCaptureScope = {
+  tenantId: string
+  organizationId: string | null
+}
+
+export type TestSeedCaptureOptions = {
+  systemRecipient?: string
+  captureCorrelationToken?: string
+}
+
+function normalizeToken(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  return normalized.length >= 32 ? normalized : null
+}
+
+export function isTestEmailCaptureAccessAuthorized(providedToken: string | null): boolean {
+  const expectedToken = normalizeToken(process.env[TEST_EMAIL_CAPTURE_ACCESS_TOKEN_ENV])
+  const normalizedProvidedToken = normalizeToken(providedToken)
+  if (!expectedToken || !normalizedProvidedToken) return false
+  const expected = Buffer.from(expectedToken)
+  const provided = Buffer.from(normalizedProvidedToken)
+  return expected.length === provided.length && timingSafeEqual(expected, provided)
+}
+
+export function resolveTestEmailCaptureCorrelationToken(): string | null {
+  return normalizeToken(process.env[TEST_EMAIL_CAPTURE_CORRELATION_TOKEN_ENV])
+}
 function resolveCapturePath(): string {
+  const channelCapturePath = process.env[TEST_CHANNEL_EMAIL_CAPTURE_PATH_ENV]?.trim()
+  if (channelCapturePath) return path.resolve(channelCapturePath)
   const explicit = process.env.OM_TEST_EMAIL_CAPTURE_PATH?.trim()
   if (explicit) return path.resolve(explicit)
   const queueBaseDir = process.env.QUEUE_BASE_DIR?.trim()
@@ -75,11 +111,51 @@ function resolveCapturePath(): string {
   return path.resolve(process.cwd(), '.mercato', 'test-email-capture.jsonl')
 }
 
-export async function clearTestSeedCapturedMessages(): Promise<void> {
-  await rm(resolveCapturePath(), { force: true })
+function matchesCaptureScope(
+  message: TestSeedCapturedMessage,
+  scope: TestSeedCaptureScope,
+  options: TestSeedCaptureOptions = {},
+): boolean {
+  if (message.scope.tenantId === scope.tenantId) {
+    const messageOrganizationId = message.scope.organizationId ?? null
+    if (messageOrganizationId === scope.organizationId) return true
+    if (messageOrganizationId !== scope.tenantId) return false
+    if (
+      !options.systemRecipient ||
+      !options.captureCorrelationToken ||
+      message.captureCorrelationToken !== options.captureCorrelationToken
+    ) {
+      return false
+    }
+    return messageMatchesRecipient(message, options.systemRecipient)
+  }
+
+  if (
+    message.scope.tenantId !== 'system' ||
+    message.scope.organizationId !== 'system' ||
+    !options.systemRecipient ||
+    !options.captureCorrelationToken ||
+    message.captureCorrelationToken !== options.captureCorrelationToken
+  ) {
+    return false
+  }
+
+  return messageMatchesRecipient(message, options.systemRecipient)
 }
 
-export async function listTestSeedCapturedMessages(): Promise<TestSeedCapturedMessage[]> {
+function messageMatchesRecipient(message: TestSeedCapturedMessage, recipient: string): boolean {
+  const expectedRecipient = recipient.trim().toLowerCase()
+  const matchesRecipient = (value: unknown): boolean => {
+    if (typeof value === 'string') return value.trim().toLowerCase() === expectedRecipient
+    if (Array.isArray(value)) return value.some(matchesRecipient)
+    if (!value || typeof value !== 'object') return false
+    return matchesRecipient((value as Record<string, unknown>).address)
+  }
+
+  return matchesRecipient(message.metadata?.to)
+}
+
+async function readTestSeedCapturedMessages(): Promise<TestSeedCapturedMessage[]> {
   const capturePath = resolveCapturePath()
   const text = await readFile(capturePath, 'utf8').catch(() => '')
   return text
@@ -87,6 +163,33 @@ export async function listTestSeedCapturedMessages(): Promise<TestSeedCapturedMe
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
     .map((line) => JSON.parse(line) as TestSeedCapturedMessage)
+}
+
+export async function clearTestSeedCapturedMessages(
+  scope: TestSeedCaptureScope,
+  options: TestSeedCaptureOptions = {},
+): Promise<void> {
+  const capturePath = resolveCapturePath()
+  const retained = (await readTestSeedCapturedMessages())
+    .filter((message) => !matchesCaptureScope(message, scope, options))
+  if (retained.length === 0) {
+    await rm(capturePath, { force: true })
+    return
+  }
+  await writeFile(
+    capturePath,
+    `${retained.map((message) => JSON.stringify(message)).join('\n')}\n`,
+    'utf8',
+  )
+}
+
+export async function listTestSeedCapturedMessages(
+  scope: TestSeedCaptureScope,
+  options: TestSeedCaptureOptions = {},
+): Promise<TestSeedCapturedMessage[]> {
+  return (await readTestSeedCapturedMessages()).filter((message) =>
+    matchesCaptureScope(message, scope, options),
+  )
 }
 
 async function captureTestSeedMessage(record: TestSeedCapturedMessage): Promise<void> {
@@ -128,6 +231,7 @@ class TestSeedChannelAdapter implements ChannelAdapter {
       credentials: input.credentials,
       scope: input.scope,
       metadata: input.metadata,
+      captureCorrelationToken: resolveTestEmailCaptureCorrelationToken() ?? undefined,
     })
     return {
       externalMessageId,
@@ -184,6 +288,11 @@ function getTestSeedChannelAdapter(): TestSeedChannelAdapter {
  */
 export function ensureTestSeedAdapterRegistered(): void {
   if (!isTestChannelSeedingEnabled()) return
+  registerSystemEmailProviderConfigResolver({
+    providerKey: TEST_SEED_PROVIDER_KEY,
+    isConfigured: isTestChannelSeedingEnabled,
+    resolveCredentials: ({ fromAddress }) => ({ testSeed: true, fromAddress }),
+  })
   if (hasChannelAdapter(TEST_SEED_PROVIDER_KEY)) return
   registerChannelAdapter(getTestSeedChannelAdapter())
 }

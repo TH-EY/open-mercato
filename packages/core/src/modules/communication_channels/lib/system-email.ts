@@ -2,7 +2,7 @@ import type { EntityManager } from '@mikro-orm/postgresql'
 import type { AppContainer } from '@open-mercato/shared/lib/di/container'
 import type { ResolvedEmailPayload } from '@open-mercato/shared/lib/email/send'
 import { normalizeEnvString } from '@open-mercato/shared/lib/email/config'
-import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import type { ChannelAdapterRegistry } from './registry'
 import { htmlToText } from './email-mime'
 import { getSystemEmailProviderConfigResolver } from './system-email-provider-config'
@@ -25,7 +25,7 @@ function resolveSystemEmailProvider(): string {
 }
 
 export function isSystemEmailTransportConfigured(): boolean {
-  return getSystemEmailProviderConfigResolver(resolveSystemEmailProvider())?.isConfigured() ?? true
+  return getSystemEmailProviderConfigResolver(resolveSystemEmailProvider())?.isConfigured() ?? false
 }
 
 async function renderReactEmail(react: ResolvedEmailPayload['react']): Promise<string | undefined> {
@@ -62,17 +62,17 @@ async function resolveSystemEmailChannel(
     }
   }
 
+  const requestedOrganizationId = payload.organizationId ?? null
   const dscope = {
     tenantId: payload.tenantId,
-    organizationId: payload.organizationId ?? null,
+    organizationId: requestedOrganizationId,
   }
   const explicitChannelId = normalizeEnvString(process.env.SYSTEM_EMAIL_CHANNEL_ID)
-  const where = explicitChannelId
+  const baseWhere = explicitChannelId
     ? {
         id: explicitChannelId,
         channelType: 'email',
         tenantId: payload.tenantId,
-        organizationId: payload.organizationId ?? null,
         userId: null,
         deletedAt: null,
       }
@@ -80,33 +80,19 @@ async function resolveSystemEmailChannel(
         providerKey: resolveSystemEmailProvider(),
         channelType: 'email',
         tenantId: payload.tenantId,
-        organizationId: payload.organizationId ?? null,
         userId: null,
         deletedAt: null,
       }
-
-  const channel = await findOneWithDecryption(em, CommunicationChannel, where, undefined, dscope)
-  if (!channel && !explicitChannelId && !payload.organizationId) {
-    const fallback = await findOneWithDecryption(
-      em,
-      CommunicationChannel,
-      {
-        providerKey: resolveSystemEmailProvider(),
-        channelType: 'email',
-        tenantId: payload.tenantId,
-        userId: null,
-        deletedAt: null,
-      },
-      undefined,
-      dscope,
-    )
-    if (fallback) {
-      if (!fallback.isActive || fallback.status !== 'connected') {
-        throw new Error(`SYSTEM_EMAIL_CHANNEL_UNAVAILABLE: channel is ${fallback.status}`)
-      }
-      return fallback
-    }
-  }
+  const where = requestedOrganizationId
+    ? { ...baseWhere, organizationId: requestedOrganizationId }
+    : baseWhere
+  const channel = requestedOrganizationId
+    ? await findOneWithDecryption(em, CommunicationChannel, where, undefined, dscope)
+    : await resolveOrganizationlessSystemEmailChannel(
+        em,
+        where,
+        { tenantId: payload.tenantId, organizationId: null },
+      )
   if (!channel) {
     if (
       !explicitChannelId &&
@@ -127,6 +113,26 @@ async function resolveSystemEmailChannel(
   return channel
 }
 
+async function resolveOrganizationlessSystemEmailChannel(
+  em: EntityManager,
+  where: Record<string, unknown>,
+  dscope: { tenantId: string; organizationId: null },
+): Promise<CommunicationChannel | null> {
+  const channels = await findWithDecryption(
+    em,
+    CommunicationChannel,
+    where,
+    { limit: 2, orderBy: { organizationId: 'asc', id: 'asc' } },
+    dscope,
+  )
+  if (channels.length > 1) {
+    throw new Error(
+      'SYSTEM_EMAIL_CHANNEL_AMBIGUOUS: organization-less email requires exactly one tenant channel',
+    )
+  }
+  return channels[0] ?? null
+}
+
 function resolveEnvCredentials(providerKey: string, fromAddress: string): Record<string, unknown> {
   return getSystemEmailProviderConfigResolver(providerKey)?.resolveCredentials({ fromAddress }) ?? { fromAddress }
 }
@@ -145,18 +151,22 @@ export async function sendSystemEmail(
     )
   }
 
-  let credentials: Record<string, unknown> = resolveEnvCredentials(channel.providerKey, payload.from)
+  let credentials: Record<string, unknown>
   if (payload.tenantId) {
     const credentialsService = container.resolve('integrationCredentialsService') as CredentialsServiceLike
-    const storedCredentials = await credentialsService.resolve(`channel_${channel.providerKey}`, {
+    const resolvedCredentials = await credentialsService.resolve(`channel_${channel.providerKey}`, {
       tenantId: payload.tenantId,
       organizationId: channel.organizationId ?? payload.organizationId ?? payload.tenantId,
       userId: null,
     })
-    if (!storedCredentials) {
-      throw new Error('SYSTEM_EMAIL_CREDENTIALS_NOT_CONFIGURED: configure tenant-wide provider credentials')
+    if (!resolvedCredentials) {
+      throw new Error(
+        `SYSTEM_EMAIL_CREDENTIALS_NOT_CONFIGURED: configure tenant credentials for '${channel.providerKey}'`,
+      )
     }
-    credentials = storedCredentials
+    credentials = resolvedCredentials
+  } else {
+    credentials = resolveEnvCredentials(channel.providerKey, payload.from)
   }
 
   const body = await resolveEmailBody(payload)

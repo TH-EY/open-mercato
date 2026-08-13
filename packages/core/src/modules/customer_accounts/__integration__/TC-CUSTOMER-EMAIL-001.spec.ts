@@ -17,6 +17,9 @@ test.describe('TC-CUSTOMER-EMAIL-001: Customer signup email uses system channel'
   test.setTimeout(60_000)
 
   test('fresh signup and existing-account notice dispatch through Communications Hub', async ({ request }) => {
+    const signupProbe = await request.post('/api/customer_accounts/signup', { data: {} })
+    test.skip(signupProbe.status() === 404, 'Customer self-signup is disabled by the target app.')
+
     const adminToken = await getAuthToken(request, 'admin')
     const { tenantId, organizationId } = getTokenContext(adminToken)
     const seedingAvailable = await isChannelSeedingAvailable(request, adminToken)

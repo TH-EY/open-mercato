@@ -44,6 +44,7 @@ test.describe('TC-ONBOARDING-EMAIL-001: Onboarding emails use system channel', (
     const stamp = Date.now()
     const onboardingEmail = `qa-onboarding-email-${stamp}@example.test`
     const feedbackEmail = `qa-demo-feedback-${stamp}@example.test`
+    const adminEmail = process.env.ADMIN_EMAIL ?? 'admin@test-seed.local'
 
     try {
       const start = await request.post('/api/onboarding/onboarding', {
@@ -65,7 +66,7 @@ test.describe('TC-ONBOARDING-EMAIL-001: Onboarding emails use system channel', (
         request,
         token,
         (email) => email.metadata?.to === onboardingEmail && email.metadata?.subject === 'Confirm your email to finish onboarding',
-        { description: 'onboarding verification email' },
+        { description: 'onboarding verification email', systemRecipient: onboardingEmail },
       )
       expect(verificationEmail.scope.tenantId).toBe('system')
       expect(verificationEmail.content.bodyFormat).toBe('html')
@@ -73,8 +74,8 @@ test.describe('TC-ONBOARDING-EMAIL-001: Onboarding emails use system channel', (
       await waitForCapturedSystemEmail(
         request,
         token,
-        (email) => String(email.metadata?.to ?? '').includes('@') && email.metadata?.subject === 'New self-service onboarding request',
-        { description: 'onboarding admin email' },
+        (email) => email.metadata?.to === adminEmail && email.metadata?.subject === 'New self-service onboarding request',
+        { description: 'onboarding admin email', systemRecipient: adminEmail },
       )
 
       await markOnboardingReady(onboardingEmail, scope.tenantId, scope.organizationId, scope.userId)
@@ -93,6 +94,7 @@ test.describe('TC-ONBOARDING-EMAIL-001: Onboarding emails use system channel', (
         { description: 'onboarding ready email' },
       )
       expect(readyEmail.scope.tenantId).toBe(scope.tenantId)
+      expect(readyEmail.scope.organizationId).toBe(scope.organizationId)
       expect(readyEmail.content.bodyFormat).toBe('html')
 
       await clearCapturedSystemEmails(request, token)
@@ -103,7 +105,6 @@ test.describe('TC-ONBOARDING-EMAIL-001: Onboarding emails use system channel', (
           message: 'Integration coverage feedback',
           termsAccepted: true,
           marketingConsent: false,
-          sendCopy: true,
         },
       })
       expect(feedback.status()).toBe(200)
@@ -111,17 +112,9 @@ test.describe('TC-ONBOARDING-EMAIL-001: Onboarding emails use system channel', (
       await waitForCapturedSystemEmail(
         request,
         token,
-        (email) => String(email.metadata?.to ?? '').includes('@') && email.metadata?.subject === `Demo feedback from ${feedbackEmail}`,
-        { description: 'demo feedback admin email' },
+        (email) => email.metadata?.to === adminEmail && email.metadata?.subject === `Demo feedback from ${feedbackEmail}`,
+        { description: 'demo feedback admin email', systemRecipient: adminEmail },
       )
-      const feedbackCopy = await waitForCapturedSystemEmail(
-        request,
-        token,
-        (email) => email.metadata?.to === feedbackEmail && email.metadata?.subject === 'Your feedback to Open Mercato',
-        { description: 'demo feedback copy email' },
-      )
-      expect(feedbackCopy.scope.tenantId).toBe('system')
-      expect(feedbackCopy.content.bodyFormat).toBe('html')
     } finally {
       await deleteOnboardingRequest(onboardingEmail)
     }

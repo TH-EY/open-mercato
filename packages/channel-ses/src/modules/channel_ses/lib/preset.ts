@@ -3,13 +3,59 @@ import type { AppContainer } from '@open-mercato/shared/lib/di/container'
 import { normalizeEnvString, resolveDefaultEmailFromAddress } from '@open-mercato/shared/lib/email/config'
 import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { CommunicationChannel } from '@open-mercato/core/modules/communication_channels/data/entities'
+import { IntegrationCredentials } from '@open-mercato/core/modules/integrations/data/entities'
 import { sesCapabilities } from '../capabilities'
 
-type PresetScope = {
+export type PresetScope = {
   em: EntityManager
   container: AppContainer
   tenantId: string
   organizationId: string
+}
+
+export async function assertSesEnvPresetAbsent(ctx: PresetScope): Promise<void> {
+  const [channel, credentials] = await Promise.all([
+    ctx.em.findOne(CommunicationChannel, {
+      providerKey: 'ses',
+      channelType: 'email',
+      tenantId: ctx.tenantId,
+      organizationId: ctx.organizationId,
+      userId: null,
+      deletedAt: null,
+    }),
+    ctx.em.findOne(IntegrationCredentials, {
+      integrationId: 'channel_ses',
+      tenantId: ctx.tenantId,
+      organizationId: ctx.organizationId,
+      userId: null,
+      deletedAt: null,
+    }),
+  ])
+  if (channel || credentials) {
+    throw new Error(
+      `SES_ENV_PRESET_ALREADY_EXISTS: refusing rollback-unsafe preset replacement for organization ${ctx.organizationId}`,
+    )
+  }
+}
+
+export async function removeSesEnvPreset(ctx: PresetScope): Promise<void> {
+  await ctx.em.transactional(async (em) => {
+    await em.nativeDelete(CommunicationChannel, {
+      providerKey: 'ses',
+      channelType: 'email',
+      tenantId: ctx.tenantId,
+      organizationId: ctx.organizationId,
+      userId: null,
+      deletedAt: null,
+    })
+    await em.nativeDelete(IntegrationCredentials, {
+      integrationId: 'channel_ses',
+      tenantId: ctx.tenantId,
+      organizationId: ctx.organizationId,
+      userId: null,
+      deletedAt: null,
+    })
+  })
 }
 
 type CredentialsServiceLike = {
@@ -20,7 +66,7 @@ type CredentialsServiceLike = {
   ) => Promise<void>
 }
 
-export function readSesEnvPreset(): { region?: string; fromAddress: string; configurationSetName?: string } | null {
+export function readSesEnvPreset(): { region: string; fromAddress: string; configurationSetName?: string } | null {
   const fromAddress = resolveDefaultEmailFromAddress()
   const region = normalizeEnvString(process.env.AWS_SES_REGION) || normalizeEnvString(process.env.AWS_REGION)
   if (!fromAddress || !region) return null
