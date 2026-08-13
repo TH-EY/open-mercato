@@ -117,3 +117,13 @@ Environment variables:
 ## Changelog
 
 - 2026-06-03: Updated spec to use Communications Hub system email transport with Resend default and SES as an external provider package.
+- 2026-08-13: Adopted the provider-neutral transport on the FINOO private baseline, preserved test-mode email capture, made tenant credential resolution fail closed, and added FINOO SES runtime propagation and idempotent existing-tenant seeding.
+
+## Implementation Status
+
+| Phase | Status | Date | Notes |
+| --- | --- | --- | --- |
+| Provider-neutral transport | Done | 2026-08-13 | Existing `sendEmail()` entrypoint preserved with optional tenant and organization scope |
+| Provider packages | Done | 2026-08-13 | Resend and SES adapters enabled through Communications Hub; no static AWS credentials |
+| Delivery-path coverage | Done | 2026-08-13 | Focused provider, transport, invite, and deployment-security tests pass |
+| FINOO runtime configuration | In Review | 2026-08-13 | SES env propagation and existing-tenant seed implemented; immutable deployment remains gated on review/build evidence |

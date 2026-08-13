@@ -10,6 +10,11 @@ OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL="${OM_FINOO_DEFAULT_AFFILIATE_DESTINA
 RATE_LIMIT_TRUST_PROXY_DEPTH="${RATE_LIMIT_TRUST_PROXY_DEPTH:-}"
 FINOO_SUPERADMIN_PASSWORD_SECRET_ID="${FINOO_SUPERADMIN_PASSWORD_SECRET_ID:-}"
 FINOO_EMPLOYEE_PASSWORD_SECRET_ID="${FINOO_EMPLOYEE_PASSWORD_SECRET_ID:-}"
+SYSTEM_EMAIL_PROVIDER=ses
+AWS_SES_REGION=eu-west-2
+AWS_SES_CONFIGURATION_SET=''
+EMAIL_FROM=no-reply@they.dev
+NOTIFICATIONS_EMAIL_FROM=no-reply@they.dev
 
 INSTANCE_NAME=openmercato-upstream-baseline-dokploy
 HOSTNAME=finoo.om.they.dev
@@ -138,6 +143,11 @@ trap 'rm -f -- "$REMOTE_SCRIPT"' EXIT
   printf 'redirect_hosts=%q\n' "$OM_FINOO_AFFILIATE_REDIRECT_HOSTS"
   printf 'default_affiliate_destination=%q\n' "$OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL"
   printf 'proxy_depth=%q\n' "$RATE_LIMIT_TRUST_PROXY_DEPTH"
+  printf 'system_email_provider=%q\n' "$SYSTEM_EMAIL_PROVIDER"
+  printf 'ses_region=%q\n' "$AWS_SES_REGION"
+  printf 'ses_configuration_set=%q\n' "$AWS_SES_CONFIGURATION_SET"
+  printf 'email_from=%q\n' "$EMAIL_FROM"
+  printf 'notifications_email_from=%q\n' "$NOTIFICATIONS_EMAIL_FROM"
   printf 'superadmin_secret_id=%q\n' "$FINOO_SUPERADMIN_PASSWORD_SECRET_ID"
   printf 'employee_secret_id=%q\n' "$FINOO_EMPLOYEE_PASSWORD_SECRET_ID"
   printf 'workdir=%q\n' "$WORKDIR"
@@ -307,7 +317,7 @@ new_image_id="$(docker image inspect --format '{{.Id}}' "$immutable_image")"
 printf 'new_image_id=%s\n' "$new_image_id" >> "$pending_file"
 
 docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$active_container" > "$runtime_env"
-python3 - "$runtime_env" "$redirect_hosts" "$default_affiliate_destination" "$proxy_depth" <<'PY'
+python3 - "$runtime_env" "$redirect_hosts" "$default_affiliate_destination" "$proxy_depth" "$system_email_provider" "$ses_region" "$ses_configuration_set" "$email_from" "$notifications_email_from" <<'PY'
 import sys
 from pathlib import Path
 
@@ -320,6 +330,11 @@ updates = {
     'RATE_LIMIT_STRATEGY': 'redis',
     'RATE_LIMIT_TRUST_PROXY_DEPTH': sys.argv[4],
     'REDIS_URL': 'redis://mercato-redis-finoo:6379',
+    'SYSTEM_EMAIL_PROVIDER': sys.argv[5],
+    'AWS_SES_REGION': sys.argv[6],
+    'AWS_SES_CONFIGURATION_SET': sys.argv[7],
+    'EMAIL_FROM': sys.argv[8],
+    'NOTIFICATIONS_EMAIL_FROM': sys.argv[9],
 }
 lines = [line for line in path.read_text().splitlines() if line.split('=', 1)[0] not in updates]
 lines.extend(f'{key}={value}' for key, value in updates.items())
@@ -343,13 +358,14 @@ if ! wait_for_login "$candidate_port"; then
   echo "Finoo candidate did not become reachable" >&2
   exit 1
 fi
+docker exec "$candidate_container" yarn mercato seed:defaults --module channel_ses
 signup_status="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${candidate_port}/api/customer_accounts/signup")"
 if [[ "$signup_status" != 404 && "$signup_status" != 405 ]]; then
   echo "Finoo candidate still exposes customer self-registration" >&2
   exit 1
 fi
 
-python3 - .env "$redirect_hosts" "$default_affiliate_destination" "$proxy_depth" <<'PY'
+python3 - .env "$redirect_hosts" "$default_affiliate_destination" "$proxy_depth" "$system_email_provider" "$ses_region" "$ses_configuration_set" "$email_from" "$notifications_email_from" <<'PY'
 import os
 import sys
 from pathlib import Path
@@ -363,6 +379,11 @@ updates = {
     'RATE_LIMIT_STRATEGY': 'redis',
     'RATE_LIMIT_TRUST_PROXY_DEPTH': sys.argv[4],
     'REDIS_URL': 'redis://mercato-redis-finoo:6379',
+    'SYSTEM_EMAIL_PROVIDER': sys.argv[5],
+    'AWS_SES_REGION': sys.argv[6],
+    'AWS_SES_CONFIGURATION_SET': sys.argv[7],
+    'EMAIL_FROM': sys.argv[8],
+    'NOTIFICATIONS_EMAIL_FROM': sys.argv[9],
 }
 lines = [line for line in path.read_text().splitlines() if line.split('=', 1)[0] not in updates]
 lines.extend(f'{key}={value}' for key, value in updates.items())

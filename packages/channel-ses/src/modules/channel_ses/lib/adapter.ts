@@ -112,9 +112,8 @@ class SesChannelAdapter implements ChannelAdapter {
         status: 'sent',
         metadata: info.response ? { response: info.response } : undefined,
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      return { externalMessageId: '', status: 'failed', error: `SES_SEND_FAILED: ${message}` }
+    } catch {
+      return { externalMessageId: '', status: 'failed', error: 'SES_SEND_FAILED' }
     }
   }
 

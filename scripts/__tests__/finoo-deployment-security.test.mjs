@@ -160,6 +160,22 @@ test('upgrade configures Finoo attribution securely without logging credentials'
   assert.match(upgradeScript, /chmod 600 "\$commit_temp" "\$digest_temp"/)
 })
 
+test('Finoo provisions and upgrades SES through the instance role without static AWS credentials', () => {
+  for (const source of [deployScript, upgradeScript]) {
+    assert.match(source, /SYSTEM_EMAIL_PROVIDER/)
+    assert.match(source, /AWS_SES_REGION/)
+    assert.match(source, /EMAIL_FROM/)
+    assert.match(source, /NOTIFICATIONS_EMAIL_FROM/)
+    assert.match(source, /no-reply@they\.dev/)
+    assert.doesNotMatch(source, /AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN/)
+  }
+  assert.match(deployScript, /set_env_value SYSTEM_EMAIL_PROVIDER ses/)
+  assert.match(deployScript, /set_env_value AWS_SES_REGION eu-west-2/)
+  assert.match(upgradeScript, /yarn mercato seed:defaults --module channel_ses/)
+  assert.match(upgradeScript, /cp -p -- \.env "\$env_backup"/)
+  assert.match(upgradeScript, /cp -p -- "\$env_backup" \.env/)
+})
+
 test('authenticated smoke verifies email, role, and backend access', async () => {
   const responses = [
     new Response('', { status: 200 }),

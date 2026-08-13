@@ -102,7 +102,7 @@ describe('SesChannelAdapter', () => {
 
     expect(result).toEqual(expect.objectContaining({
       status: 'failed',
-      error: 'SES_SEND_FAILED: temporary outage',
+      error: 'SES_SEND_FAILED',
     }))
   })
 })
