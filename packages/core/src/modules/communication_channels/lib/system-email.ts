@@ -147,17 +147,16 @@ export async function sendSystemEmail(
 
   let credentials: Record<string, unknown> = resolveEnvCredentials(channel.providerKey, payload.from)
   if (payload.tenantId) {
-    try {
-      const credentialsService = container.resolve('integrationCredentialsService') as CredentialsServiceLike
-      credentials =
-        (await credentialsService.resolve(`channel_${channel.providerKey}`, {
-          tenantId: payload.tenantId,
-          organizationId: channel.organizationId ?? payload.organizationId ?? payload.tenantId,
-          userId: null,
-        })) ?? credentials
-    } catch {
-      credentials = resolveEnvCredentials(channel.providerKey, payload.from)
+    const credentialsService = container.resolve('integrationCredentialsService') as CredentialsServiceLike
+    const storedCredentials = await credentialsService.resolve(`channel_${channel.providerKey}`, {
+      tenantId: payload.tenantId,
+      organizationId: channel.organizationId ?? payload.organizationId ?? payload.tenantId,
+      userId: null,
+    })
+    if (!storedCredentials) {
+      throw new Error('SYSTEM_EMAIL_CREDENTIALS_NOT_CONFIGURED: configure tenant-wide provider credentials')
     }
+    credentials = storedCredentials
   }
 
   const body = await resolveEmailBody(payload)
