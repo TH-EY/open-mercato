@@ -1,542 +1,767 @@
-# Finoo Affiliate Portal and Attribution
+# Finoo Affiliate Program, Transactions, and Payouts
 
 ## TLDR
 
 **Key Points:**
-- Add a private Finoo application module, `finoo_affiliates`, for affiliate links, first-party unique-click tracking, Deal attribution, commission management, and affiliate-scoped portal reporting.
-- Count at most one visit per affiliate link and anonymous browser identifier in a rolling 24-hour window. Redirect bots, link previews, and prefetches without recording a visit.
-- Attribute the existing application flow through the `affiliate_code` query parameter and the Deal custom field keyed `affiliate_code` (`Affiliate Code`). Count a transaction once, at the first recorded transition of an attributed Deal into a stage whose label is `Completed`.
-- Disable both the public signup route and signup API for Finoo while preserving staff-created and invited portal accounts.
+- Extend the private `finoo_affiliates` module into the complete Finoo affiliate-program operating surface: invitation-backed affiliate membership, one generated primary link per affiliate, first-party unique-click tracking, Deal attribution, an idempotent transaction ledger created on the first `Accepted` stage transition, manual review, and manual payout recording.
+- Keep public self-registration disabled. Staff invite an email through the existing customer-portal invitation API with the existing `affiliate` role; Finoo immediately reserves a unique code and activates its primary tracked link only after invitation acceptance creates the portal user.
+- Treat a payout as evidence that an external bank transfer was already made. Confirmation creates one payout, connects every selected approved transaction, and atomically moves those transactions to `paid_out`; it never initiates money movement.
+- Preserve the deployed THOM-88 contracts additively: legacy link CRUD, Completed-transition records, old event IDs, and the `waiting` status remain readable/accepted for compatibility, while new UI and records use `processing`, `approved`, `rejected`, and `paid_out`.
 
 **Scope:**
-- Affiliate dashboard with adjustable range, default last 30 days, and weekly series for leads, unique link visits, and transactions.
-- Affiliate Leads page listing only Deals attributed to the signed-in affiliate, with company name, landing page, initial referrer, commission status, and commission amount.
-- Staff affiliate-link management and a CRM Deal tab for affiliate user, commission status, and commission amount.
-- Tenant-safe APIs, persistence, migration, integration tests, and headed QA on `https://finoo.om.they.dev`.
+- Affiliate portal dashboard, Leads, Payouts, and Profile pages.
+- Staff Affiliates, Affiliate transactions, and Affiliate payouts pages.
+- Invitation orchestration, primary-link generation, encrypted bank profile, transaction state machine, payout preview/confirmation, migrations, tests, deployment, and headed QA.
+- Reuse the existing `affiliate` and `intermediary` customer roles; only `affiliate` receives this module's portal grants.
 
 **Boundaries:**
-- Existing customer roles `affiliate` and `intermediary` are reused; role creation is not part of this change.
-- The intermediary portal is out of scope.
-- Existing public application form behavior remains owned by the deployed Finoo application. This module consumes its `affiliate_code` → Deal `Affiliate Code` contract.
-- The implementation is private to Finoo. No upstream contribution or public PR is allowed for THOM-88.
+- The finoo.pl Deal-ingress endpoint remains out of scope. This module consumes the existing Deal custom fields `affiliate_code`, `landing_page`, and `initial_referrer`.
+- Commission calculation rules are out of scope. Staff continue to enter a non-negative integer commission amount on the Deal before acceptance; the first Accepted transition snapshots that value into the transaction.
+- Payout confirmation records an external payment; it does not call a bank, payment provider, or accounting service.
+- The intermediary portal remains out of scope.
+- This is private FINOO instance work. No upstream contribution, public branch, public issue, or public PR is allowed.
 
 **Concerns:**
-- Public redirect handling, portal authorization, tenant isolation, visitor de-duplication, CRM money fields, and schema changes make the delivery `risk-high`.
-- The redirect destination must be validated against a Finoo-owned allowlist so affiliate links cannot become an open redirect.
+- Money state, encrypted bank details, invitations, portal authorization, tenant isolation, idempotent stage processing, and multi-record payout updates make the delivery `risk-high`.
+- The deployed integer commission contract is preserved as whole PLN units. Fractional commissions and multi-currency payouts require a separately approved migration.
 
 ## Overview
 
-THOM-88 adds Finoo-specific affiliate acquisition and commission visibility on top of Open Mercato's CRM, dictionaries, persistent events, and customer portal. Staff manage affiliate links and the commission fields associated with an attributed Deal. An authenticated affiliate sees only their own links' aggregate performance and their own attributed Deals.
+THOM-89 completes the operational affiliate loop started by THOM-88. The deployed module already provides human-unique click tracking, affiliate-code attribution, a portal dashboard, a Leads table, staff link CRUD, and a Deal commission widget. It does not yet have a durable affiliate membership record, invitation-driven primary-link lifecycle, Accepted-based commission transactions, bank profiles, or payout records.
 
-The implementation is a private app-level module at `apps/mercato/src/modules/finoo_affiliates`. Core changes are limited to a generic, default-on portal self-registration display seam used by the shell, landing page, and login page. The Finoo app configuration disables the public signup API, while module-owned frontend middleware redirects the signup page to login; together these provide server-side enforcement.
+The extension remains one private application module at `apps/mercato/src/modules/finoo_affiliates`. It uses existing customer-account invitation APIs and events, customer Deal events and stage-transition history, module-local commands, the platform encryption map, progress jobs for payout confirmation, and existing backend/portal UI primitives. Core modules are not modified.
 
-## Proposed Solution
-
-Build one Finoo-owned module with four additive entities: affiliate links, unique visits, an immutable first-Completed registry, and Deal attribution extensions. A database trigger on the CRM stage-transition projection captures the first Completed timestamp atomically in the same transaction; persistent customer Deal events hydrate the affiliate read model after the CRM command commits. Data coupling uses UUID-only references, intentional snapshots, and an app-owned `data/extensions.ts` declaration; UI coupling uses existing portal dashboard and Deal-detail widget spots. Staff mutations are command-backed and undoable. Portal reads derive the affiliate solely from customer auth. A generic `NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION` switch defaults to `true` in core UI, while Finoo sets it to `false`, disables the signup API through an app override, and redirects the signup page through module frontend middleware.
+> **Market references:** Plausible Community Edition remains the reference for privacy-minimized first-party click storage. Refersion and Affilae document the common pending/approved/rejected conversion review model, while Rekomi and Affonso model payouts as batches connected to immutable conversion IDs and distinguish payable from paid. Finoo adopts idempotent conversion identity, explicit review states, a terminal paid state, and payout-to-transaction linkage. It deliberately rejects automatic transfers, clawbacks, multi-currency settlement, commission-rule engines, fraud scoring, and post-payment adjustments because none are in the approved scope.
 
 ## Problem Statement
 
-Open Mercato currently has no affiliate-link event store or tracked redirect, no Finoo attribution read model, and no affiliate-scoped dashboard. The existing portal also exposes self-registration by default. Finoo requires invitation/staff-created accounts only and needs a complete acquisition chain:
+The current implementation has six material gaps:
 
-1. staff creates a link for an affiliate;
-2. a real visitor follows the link;
-3. the link forwards to the Finoo application with `affiliate_code`;
-4. the application creates a Deal with the existing attribution custom fields;
-5. the affiliate sees the lead and eventual first `Completed` transition;
-6. staff controls commission status and amount from the Deal context.
-
-Without a Finoo-owned read model, portal endpoints would have to expose staff CRM APIs or join unrelated module entities directly from the browser. Without first-party visit storage, the click graph has no authoritative source.
+1. Staff manage links, not affiliates. There is no durable one-row-per-affiliate record that can exist between invitation and account acceptance or hold the primary code and bank profile.
+2. The current transaction graph uses the first `Completed` transition on Deal attribution. The approved business rule is instead: create one commission transaction on the first `Accepted` transition and never create it again after reopen/re-entry.
+3. Commission status is stored directly on Deal attribution with the old `waiting / approved / rejected` vocabulary. There is no authoritative transaction state machine and no terminal `paid_out` state.
+4. There is no payout aggregate connecting a payment reference and total to the exact transactions covered by the external bank transfer.
+5. Affiliates cannot maintain account-holder/account-number data or see payout history and balance summaries.
+6. Staff cannot invite an affiliate from the program surface or operate affiliate, transaction, and payout tables as one workflow.
 
 ## Goals and Non-Goals
 
 ### Goals
 
-- Record privacy-minimized, unique, human affiliate-link visits in Open Mercato.
-- Preserve one deterministic affiliate attribution per Deal from the existing `affiliate_code` handoff.
-- Expose tenant-, organization-, and affiliate-scoped portal reads.
-- Make dashboard ranges adjustable, validated, and defaulted to the last 30 days.
-- Store commission status using a system dictionary with the exact values `approved`, `waiting`, and `rejected`.
-- Preserve optimistic locking on staff-editable link and Deal-attribution records.
-- Keep the module private and compatible with the current `fork/finoo` baseline.
+- One tenant- and organization-scoped `FinooAffiliate` membership per invitation/email before acceptance and per affiliate portal user after acceptance.
+- One high-entropy primary affiliate code and generated tracked URL per membership.
+- Immediate code reservation after the staff invitation succeeds; link activation only after the invitation is accepted.
+- Exactly one commission transaction per attributed Deal, created from the first normalized `Accepted` stage transition.
+- Explicit transaction transitions: `processing -> approved`, `processing -> rejected`, `rejected -> processing`, and `approved -> paid_out` only through payout confirmation.
+- Atomic and idempotent payout creation across one affiliate's selected approved transactions.
+- Encrypted profile and payout bank details.
+- Affiliate-scoped portal reads and feature-gated staff actions.
+- Additive migration and preserved THOM-88 public/private contract surfaces.
 
 ### Non-Goals
 
-- Building an intermediary portal.
-- Replacing the Finoo application form or redesigning the broader CRM pipeline.
-- Cross-device visitor identity, user fingerprinting, multi-touch attribution, attribution windows, or commission payout automation.
-- Generic product analytics, session replay, external analytics-provider integration, or historical data import.
-- Public upstream contribution.
-
-## Market Reference
-
-[Plausible Analytics Community Edition](https://github.com/plausible/analytics) is the closest open-source market reference for a privacy-minimized first-party event model. Its documented posture avoids cookies and persistent personal identifiers and includes known-bot filtering. THOM-88 adopts the same product principles—minimal event data, explicit bot/prefetch rejection, and simple date-filtered aggregates—but does not copy its generic analytics/session architecture. Finoo needs an authenticated affiliate business read model, a 24-hour per-link uniqueness rule, and CRM attribution, all of which are narrower than a general analytics platform.
+- finoo.pl Deal ingestion or changes to its application form.
+- Automatic commission calculation, percentage/rate plans, approval delays, refund/clawback handling, negative balances, tax documents, invoices, or payment-provider integration.
+- Multi-currency payouts. THOM-89 is fixed to PLN and preserves existing integer values as whole PLN units.
+- Changing customer-account invitation acceptance fields or creating CRM People records for invitees.
+- Self-registration or affiliate applications.
+- Editing or undoing a recorded payout after confirmation.
+- Deleting legacy affiliate-link or first-Completed data.
 
 ## Confirmed Business Rules
 
-- Self-registration: disabled.
-- Click definition: a unique human visit, not every HTTP request.
-- Unique window: one counted visit per affiliate link and anonymous browser identifier per rolling 24 hours.
-- Bots/previews: redirect to the destination but do not count.
-- Attribution parameter: `affiliate_code`.
-- Deal attribution source: existing Deal custom field key `affiliate_code`; landing page and initial referrer come from the existing Deal custom fields `landing_page` and `initial_referrer`.
-- Lead time: Deal creation time for a successfully attributed Deal.
-- Transaction time: the earliest persisted transition to a pipeline stage with the normalized label `completed`.
-- Spec unit: links, attribution, CRM fields, and portal reporting remain one integrated THOM-88 specification.
+- Customer portal roles: existing `intermediary` and `affiliate` roles; only `affiliate` receives affiliate-program access.
+- Public self-registration: disabled at page, CTA, and API levels.
+- Click: one human top-level navigation per link/browser token in a rolling 24-hour window; bots, previews, prefetches, and subresource requests redirect without counting.
+- Lead attribution: Deal custom-field `affiliate_code` resolves an active link and immutable affiliate owner.
+- Conversion trigger: earliest persisted Deal stage transition whose trimmed, case-normalized label is `accepted`.
+- Reopen/re-entry: leaving Accepted and entering Accepted again does not create or change the existing transaction.
+- Initial transaction status: `processing`.
+- Commission amount: non-negative integer entered by staff before Accepted and snapshotted into the transaction on first Accepted.
+- Status wording: the business text's “Accepted” transaction status means the technical `approved` commission status; Deal stage `Accepted` remains a separate workflow concept.
+- Payout eligibility: only `approved` transactions.
+- Payout selection: one or more transactions belonging to exactly one affiliate and one tenant/organization.
+- Payout effect: one payout row plus links to all selected transactions and their transition to `paid_out`, in one database transaction.
+- Payout warning: exactly “Please only Confirm if the payment was actually made”.
+- Bank payment: external/manual; confirmation records it only.
+- Currency: PLN; stored integer values remain whole PLN units for compatibility.
+
+## Proposed Solution
+
+Add five module-owned entities—affiliate membership, first Accepted registry, transaction, payout-preview reservation, and payout—and extend the existing link and attribution rows with optional membership IDs. Existing invitation, link, visit, and Deal attribution entities stay in place.
+
+The staff invitation form submits once but performs a two-step server workflow through existing APIs:
+
+1. `customer_accounts` sends the invitation with the `affiliate` role and returns the invitation ID only after email delivery succeeds.
+2. Finoo's idempotent ensure endpoint validates that scoped invitation and role, creates/reuses the affiliate membership, reserves its unique code, and returns it immediately.
+
+Best-effort inline Finoo subscribers to `customer_accounts.user.invited` and `customer_accounts.invitation.accepted` accelerate synchronization but are not treated as durable or trusted-scope delivery, because the existing source events are fire-and-forget. Each subscriber reloads the invitation/user and tenant-owned affiliate role from storage and verifies tenant/organization membership before acting. The explicit ensure endpoint is authoritative after invite, and every authenticated Finoo portal entry lazily runs the same idempotent activation reconciliation before resolving membership. The named setup/CLI reconciliation is the durable operator repair path. Together these paths bind the accepted portal user and create/activate the primary legacy-compatible `FinooAffiliateLink` using the reserved code and configured default destination without modifying core modules. A code is visible after invitation but cannot redirect or attribute Deals until the membership has an accepted active portal user.
+
+An additive database trigger captures the first `Accepted` stage transition into a scoped unique registry with `ON CONFLICT DO NOTHING`. Existing Deal subscribers then synchronize attribution and create the transaction when both an attribution and first-Accepted record exist. A scoped unique constraint on transaction Deal identity is the second idempotency boundary.
+
+Staff review transactions through explicit transition commands. Payout preview validates a same-affiliate selection, reads the current encrypted bank profile, and persists a module-owned reference reservation with an exact binding hash. Confirm enqueues a progress job carrying that reference. Concurrent exact confirms may create more than one progress/queue job because the shared services have no caller-defined uniqueness seam; every job converges on the single database-unique reference and payout. The worker executes one compound command that locks and revalidates all selected versions, creates or reuses the payout, links every transaction, and changes them to `paid_out` atomically.
+
+## User Stories / Use Cases
+
+- **Staff program manager** wants to invite an email and receive a unique code so that the affiliate can join without public registration.
+- **Affiliate** wants to copy one generated link and see leads, unique clicks, accepted transactions, payable balance, paid total, and payout history.
+- **Affiliate** wants to maintain account holder and account number so staff can prepare a manual transfer.
+- **CRM operator** wants first Accepted to create one commission transaction so reopen/re-entry cannot double accrue commission.
+- **Finance operator** wants to approve/reject transactions and record one payout for selected approved transactions so the ledger matches a completed bank transfer.
+- **Auditor** wants a payment reference and immutable transaction linkage so each paid commission is traceable exactly once.
 
 ## Architecture
 
-### Module Boundary
+### Module Boundary and Cross-Module Coupling
 
-`finoo_affiliates` requires `customers`, `customer_accounts`, `portal`, `dictionaries`, and `events`. It owns all affiliate entities, APIs, pages, widgets, event subscribers, ACL declarations, setup defaults, and translations.
+`finoo_affiliates` remains the glue-owning private consumer. It retains its existing `scheduler` requirement and also requires the application modules `customers`, `customer_accounts`, `portal`, `dictionaries`, `events`, and `progress`. Payout workers use the `@open-mercato/queue` infrastructure package without declaring a nonexistent `queue` module dependency.
 
-The module stores UUID references to CRM Deals and customer portal users without MikroORM relationships. It may read the required peer entities through their package entity exports inside server-only services, always with explicit tenant and organization predicates. It never imports peer commands or business services and never exposes peer entities from its API.
-
-`data/extensions.ts` declares the `finoo_deal_attribution.deal_id` link to `customers.deal` using the supported extension DSL. The extension remains owned and stored by Finoo; the declaration does not create an ORM relationship or make the customers module depend on Finoo. The peers are hard requirements for this private module, not optional integrations.
+- Customer invitation mutation: browser calls the existing authenticated `customer_accounts` API; Finoo does not import or invoke its command/service.
+- Invitation and acceptance side effects: Finoo best-effort inline subscribers consume declared `customer_accounts` events, then reload and verify invitation/user/role scope; explicit ensure, lazy portal reconciliation, and the repair CLI provide recovery.
+- Deal conversion side effect: Finoo persistent subscribers consume declared `customers.deal.created` / `updated` / `deleted` events and read scoped Deal, custom-field, company, and transition data. Every module-owned update of an existing attribution first runs the idempotent transaction command against the persisted pre-edit values and fails closed if that snapshot attempt fails; a second attempt after persistence covers the reverse ordering where Accepted preceded attribution. Deal deletion likewise runs the command before soft-deleting the attribution and permits the trusted system command to read the just-soft-deleted Deal, preserving any first-Accepted liability. A scoped scheduled reconciliation scans only eligible post-deploy `finoo_deal_acceptances` rows without a transaction, including legacy attributions whose nullable `affiliate_id` can be resolved from the active scoped `affiliate_user_id`, so a failure between the committed Deal write and persistent-event enqueue cannot strand a valid post-deploy commission or allow a later attribution edit to replace its pre-edit money/affiliate snapshot.
+- Cross-module data: scalar UUIDs and encrypted snapshots only; no cross-module ORM relations.
+- UI: module pages and existing dashboard/Deal widget injection spots.
+- Module-absent behavior: customer invitations and CRM Deals keep working; no Finoo membership, transaction, or payout side effect occurs.
 
 ### Data Flow
 
 ```mermaid
 flowchart LR
-  Staff["Staff creates affiliate link"] --> Redirect["Public tracked redirect"]
-  Redirect -->|"affiliate_code"| Form["Existing Finoo application flow"]
-  Form -->|"Deal + custom fields"| Deal["CRM Deal"]
-  Deal -->|"persistent created/updated event"| Sync["Finoo attribution synchronizer"]
-  Sync --> Attribution["Finoo Deal attribution"]
-  Redirect --> Visit["Unique affiliate visit"]
-  Attribution --> Portal["Affiliate-scoped portal APIs"]
-  Visit --> Portal
+  Staff["Staff enters affiliate email"] --> Invite["Customer portal invitation email"]
+  Invite --> Reserve["Finoo membership and reserved code"]
+  Reserve --> AcceptInvite["Invitee accepts and creates portal user"]
+  AcceptInvite --> PrimaryLink["Primary tracked link activated"]
+  PrimaryLink --> Click["Human unique visit"]
+  Click --> Form["Existing finoo.pl application flow"]
+  Form --> Deal["Deal with affiliate_code"]
+  Deal --> Attribution["Finoo Deal attribution"]
+  Deal --> Accepted["First Accepted transition registry"]
+  Attribution --> Transaction["One processing transaction"]
+  Accepted --> Transaction
+  Transaction --> Review["Approve, reject, or reprocess"]
+  Review --> Preview["Same-affiliate payout preview"]
+  Preview --> Confirm["Confirmed external payment record"]
+  Confirm --> Payout["Payout plus paid_out transactions"]
 ```
 
-### Eventual Consistency
+### Server / Client Boundary Map
 
-An `AFTER INSERT OR UPDATE` database trigger on `customer_deal_stage_transitions` inserts the first normalized Completed timestamp with `ON CONFLICT DO NOTHING` inside the CRM write transaction. A persistence failure therefore rolls back the stage transition instead of being swallowed by an after-command hook. Persistent `customers.deal.created` and `customers.deal.updated` subscribers then synchronize attribution after the CRM command commits. Each delivery is idempotent:
+| Route / surface | Server root | Client islands | Data owner | Notes |
+|---|---|---|---|---|
+| `/backend/finoo-affiliates/affiliates` | generated backend page wrapper | `AffiliatesTableClient`, `InviteAffiliateDialog` | staff APIs | DataTable plus invite dialog |
+| `/backend/finoo-affiliates/transactions` | generated backend page wrapper | `TransactionsTableClient`, `PayoutPreviewDialog` | staff APIs | selected-row action and guarded writes |
+| `/backend/finoo-affiliates/payouts` | generated backend page wrapper | `PayoutsTableClient` | staff APIs | read-only DataTable |
+| `/:orgSlug/portal/affiliate/leads` | generated portal page wrapper | `AffiliateLeadsClient` | portal API | existing route, expanded statuses |
+| `/:orgSlug/portal/affiliate/payouts` | generated portal page wrapper | `AffiliatePayoutsClient` | portal API | read-only DataTable |
+| `/:orgSlug/portal/affiliate/profile` | generated portal page wrapper | `AffiliateProfileFormClient` | portal profile API | own encrypted bank fields |
+| portal dashboard | existing portal server shell | three charts plus summary/link client island | portal dashboard API | no new provider |
 
-- no matching active affiliate code: leave no attribution or preserve the existing immutable attribution;
-- matching code and no attribution: create the attribution using Deal creation time;
-- existing attribution: refresh presentation snapshots and detect the first `Completed` transition;
-- retry: upsert by the scoped unique Deal key and never overwrite an earlier `transactionAt`.
+### `"use client"` Ledger and Budgets
 
-Affiliate ownership becomes immutable once established automatically. Staff may deliberately correct it through the Deal affiliate tab; subsequent CRM event synchronization must not silently replace that staff selection.
+| File group | Exact browser capability | Heavy deps | Guardrail |
+|---|---|---|---|
+| staff Affiliates client | DataTable, dialog state, email submit, copy link | DataTable only | split invite dialog from table; each file target <300 LOC |
+| staff Transactions client | DataTable selection, actions, preview dialog | DataTable only | split preview dialog and status actions; each file target <300 LOC |
+| staff Payouts client | DataTable pagination/sorting | DataTable only | target <250 LOC |
+| portal Profile client | form state and guarded PUT | none | target <220 LOC |
+| portal Payouts client | DataTable pagination | DataTable only | target <220 LOC |
+| dashboard summary/link client | date controls and copy action | existing chart deps only | no new chart/provider dependency |
 
-Staff/undo deletion and Deal lifecycle deletion are distinguished. Ordinary Deal synchronization never resurrects an attribution explicitly removed by staff or undo; restoring a previously deleted Deal may restore only the attribution marked as Deal-deleted.
+Budgets: zero new production dependencies, zero new global providers, zero page-root client components outside generated conventions, page size at most 100, payout selection at most 100, changed interactive routes each receive a hydration/interaction Playwright path, and `yarn check:client-boundaries` must pass. Because that checker does not scan app-module client islands, a focused source test additionally enforces server page roots, `*.client.tsx` separation, and these LOC budgets.
 
-## Data Model
+## Data Models
 
-All module tables contain `id`, `organization_id`, `tenant_id`, `created_at`, and `updated_at`. User-editable entities also contain `deleted_at` and participate in optimistic locking.
+All new module entities contain UUID `id`, `tenant_id`, `organization_id`, `created_at`, and `updated_at`. Queries always include tenant and organization. User-editable rows include `updated_at` for optimistic locking. Scalar IDs reference peer-module rows without ORM relations.
 
-### `finoo_affiliate_links`
-
-| Field | Type | Rules |
-|---|---|---|
-| `affiliate_user_id` | UUID | required portal user reference; no ORM relation |
-| `code` | text | high-entropy, globally unique, immutable after creation |
-| `label` | text | staff-facing label |
-| `destination_url` | text | absolute HTTPS URL with allowlisted host |
-| `is_active` | boolean | inactive links return 404 and never redirect |
-| `deleted_at` | timestamptz | soft delete |
-
-Indexes: scoped affiliate lookup, globally unique code, scoped active list.
-
-### `finoo_affiliate_visits`
-
-| Field | Type | Rules |
-|---|---|---|
-| `affiliate_link_id` | UUID | module-local link reference |
-| `affiliate_user_id` | UUID | immutable snapshot from the link |
-| `visitor_hash` | text nullable | SHA-256 of a random first-party browser token; cleared after the 24-hour dedupe window |
-| `visited_at` | timestamptz | counted visit time |
-
-Index `(affiliate_link_id, visitor_hash, visited_at)` supports the 24-hour uniqueness check. A transaction-scoped advisory lock derived from link ID and visitor hash serializes concurrent first visits. During visit recording, expired non-null hashes for that link are irreversibly cleared. An hourly tenant- and organization-scoped scheduler job also anonymizes expired hashes in bounded batches, including dormant or deactivated links, while timestamps and affiliate identifiers remain available for aggregate reporting. The internal entity does not need optimistic locking.
-
-### `finoo_deal_completions`
+### `FinooAffiliate` — `finoo_affiliates`
 
 | Field | Type | Rules |
 |---|---|---|
-| `deal_id` | UUID | scoped unique CRM Deal reference; no ORM relation |
-| `completed_at` | timestamptz | immutable first normalized `Completed` transition |
+| `invitation_id` | UUID nullable | scoped invitation reference; unique while present |
+| `customer_user_id` | UUID nullable | set after acceptance; scoped unique while present |
+| `email` | text | encrypted invitation/user snapshot |
+| `email_hash` | text | deterministic equality lookup; scoped unique active membership |
+| `code` | text | 24-character high-entropy uppercase code; globally unique and immutable |
+| `primary_link_id` | UUID nullable | module-local link ID created on acceptance |
+| `account_holder_name` | text nullable | encrypted; portal user editable |
+| `account_number` | text nullable | encrypted; trimmed/normalized for storage, never logged |
+| `is_active` | boolean | false until accepted; inactive members cannot create new attribution |
+| `deleted_at` | timestamptz nullable | soft delete; financial history remains |
 
-The scoped unique key plus `INSERT ... ON CONFLICT DO NOTHING` preserves the first timestamp even when Deal events are delayed or the Deal later re-enters `Completed`.
+Indexes: unique global code, scoped unique non-deleted email hash, scoped unique non-null customer user, scoped invitation, active list.
 
-### `finoo_deal_attributions`
+Staff first/last-name columns do not add another name store. The list batch-loads the linked scoped CRM Person when available and uses its first/last name. Otherwise it derives a display fallback by splitting the required customer-user `displayName` at the final whitespace; a one-token name has an empty last-name cell. This is display-only and never used for identity or authorization.
+
+### Existing `FinooAffiliateLink` Extension
+
+Add nullable `affiliate_id` and retain `affiliate_user_id`, `code`, `label`, destination, lifecycle, routes, commands, and events. The new primary link has the membership's reserved code. Existing manually created links remain valid and can continue to redirect and attribute. The old staff link CRUD page is removed from navigation but its API contract remains.
+
+### Existing `FinooDealAttribution` Extension
+
+Add nullable `affiliate_id`. Preserve all deployed columns, the legacy `approved | waiting | rejected` commission-status contract, and legacy first-Completed `transaction_at`. The existing Deal-attribution API and command remain writable before and after Accepted exactly as deployed; later edits affect only the mutable CRM attribution and never rewrite an already-created transaction snapshot. Add read-only transaction identity/current-program-status fields to the response so the CRM widget can distinguish the mutable attribution from the immutable ledger. New portal and staff program views use the transaction projection described below rather than reinterpreting the legacy status field.
+
+### `FinooDealAcceptance` — `finoo_deal_acceptances`
 
 | Field | Type | Rules |
 |---|---|---|
-| `deal_id` | UUID | scoped unique CRM Deal reference; no ORM relation |
-| `affiliate_user_id` | UUID | portal user reference; editable by staff |
-| `affiliate_code` | text | attribution snapshot |
-| `company_name` | text nullable | first linked company display-name snapshot |
-| `landing_page` | text nullable | Deal custom-field snapshot |
-| `initial_referrer` | text nullable | Deal custom-field snapshot |
-| `commission_status_entry_id` | UUID | entry from `finoo_commission_status` dictionary |
-| `commission_status` | text | normalized value snapshot: approved/waiting/rejected |
-| `commission_amount` | integer | non-negative integer, default 0 |
-| `lead_at` | timestamptz | attributed Deal creation time |
-| `transaction_at` | timestamptz nullable | earliest Completed transition; set once |
-| `attribution_source` | text | `automatic` or `staff` |
-| `deletion_reason` | text nullable | `deal` or `staff`; controls whether synchronization may restore the row |
-| `deleted_at` | timestamptz | soft delete |
+| `deal_id` | UUID | scoped unique CRM Deal ID |
+| `accepted_at` | timestamptz | first Accepted transition observed after deployment; immutable |
 
-Indexes: scoped unique Deal, scoped affiliate + lead time, scoped affiliate + transaction time. `updated_at` is returned as `updatedAt` by staff APIs and is required for update/delete optimistic-lock headers.
+The trigger inserts with `ON CONFLICT DO NOTHING`. The existing `finoo_deal_completions` table and trigger remain unchanged for compatibility.
+
+### `FinooAffiliateTransaction` — `finoo_affiliate_transactions`
+
+| Field | Type | Rules |
+|---|---|---|
+| `affiliate_id` | UUID | module membership ID |
+| `affiliate_user_id` | UUID | accepted portal-user snapshot |
+| `deal_id` | UUID | scoped unique Deal identity; no ORM relation |
+| `deal_name` | text nullable | encrypted snapshot |
+| `deal_company` | text nullable | encrypted snapshot |
+| `commission_amount` | integer | non-negative whole PLN units, snapshot at first Accepted |
+| `currency` | text | fixed `PLN` snapshot |
+| `commission_status_entry_id` | UUID | dictionary entry snapshot |
+| `commission_status` | text | `processing`, `approved`, `rejected`, or `paid_out` |
+| `accepted_at` | timestamptz | immutable first Accepted time |
+| `payout_id` | UUID nullable | module-local payout link; set exactly once |
+| `created_event_published_at` | timestamptz nullable | durable publication marker; null rows are retried by Accepted reconciliation |
+| `created_at` / `updated_at` | timestamptz | optimistic-lock version is `updated_at` |
+
+Indexes: scoped unique Deal, scoped affiliate/status/accepted time, scoped payout, dashboard time range.
+
+### `FinooAffiliatePayout` — `finoo_affiliate_payouts`
+
+| Field | Type | Rules |
+|---|---|---|
+| `affiliate_id` | UUID | module membership ID |
+| `affiliate_user_id` | UUID | portal-user snapshot |
+| `payment_reference` | text | server-generated globally unique idempotency key |
+| `amount` | bigint | exact sum of linked transactions in whole PLN units |
+| `currency` | text | fixed `PLN` |
+| `account_holder_name` | text | encrypted confirmation-time snapshot |
+| `account_number` | text | encrypted confirmation-time snapshot |
+| `paid_at` | timestamptz | server confirmation time |
+| `created_event_published_at` | timestamptz nullable | durable publication marker; payout-job retry repairs a failed enqueue |
+| `created_at` / `updated_at` | timestamptz | immutable business record after creation |
+
+Each transaction has at most one `payout_id`; one payout has one or more transaction rows. No unbounded ID array or JSON ledger is stored.
+
+### `FinooPayoutPreview` — `finoo_payout_previews`
+
+| Field | Type | Rules |
+|---|---|---|
+| `payment_reference` | text | server-generated globally unique opaque reference |
+| `affiliate_id` | UUID | module membership ID |
+| `binding_hash` | text | versioned, scope-bound HMAC of canonical transaction IDs/versions, affiliate version, total, currency, and bank-profile HMAC; creation fails closed without a server-side pepper |
+| `selection` | JSON | bounded 1..100 transaction IDs and versions; no bank data |
+| `amount` | bigint | exact preview total in whole PLN units |
+| `currency` | text | fixed `PLN` |
+| `expires_at` | timestamptz | short-lived confirmation window |
+| `payout_id` | UUID nullable | set after successful convergence |
+| `created_at` / `updated_at` | timestamptz | lifecycle and optimistic concurrency |
+
+The unique reference is the financial idempotency seam. Expired unused previews are pruned by the existing scheduler pattern. New aggregate-money APIs serialize `amount`, `totalPaidOut`, and `pendingPayout` as base-10 integer strings so `bigint` values never lose precision in JSON; legacy per-Deal `commissionAmount` remains a number.
 
 ### Encryption and Privacy
 
-`encryption.ts` exports `defaultEncryptionMaps` for `finoo_deal_attribution.company_name`, `landing_page`, and `initial_referrer`. All reads of the attribution entity use `findWithDecryption` or `findOneWithDecryption` with both tenant and organization scope. These display snapshots do not participate in equality filters, so hash sibling columns are not required.
+`encryption.ts` is extended with platform `defaultEncryptionMaps` for:
 
-Affiliate codes, destination URLs, dictionary values, integer commission amounts, timestamps, UUID references, and visitor hashes remain plaintext because they are routing/filtering/aggregation fields rather than free-text personal snapshots. The random visitor cookie token is never persisted; only its one-way SHA-256 digest is stored. No custom encryption implementation is introduced.
+- `finoo_affiliates.email` with `email_hash` as the lookup sibling;
+- `finoo_affiliates.account_holder_name` and `account_number`;
+- `finoo_affiliate_transactions.deal_name` and `deal_company`;
+- `finoo_affiliate_payouts.account_holder_name` and `account_number`.
 
-### Dictionary
+All reads use `findWithDecryption` / `findOneWithDecryption` and trusted tenant/organization scope. Bank values never enter logs, events, progress metadata, audit summaries, or affiliate/staff list responses except the explicitly authorized payout preview and own-profile response. Staff list rows expose only email/name/code/count. Portal payout history exposes date/reference/amount, not stored bank snapshots.
 
-`seedDefaults` idempotently creates an active system dictionary:
+### Commission Dictionaries
 
-- key: `finoo_commission_status`
-- entries: `approved`, `waiting`, `rejected`
-- default entry: `waiting`
-- manager visibility: hidden
+The existing system dictionary `finoo_commission_status` remains unchanged for the legacy Deal-attribution contract:
 
-The staff editor lists only these three entries and validates that the selected entry belongs to the scoped dictionary. Both entry ID and normalized value snapshot are stored so portal reads remain deterministic while preserving the requested dictionary semantics.
+- `approved`;
+- `rejected`;
+- `waiting`.
 
-## Visit Tracking and Security
+The new system dictionary `finoo_affiliate_transaction_status` contains `processing`, `approved`, `rejected`, and `paid_out`. Only transaction APIs expose this closed four-value enum. Existing attribution rows, dictionary entry IDs, OpenAPI enums, and generated/exhaustive clients therefore retain their current behavior. In new program views an assigned Deal with no transaction is projected as `processing`; after Accepted, the transaction row is authoritative.
 
-### Redirect Contract
+## State Machines
 
-`GET /api/finoo_affiliates/r/:code`:
+### Transaction
 
-1. validate the code format;
-2. resolve one active link and its tenant/organization;
-3. revalidate the stored destination URL against `OM_FINOO_AFFILIATE_REDIRECT_HOSTS`;
-4. append or replace `affiliate_code` with the link code;
-5. classify the request;
-6. before container creation or link lookup, require a client identity derived from a deployment-validated proxy depth and apply a shared endpoint/client rate limiter; for a human request, apply a second per-link/client limit before visit persistence, then read or set the 24-hour `finoo_affiliate_visitor` cookie and record a visit only when no visit exists within the previous 24 hours;
-7. return a 302 redirect with `Cache-Control: no-store`.
+```mermaid
+stateDiagram-v2
+  [*] --> processing: first Deal Accepted
+  processing --> approved: Accept
+  processing --> rejected: Reject
+  rejected --> processing: Reprocess
+  approved --> paid_out: confirmed payout only
+  paid_out --> [*]
+```
 
-`HEAD` requests redirect without counting. Invalid/inactive codes and disallowed destinations return 404; the response does not reveal which validation failed.
+All other transitions return `409 INVALID_COMMISSION_TRANSITION`. `paid_out` is terminal. A paid transaction cannot be edited, rejected, reprocessed, removed from its payout, or paid again.
 
-### Bot and Preview Rejection
+### Invitation / Affiliate Activation
 
-A request is non-counting when any of the following holds:
+```mermaid
+stateDiagram-v2
+  [*] --> invited: invitation email sent and code reserved
+  invited --> active: invitation accepted and primary link created
+  invited --> invited: repeat invite reuses membership and code
+  active --> active: repeated acceptance/event delivery is idempotent
+```
 
-- method is not GET;
-- `Purpose`, `Sec-Purpose`, or `X-Purpose` indicates prefetch/preview;
-- `User-Agent` is absent;
-- normalized `User-Agent` matches maintained bot/crawler/preview tokens, including search crawlers and social preview agents.
-- present Fetch Metadata does not describe a top-level document navigation (`navigate`, `document`, and, when present, `?1`).
+An expired/cancelled invitation does not delete the reserved membership automatically; re-inviting the same normalized email reuses it. Staff can deactivate the membership separately in future scope; THOM-89 does not add a delete action to the new Affiliates table.
 
-This is deterministic filtering, not a claim of perfect bot detection. The shared limiter bounds cookie churn and write amplification; its client key is one-way hashed and transient. No IP address, full referrer, full user-agent, or browser fingerprint is persisted by the Finoo module.
+## Commands, Events, Workers, and Undo
 
-### Destination Allowlist
+### Commands
 
-`OM_FINOO_AFFILIATE_REDIRECT_HOSTS` is a comma-separated list of exact lowercase hosts. Only credential-free `https:` destinations on that list, without a non-default explicit port, are accepted. Local development additionally allows `http://localhost` and `http://127.0.0.1`. Staff create/update APIs apply the same validator as the redirect endpoint.
+- `finoo_affiliates.affiliate.ensure_invitation` — idempotently creates/refreshes membership after a successful scoped affiliate-role invitation; undo soft-deletes only a newly created, still-unaccepted membership.
+- `finoo_affiliates.affiliate.activate` — system command binds the accepted user and creates/reuses the primary link; idempotent, not user-undoable.
+- `finoo_affiliates.affiliate.update_profile` — portal-own bank profile update with DI-aware optimistic locking; intentionally non-undoable and executed with `skipLog: true` because the command bus always persists original redo input, which would expose bank values through decrypted audit surfaces. This release creates no ActionLog for the profile mutation; scoped API authorization and the entity `updated_at` provide the operational trace without storing another sensitive copy.
+- `finoo_affiliates.transaction.create` — system command from Deal synchronization; unique Deal and first-Accepted registry make retries idempotent; not user-undoable.
+- `finoo_affiliates.transaction.transition` — staff command for processing/approved/rejected transitions; undo restores the prior non-paid status only if the row has not since become `paid_out`.
+- `finoo_affiliates.payout.create` — worker-invoked compound command; non-undoable because it records an already-made external transfer.
 
-Production must configure `RATE_LIMIT_TRUST_PROXY_DEPTH` to the verified FINOO edge chain and use shared Redis rate-limit storage when more than one application instance serves redirects. If client identity or the limiter is unavailable, the public endpoint fails closed before database work. A known globally disabled limiter never records analytics; the integration-test runtime is the only bounded exception used to exercise the full redirect flow.
+Existing link and attribution commands/events remain.
 
-## CRM Attribution Synchronization
+### Events
 
-The event subscriber loads the Deal, its normalized custom fields, linked companies, and persisted stage transitions under the event's tenant and organization scope.
+Add singular, past-tense module events:
 
-Custom-field keys are configurable for deployment drift but have fixed defaults:
+- `finoo_affiliates.affiliate.created`
+- `finoo_affiliates.affiliate.activated`
+- `finoo_affiliates.affiliate.profile_updated`
+- `finoo_affiliates.affiliate_transaction.created`
+- `finoo_affiliates.affiliate_transaction.updated`
+- `finoo_affiliates.affiliate_payout.created`
 
-| Meaning | Environment override | Default key |
-|---|---|---|
-| Affiliate code | `OM_FINOO_AFFILIATE_CODE_FIELD` | `affiliate_code` |
-| Landing page | `OM_FINOO_LANDING_PAGE_FIELD` | `landing_page` |
-| Initial referrer | `OM_FINOO_INITIAL_REFERRER_FIELD` | `initial_referrer` |
+Events include IDs, status/amount where operationally needed, and trusted scope, but never email or bank data. Existing event IDs are not renamed or removed.
 
-The synchronizer accepts normalized keys with or without the `cf_` transport prefix but never performs fuzzy label matching. Values are trimmed and length-bounded before persistence.
+Created financial events use at-least-once publication. The transaction and payout rows retain a nullable publication timestamp that is written only after the persistent event enqueue succeeds. A failed enqueue leaves the marker null: Accepted reconciliation reselects unpublished transaction rows, while the durable payout job retries or remains recoverable from its dead-letter record. A crash after enqueue but before marking may publish a duplicate, so consumers must remain idempotent by the stable financial row ID.
 
-If the custom-field affiliate code has no active scoped link, no attribution is created. If it matches, `affiliate_user_id` is copied from the link and `commission_status` starts as `waiting`. A Deal is a transaction if the immutable Finoo completion registry contains its first `Completed` transition. The existing CRM stage-transition projection is used only as a historical fallback when staff first attaches a pre-existing Deal; merely having a current text status or being manually marked closed is insufficient.
+### Subscribers
 
-## APIs
+- `customer_accounts.user.invited` -> best-effort ensure when a storage-verified invitation includes the tenant-owned `affiliate` role.
+- `customer_accounts.invitation.accepted` -> best-effort bind/activate after reloading and verifying invitation, user, role, tenant, and organization.
+- Existing `customers.deal.created` / `updated` subscribers -> synchronize attribution and create transaction when first Accepted exists.
+- Scheduled post-deploy acceptance reconciliation -> retry transaction creation or missing created-event publication for registry rows that still have no ledger row or whose transaction publication marker is null and currently have a live Deal, active attribution, and matching active affiliate membership. Membership matches `affiliate_user_id` and, when the legacy nullable `affiliate_id` is present, must also match that ID. It never scans historical customer stage transitions, cannot create pre-deploy liabilities, and does not immediately requeue a batch containing a no-op row; the stable schedule handles later eligibility without a tight loop.
+- Existing Deal deletion subscriber -> first creates/reuses any post-deploy first-Accepted transaction from the still-live attribution and the just-soft-deleted Deal snapshot, failing closed before soft-deleting the attribution; transaction/payout history remains intact.
 
-### Staff APIs
+Each subscriber has one event, treats the event context as untrusted, derives scope from verified persisted rows, performs idempotent writes, and does not circularly re-emit into the source module. Delivery durability comes from explicit ensure, lazy portal activation reconciliation, and the repair CLI rather than from these source events.
 
-All staff APIs require normal staff authentication plus `finoo_affiliates.manage` and enforce request tenant/organization scope.
+### Payout Worker and Progress
 
-- `GET/POST/PUT/DELETE /api/finoo_affiliates/links`
-  - paginated link management;
-  - POST generates a random code server-side;
-  - PUT/DELETE enforce optimistic locking.
-- `GET /api/finoo_affiliates/affiliate-users`
-  - returns active portal users assigned to the `affiliate` customer role in the current scope.
-- `GET/PUT /api/finoo_affiliates/deal-attributions?dealId=:id`
-  - GET returns one Deal extension record plus dictionary choices;
-  - PUT creates or updates the staff-owned fields, validates the portal user role and dictionary entry, and enforces optimistic locking on update.
+Payout confirmation is a user-visible selected-row operation and therefore uses the shared progress framework:
 
-Every route exports per-method `metadata` and `openApi`. Link CRUD uses `makeCrudRoute` and command IDs. The custom attribution write delegates to its command through the standard command bus and runs registered mutation guards before execution. Public schemas never accept tenant or organization IDs.
+1. preview binds its payment reference to the canonical sorted transaction IDs, their versions, affiliate ID and version, total, currency, and bank-profile snapshot hash;
+2. confirmation validates that exact binding for up to 100 `{ id, updatedAt }` rows and the supplied `affiliateUpdatedAt` under the same-affiliate scope;
+3. creates a `ProgressJob` whose non-sensitive metadata includes the payment reference; concurrent duplicate jobs are permitted and converge on one payout;
+4. enqueues `finoo-affiliates-payout-create` with trusted scope, user ID, reference, affiliate version, and transaction versions;
+5. worker starts the job, executes one atomic payout command, marks processed count to total only after commit, then completes;
+6. failures mark the job failed and queue retry reuses the payment reference, so a committed payout is returned rather than duplicated.
 
-### Portal APIs
+The compound command uses the DI-aware command optimistic-lock guard, locks all scoped transaction and preview rows, and compares every explicit version while locked. It is all-or-nothing. Partial payout rows or partially paid transaction sets are impossible.
 
-Portal APIs require customer authentication and `portal.finoo_affiliates.view`. They derive `affiliate_user_id` exclusively from the authenticated customer user; they never accept it from query/body input.
+## API Contracts
 
-- `GET /api/finoo_affiliates/portal/dashboard?from=YYYY-MM-DD&to=YYYY-MM-DD`
-  - inclusive calendar dates, default last 30 days, maximum 366 days;
-  - returns zero-filled ISO-week buckets for leads, visits, and transactions.
-- `GET /api/finoo_affiliates/portal/leads?page=&pageSize=&sort=`
-  - page size at most 100;
-  - returns only non-deleted attributions assigned to the authenticated affiliate.
+Every route exports per-method `metadata` and `openApi`, validates with Zod, excludes caller-supplied tenant/organization scope, and uses feature-based authorization. Custom writes run registered mutation guards plus command-level optimistic locking.
 
-Dates are interpreted in `OM_FINOO_ANALYTICS_TIMEZONE`, default `Europe/Warsaw`, and returned as ISO dates. The implementation groups through explicit timezone-aware SQL or an equivalent deterministic server-side bucketing function.
+### Staff Affiliates
 
-### Disabled Signup
+#### `GET /api/finoo_affiliates/affiliates`
 
-The Finoo app entry disables:
+Requires `finoo_affiliates.view`. Query: page, pageSize <=100, sort/search. Response rows: `id`, email, firstName, lastName, code, trackedUrl, relatedDeals, invite/active state, updatedAt. Batch enrichment has a bounded query count and no N+1 loop.
 
-- `POST /api/customer_accounts/signup`;
-- the discovered page route `/[orgSlug]/portal/signup`, redirected to the corresponding login page by Finoo frontend middleware.
+#### `GET /api/finoo_affiliates/invite-options`
 
-Core portal UI reads `NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION` through one shared helper that defaults to `true`. `PortalShell`, the portal landing page, and the login page hide all signup calls to action when it is false. Finoo sets it to false at build/deployment time. This display switch is additive and default-preserving; the disabled signup API plus Finoo frontend middleware remain the hard server-side guarantee even if the UI variable is misconfigured.
+Requires `finoo_affiliates.manage`. Returns the scoped active `affiliate` customer-role ID and whether the default destination configuration is ready. Does not expose other role ACLs.
 
-## Commands, Events, and Undo
+#### `POST /api/finoo_affiliates/affiliates/ensure-invitation`
 
-Staff mutations use these commands:
+Requires `finoo_affiliates.manage` and an invitation ID returned by the existing `POST /api/customer_accounts/admin/users-invite`. Validates the invitation belongs to the same scope and includes the `affiliate` role. Returns `201` for created or `200` for existing: membership ID, code, active state, and future tracked URL. Repeated requests are idempotent.
 
-- `finoo_affiliates.links.create`
-- `finoo_affiliates.links.update`
-- `finoo_affiliates.links.delete`
-- `finoo_affiliates.deal_attributions.upsert`
+The UI also requires the caller to hold `customer_accounts.invite` for the first existing-API call. The page explains a core invitation failure separately from a Finoo synchronization failure; event repair makes the second step recoverable.
 
-Create undo soft-deletes the created link/attribution. Attribution create undo marks the deletion as staff-owned and emits the declared deleted event, so later Deal updates cannot resurrect it. Update undo restores the complete before snapshot. Delete undo restores the soft-deleted link. Commands capture before/after snapshots through the existing undo helpers, enforce optimistic locking for update/delete, mutate within the standard atomic-flush boundary, and emit side effects only after the transaction succeeds.
+### Staff Transactions
 
-The module declares singular, past-tense events with `createModuleEvents(... as const)`:
+#### `GET /api/finoo_affiliates/transactions`
 
-- `finoo_affiliates.affiliate_link.created`
-- `finoo_affiliates.affiliate_link.updated`
-- `finoo_affiliates.affiliate_link.deleted`
-- `finoo_affiliates.deal_attribution.created`
-- `finoo_affiliates.deal_attribution.updated`
+Requires `finoo_affiliates.view`. Paginated/filterable response columns: affiliateFirstName, affiliateLastName, dealName, dealCompany, commissionAmount, currency, commissionStatus, acceptedAt, updatedAt.
 
-Undo emits the corresponding lifecycle result. Visit recording is an internal append-only public-endpoint side effect and is intentionally not undoable; a successful redirect cannot be recalled. It does not emit a per-click persistent event because that would duplicate the durable visit store and add queue load with no current consumer.
+#### `POST /api/finoo_affiliates/transactions/:id/transition`
 
-Two one-event subscriber files consume `customers.deal.created` and `customers.deal.updated` and delegate to the same idempotent synchronizer. They export persistent metadata, fail closed without trusted tenant/organization scope, and do not emit another customer command.
+Requires `finoo_affiliates.manage`. Body: `action` (`accept`, `reject`, `reprocess`) and `updatedAt`. Maps only to the documented state machine. `pay_out` is not accepted here. Returns updated row; stale writes return structured `409`.
 
-## Authorization and Tenant Isolation
+### Staff Payouts
 
-### ACL Features
+#### `POST /api/finoo_affiliates/payouts/preview`
 
-- `finoo_affiliates.view` — staff read access.
-- `finoo_affiliates.manage` — staff link and commission management.
-- `portal.finoo_affiliates.view` — affiliate portal dashboard and leads.
+Requires `finoo_affiliates.payouts.manage`. Body: 1..100 transaction IDs. Read-only response: affiliate identity, `affiliateUpdatedAt`, account holder, account number, total amount as a base-10 integer string, currency, selected count, canonical transaction rows with `id` and `updatedAt`, and a server-generated payment reference. The reference is an opaque server-side reservation bound to the canonical sorted transaction IDs and versions, affiliate ID and version, exact total, currency, and bank-profile snapshot hash; it cannot be reused with a different payload. Returns `409 PROFILE_INCOMPLETE`, `409 MIXED_AFFILIATES`, or `409 TRANSACTION_NOT_APPROVED` as applicable.
 
-Default staff grants: admin gets view/manage; employee gets view. `defaultCustomerRoleFeatures` grants portal view to the existing `affiliate` role. Portal admin wildcard behavior remains governed by the existing customer RBAC service.
+#### `POST /api/finoo_affiliates/payouts/confirm`
 
-Every ORM query includes both `tenantId` and `organizationId` unless it is the initial globally unique redirect-code lookup. The redirect immediately binds the resulting link scope and all subsequent queries use it. Portal APIs additionally filter by the authenticated customer user ID. IDs from one organization must behave as not found in another.
+Requires `finoo_affiliates.payouts.manage`. Body: paymentReference, `affiliateUpdatedAt`, and the exact 1..100 `{ id, updatedAt }` rows returned by preview. Confirm atomically revalidates the reference binding, affiliate/profile version, transaction versions, statuses, amount, and scope before enqueueing or committing any financial change. Any changed selection, profile, amount, status, version, scope, or retry payload returns structured `409 PAYOUT_PREVIEW_STALE`; the client must request a new preview. A valid request returns `202 { progressJobId, paymentReference }`; an exact concurrent retry may return another progress-job ID but both jobs converge on one payout. A retry after commit returns `200 { payoutId, paymentReference }`. No path creates a second payout.
 
-## Frontend
+#### `GET /api/finoo_affiliates/payouts`
 
-### Staff Link Management
+Requires `finoo_affiliates.view`. Paginated response: affiliateFirstName, affiliateLastName, paymentReference, amount as a base-10 integer string, currency, paidAt, transactionCount.
 
-`/backend/finoo-affiliates/links` uses the standard `DataTable` and `CrudForm` patterns. Staff can create a label, choose an affiliate user, set an allowlisted destination, activate/deactivate, copy the generated tracked URL, edit, and soft-delete. User-facing text is translated.
+### Portal
 
-### Deal Extension Tab
+All portal APIs require customer auth plus the applicable portal feature and derive affiliate membership from the authenticated user ID.
 
-An injected `detail:customers.deal:tabs` tab titled “Affiliate & Commission” shows:
+#### `GET /api/finoo_affiliates/portal/dashboard?from=&to=`
 
-- affiliate portal user;
-- commission status dictionary select;
-- commission amount integer input;
-- read-only affiliate code, landing page, and initial referrer snapshots.
+Preserves default last 30 days and maximum 366 days. The existing `transactions` series retains its first-Completed meaning. The response additively returns `affiliateTransactions`, a zero-filled ISO-week series based on new ledger `acceptedAt`, plus base-10 integer strings `totalPaidOut` (sum of `paid_out` transactions) and `pendingPayout` (sum of `approved` transactions), currency, and the generated active tracked URL/code. The existing portal-transactions widget keeps consuming `transactions`; the new affiliate-program graph consumes `affiliateTransactions` under a new widget/component identity.
 
-It uses guarded mutation and the attribution's `updatedAt` optimistic-lock header. A missing automatic attribution can be created manually by selecting an affiliate.
+#### `GET /api/finoo_affiliates/portal/leads`
 
-### Affiliate Dashboard
+Preserves current columns, pagination, and legacy `commissionStatus: approved | waiting | rejected`. Additive fields include `affiliateProgramStatus: processing | approved | rejected | paid_out`, `affiliateTransactionId`, and transaction snapshot metadata. The new Leads table displays `affiliateProgramStatus`: assigned Deals without a transaction project as `processing`; Deals with a transaction use its exact status. Existing clients and tests may continue consuming only `commissionStatus`.
 
-Three feature-gated widgets at `portal:dashboard:sections` show leads, unique clicks, and transactions. Each chart initially omits dates so the API returns the authoritative configured-timezone range of today minus 29 days through today; the returned values initialize its independent controls. Empty weeks remain visible with zero values.
+#### `GET /api/finoo_affiliates/portal/payouts`
 
-### Leads Page
+Requires `portal.finoo_affiliates.view`. Paginated own-affiliate response: date (`paidAt`), paymentReference, amount as a base-10 integer string, currency.
 
-`/:orgSlug/portal/affiliate/leads` is feature-gated and uses portal-safe `DataTable` props. Columns:
+#### `GET/PUT /api/finoo_affiliates/portal/profile`
 
-1. company name;
-2. landing page;
-3. initial referrer;
-4. commission status;
-5. commission amount.
+GET requires `portal.finoo_affiliates.view`; PUT additionally requires `portal.finoo_affiliates.profile.manage`. Response/request contain only own accountHolderName, accountNumber, and updatedAt. PUT uses optimistic locking and platform encryption. Empty values are allowed for editing but payout preview remains blocked until both are non-empty.
 
-The page never receives unrelated Deal fields or other affiliates' identifiers.
+### Existing Contracts
 
-### Frontend Boundary Ledger
+- Existing link CRUD and redirect endpoints remain.
+- Existing Deal-attribution endpoint and `finoo_affiliates.deal_attributions.upsert` command remain behavior-compatible and add only read-only membership/transaction projection fields. After transaction creation, legacy edits update the CRM attribution only; they never change the transaction's affiliate, amount, status, or payout linkage. Transaction changes use only the new transition/payout commands.
+- Existing dashboard/leads paths remain stable.
+- Existing signup disablement remains unchanged.
 
-| Component | Boundary | Rationale |
-|---|---|---|
-| Portal dashboard widget | client | date interaction and chart rendering |
-| Portal leads table | client | pagination/sorting and portal API call |
-| Deal attribution tab | client | editable form and guarded mutation |
-| Staff links page | client | DataTable/CrudForm interactions |
-| Route/page metadata | server/module metadata | auth and feature guards before render |
-| Redirect and all APIs | server | trust boundary and scoped persistence |
+## Authorization and ACL
 
-Client components do not import ORM entities, secrets, or raw environment configuration. Providers are not added; existing portal/backend providers own auth, translations, and widget registries.
+### Staff Features
 
-### UI Budgets
+- `finoo_affiliates.view` — list affiliates, transactions, payouts and view Deal attribution.
+- `finoo_affiliates.manage` — invite/ensure affiliates, manage pre-transaction Deal affiliate/amount, and transition non-paid transactions.
+- `finoo_affiliates.payouts.manage` — view full payout preview bank details and confirm payout records.
 
-- No new production dependency.
-- Three dashboard widgets, one per chart; chart shells remove their border/background inside the host `PortalCard`.
-- Page size ≤100.
-- No hard-coded colors or arbitrary Tailwind values.
-- Loading, error, empty, keyboard-submit, and narrow-viewport states are covered.
+Default staff grants: superadmin/admin receive all three; employee receives view only. Existing tenants receive additive grants via setup plus `auth sync-role-acls` during deployment.
+
+### Portal Features
+
+- `portal.finoo_affiliates.view` — dashboard, link, Leads, and payout history.
+- `portal.finoo_affiliates.profile.manage` — update own bank profile.
+
+The existing tenant-owned `affiliate` customer role receives both. `intermediary` receives neither. Role lookup is by tenant slug and does not assume a separate role row per organization; invitation membership is still verified for the selected organization. Existing tenants receive additive customer-role grants through setup synchronization. APIs still validate that the authenticated user has an active module membership, so granting a feature alone does not expose another affiliate's data.
+
+## UI/UX
+
+### Staff Navigation
+
+Under the existing **Finoo affiliates** group:
+
+1. **Affiliates** — replaces the visible “Affiliate links” item and route in navigation; columns email, first name, last name, code, related deals; toolbar Invite button.
+2. **Affiliate transactions** — DataTable with required columns, `StatusBadge`, row Accept/Reject/Reprocess actions, canonical bulk selection, and Pay out toolbar action. The current DataTable has no row-selectability predicate, so all visible rows remain selectable; preview is the authoritative validation and rejects any non-approved or mixed-affiliate set without mutation.
+3. **Affiliate payouts** — read-only DataTable with affiliate names, payment reference, amount, date, and transaction count.
+
+The old links page/API remains reachable only by its existing URL for compatibility but is no longer a navigation item.
+
+All three staff page metadata files require `finoo_affiliates.view`. Inside those pages, Invite is visible only with both `finoo_affiliates.manage` and `customer_accounts.invite`; transaction row actions require `finoo_affiliates.manage`; Pay out and its preview/confirm controls require `finoo_affiliates.payouts.manage`. APIs repeat every authorization check.
+
+### Invite Dialog
+
+Uses `Dialog`, `FormField`, `EmailInput`, and same-size `Button`s. Only email is requested. Submit first sends the existing portal invitation with the affiliate role, then ensures Finoo membership and displays/copies the reserved code. `Cmd/Ctrl+Enter` submits, `Escape` cancels, server errors remain distinguishable, and duplicate pending invitations reuse the membership/code.
+
+### Payout Preview and Confirmation
+
+The Pay out action sends the selected rows to preview. A valid approved same-affiliate selection opens a focused `Dialog` showing total PLN amount, affiliate, account holder, account number, generated reference, and selected count; invalid selections receive the scoped preview error and remain selected. An `Alert status="warning"` displays exactly “Please only Confirm if the payment was actually made”. Confirm is the primary action and is disabled while submitting. `Cmd/Ctrl+Enter` confirms and `Escape` cancels. After the confirm endpoint returns `202`, the host bulk action resolves successfully so canonical DataTable selection clears, while the shared global progress UI hydrates and follows the returned job. No custom table or polling loop is added.
+
+### Portal Dashboard
+
+- Existing three weekly charts retain independent adjustable date ranges and default last 30 days.
+- Summary values show total paid out and pending payout in PLN.
+- Generated individual link/code has an accessible Copy action and an inactive/setup message if membership activation is incomplete.
+
+### Portal Pages
+
+- Leads: current columns, four current `StatusBadge` states, PLN amount.
+- Affiliate payouts: date, reference, amount.
+- Profile: `FormField` + `Input` for account holder and account number; save through guarded mutation; clear payout-blocking explanation.
+
+All user-facing copy uses `useT`/translation files. Pages use `DataTable`, `LoadingMessage`, `ErrorMessage`, and standardized empty states. No raw form controls, fetch, hard-coded colors, arbitrary sizes, inline SVG, or custom dialog implementation. Narrow viewport keeps dialogs usable as the shared mobile bottom sheet and tables horizontally usable through DataTable behavior.
 
 ## Configuration
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `OM_FINOO_AFFILIATE_REDIRECT_HOSTS` | production yes | none | exact HTTPS redirect hosts |
-| `OM_FINOO_ANALYTICS_TIMEZONE` | no | `Europe/Warsaw` | date interpretation and weekly buckets |
-| `OM_FINOO_AFFILIATE_CODE_FIELD` | no | `affiliate_code` | Deal custom-field key |
-| `OM_FINOO_LANDING_PAGE_FIELD` | no | `landing_page` | Deal custom-field key |
-| `OM_FINOO_INITIAL_REFERRER_FIELD` | no | `initial_referrer` | Deal custom-field key |
-| `NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION` | no | `true` | hides public portal signup CTAs when false |
+| `OM_FINOO_AFFILIATE_REDIRECT_HOSTS` | production yes | none | existing exact redirect allowlist |
+| `OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL` | production yes | none | primary link destination created after invitation acceptance |
+| `OM_FINOO_ANALYTICS_TIMEZONE` | no | `Europe/Warsaw` | existing dashboard bucketing |
+| `OM_FINOO_AFFILIATE_CODE_FIELD` | no | `affiliate_code` | existing Deal custom-field key |
+| `OM_FINOO_LANDING_PAGE_FIELD` | no | `landing_page` | existing Deal custom-field key |
+| `OM_FINOO_INITIAL_REFERRER_FIELD` | no | `initial_referrer` | existing Deal custom-field key |
+| `NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION` | no | `true` platform, `false` FINOO | existing signup display switch |
 
-The module fails closed when production redirect hosts are not configured. Secrets are not introduced.
+Primary-link activation fails closed if the default destination is missing/invalid; the membership/code remains reserved and the repair command can be rerun after configuration is corrected.
 
 ## Performance and Cache
 
-The MVP intentionally uses no application cache. Dashboard results are user-, tenant-, organization-, and date-range-specific; omitting cache avoids stale cross-tenant entries and invalidation complexity. Each request performs three bounded indexed aggregate queries—visits, attributed leads, and transactions—over at most 366 days, then merges the small weekly result sets in memory. Portal lead and staff link lists use one paginated query plus bounded enrichment queries; there is no per-row database loop.
+No new application cache is introduced. Reads are identity/scope/date-specific and writes are low volume; avoiding cache removes invalidation and cross-tenant leakage risk.
 
-Finoo is expected to have substantially fewer than 10,000 active links and attributed Deals per organization. Offset pagination is retained because it is the canonical `DataTable` contract and page size is capped at 100. Keyset pagination or cached aggregates are deferred until observed query plans or volume justify them. All critical point/range lookups have the indexes listed in the Data Model section. No worker is needed because no foreground operation touches more than 1,000 rows.
+- Affiliate list: one membership page query, one bounded batch user/person enrichment, one grouped attribution count.
+- Transaction/payout lists: one paginated query plus bounded batch name enrichment; no per-row reads.
+- Dashboard: indexed range aggregates with maximum 366 days; transactions use `(tenant, organization, affiliate_user_id, accepted_at)` and status indexes.
+- Payout confirmation: maximum 100 transaction rows, loaded/locked in one scoped query and committed in one transaction.
+- Invite/code point lookups use scoped email hash/invitation/customer-user indexes and global code uniqueness.
+- Progress work is one aggregate command; there is no per-transaction queue fan-out or event storm.
+
+Offset pagination remains because it is the existing DataTable contract and all pages cap at 100. Keyset pagination and aggregate caches are deferred until measured volume requires them.
 
 ## Migration and Backward Compatibility
 
-- Additive migration creates only `finoo_*` tables, indexes, and constraints.
-- Existing customers, Deals, roles, API routes, event IDs, and custom-field definitions are not modified.
-- The generic public self-registration display helper defaults to the current `true` behavior.
-- No existing Deal is backfilled automatically. Staff may attach an affiliate manually; newly emitted Deal events create future attributions.
-- Rollback disables the module and its route/widget registrations. The additive tables can remain dormant; dropping them is a separate destructive operation.
+### Additive Schema
+
+- Create `finoo_affiliates`, `finoo_deal_acceptances`, `finoo_affiliate_transactions`, `finoo_payout_previews`, and `finoo_affiliate_payouts`.
+- Add nullable `affiliate_id` to existing link and attribution tables.
+- Add Accepted capture function/trigger without altering the Completed trigger.
+- Add nullable financial created-event publication markers for at-least-once recovery.
+- Extend encryption maps and snapshots.
+- Add the separate `finoo_affiliate_transaction_status` dictionary with `processing`, `approved`, `rejected`, and `paid_out`; leave the existing `finoo_commission_status` dictionary unchanged.
+
+### Data Repair / Backfill
+
+- Existing active affiliate-role customer users receive membership rows and primary codes through the mandatory scoped deployment repair command; an existing active link is adopted as primary when unambiguous, otherwise a primary link is created from the configured default destination.
+- Existing attributions are linked to memberships by affiliate user where possible.
+- Historical first Accepted transitions and transactions are not created automatically. This avoids turning current mutable Deal amounts into unapproved historical liabilities and preserves the rule that commission is snapshotted at the first observed Accepted transition.
+- Only Accepted transitions observed after this release create new acceptance-registry and transaction rows. A future operator-approved historical cohort requires a separate preflight showing exact Deal IDs, amounts, totals, cutoff, and initial statuses before any mutation.
+
+Membership/linkage repair runs in bounded tenant/organization batches through `yarn mercato finoo_affiliates repair-memberships --tenant <id> --organization <id> --dry-run`; the mutually exclusive `--apply` flag performs the reported changes. The command is idempotent, can run while traffic continues, and does not create historical acceptance or transaction rows. It is intentionally not executed from module setup because setup must not silently create customer memberships or external-facing links. Deployment is blocked until the operator runs `--dry-run` for exact counts, then `--apply`, followed by a second `--dry-run` that reports zero pending membership/linkage changes.
+
+### Preserved Contracts
+
+- No existing table, column, enum value, route, event ID, ACL ID, widget spot, DI key, or command ID is removed or renamed.
+- Legacy links continue to redirect and count.
+- Legacy `waiting` remains accepted, readable, and writable in the legacy Deal-attribution contract; it is not deprecated by this release.
+- Existing `transactionAt` and dashboard `transactions` keep their first-Completed meaning. New Accepted transactions use their own `acceptedAt` and the additive `affiliateTransactions` dashboard series.
+- Default platform signup behavior remains true outside FINOO.
+- Rollback disables new routes/workers/subscribers while additive data remains; dropping financial data is a separate destructive action.
 
 ## Implementation Plan
 
-### Phase 1 — Foundation
+### Phase 1 — Model and Compatibility
 
-- Define module metadata, ACL, setup, entities, validators, encryption map, data extension, commands/events, DI service, migrations, and translations.
-- Enable the private module in `apps/mercato/src/modules.ts`, disable the signup API, and redirect the signup page through Finoo frontend middleware.
-- Implement the default-on signup-display configuration seam across shell, landing, and login with regression tests.
+1. Extend entities, validators, encryption, new transaction-dictionary setup, ACLs, events, DI, migration, snapshot, and Accepted trigger while retaining `scheduler` and every legacy contract.
+2. Add membership/linkage repair and preserve old links/status/API behavior without creating historical financial liabilities.
+3. Add unit tests for schemas, encryption declarations, status transitions, code uniqueness, and migration invariants.
 
-### Phase 2 — Attribution and Tracking
+### Phase 2 — Invitation and Affiliate Membership
 
-- Implement destination validation, request classification, cookie hashing, advisory-lock de-duplication, and redirect API.
-- Implement persistent Deal event subscribers and idempotent attribution synchronization.
-- Unit-test uniqueness, bot/preview handling, URL mutation, tenant scope, attribution immutability, and first Completed transition.
+1. Add ensure/activate commands and invitation/acceptance subscribers.
+2. Add Affiliates/invite-options/ensure APIs and staff Affiliates page/dialog.
+3. Verify invitation email success, duplicate invite reuse, pre-accept inactive code, post-accept link activation, tenant/role isolation, and name fallbacks.
 
-### Phase 3 — Staff Surfaces
+### Phase 3 — Accepted Transactions
 
-- Implement staff link CRUD and affiliate-user endpoint.
-- Implement Deal attribution API and injected tab.
-- Verify optimistic locking, dictionary validation, and staff ACLs.
+1. Capture first Accepted and create one transaction through idempotent Deal synchronization, with a fail-closed pre-edit snapshot attempt on every existing-attribution mutation and Deal deletion, plus eligible registry-only scheduled reconciliation for a lost post-commit event enqueue and nullable legacy `affiliate_id` recovery.
+2. Add transition command/API, additive Deal-widget transaction projection, affiliate-transaction dashboard aggregation, and staff Transactions page.
+3. Verify reopen/re-entry, concurrent delivery, immutable amount/affiliate snapshots, transitions, optimistic locking, and portal Leads/dashboard changes.
 
-### Phase 4 — Portal Surfaces
+### Phase 4 — Profiles and Payouts
 
-- Implement affiliate-scoped dashboard and leads APIs.
-- Implement dashboard widget and Leads page with portal feature guards.
-- Verify default and custom ranges, zero-filled weeks, pagination, and narrow layouts.
+1. Add portal Profile and Payouts APIs/pages with encrypted reads/writes.
+2. Add payout preview, reference/idempotency, progress job/worker, atomic payout command, and staff Payouts page.
+3. Add dashboard paid/pending summaries and generated link.
+4. Verify missing-profile block, mixed-affiliate rejection, duplicate/retry safety, all-or-nothing updates, terminal paid rows, and no bank-data leakage.
 
-### Phase 5 — Integration and Delivery
+### Phase 5 — Integration, Review, and Delivery
 
-- Run generation, migration review, targeted unit/integration tests, typecheck, lint, and build checks.
-- Perform one fresh primary code review and one orthogonal security review because auth/RBAC/public redirect/money are in scope.
-- Deploy only to `finoo.om.they.dev`, then run headed desktop and narrow-viewport QA.
-- Add durable evidence to THOM-88 and close only after the implementation, deployment, and QA acceptance criteria pass.
+1. Run `yarn generate`, focused tests, migration generation/no-op review, package build/typecheck/lint, client-boundary check, and fully managed ephemeral integration tests.
+2. Perform one fresh primary deep review plus an orthogonal security review for auth, tenant isolation, encryption, money state, and queue idempotency; remediate and rerun targeted checks.
+3. Create a signed commit, deploy only to `finoo.om.they.dev` with exact SHA/digest/OCI/runtime provenance, run migrations/role sync/repair, and keep the CTO password unchanged.
+4. Run headed staff/affiliate desktop and narrow-viewport QA, persist evidence to THOM-89, obtain release-evidence review, and close only if all acceptance criteria pass.
 
-## Test Strategy
+## Testing Strategy
 
-### Unit and Route Tests
+### Unit / Route / Service Coverage
 
-- redirect appends exactly one `affiliate_code` while preserving existing query parameters and fragments;
-- disallowed/non-HTTPS destinations fail closed;
-- missing UA, bot UA, preview/prefetch headers, and HEAD do not insert visits;
-- same link + visitor in 24 hours inserts once; another link or post-window visit inserts;
-- concurrent duplicates serialize to one insert;
-- visitor persistence contains no IP address, user-agent, or raw cookie token;
-- expired visitor hashes are anonymized by the scheduled bounded cleanup even when their link is no longer used;
-- subscriber ignores unknown/inactive/wrong-scope codes;
-- subscriber creates one attribution and retries idempotently;
-- automatic sync cannot replace staff-corrected affiliate ownership;
-- transaction time comes from the immutable first-Completed registry, survives delayed event delivery and never moves later after reopen/re-complete;
-- staff APIs enforce feature, tenant, organization, role, dictionary, input, and optimistic-lock rules;
-- command undo restores link and attribution snapshots and emits the correct lifecycle side effects;
-- portal APIs ignore attempted affiliate-ID injection and use authenticated identity only;
-- disabled signup route/API are inaccessible and the signup CTA is hidden only for Finoo.
+- invitation ID/email/role/scope validation, duplicate invite reuse, code collision retry, accepted-user binding, missing-destination repair;
+- CRM Person name enrichment and deterministic display-name fallback;
+- only normalized `accepted` transitions observed after deployment are captured; first insert wins; duplicate/reopen/re-entry creates one transaction;
+- registry-only reconciliation creates a missing transaction after simulated event loss, resolves an active membership when a legacy attribution has no `affiliate_id`, remains idempotent, and never reads historical stage-transition rows;
+- Deal deletion after a simulated lost creation event creates/reuses the first-Accepted transaction before the attribution is soft-deleted;
+- unknown/inactive/wrong-scope code never attributes;
+- transaction starts processing with snapshotted amount/PLN and immutable affiliate/deal/accepted time;
+- exact allowed/forbidden transaction transitions while the legacy attribution status remains independently writable;
+- profile encryption, decryption scope, optimistic locking, validation, `skipLog: true`, and no sensitive event/log/redo fields;
+- payout preview same-affiliate/approved/profile rules and exact reference binding;
+- payout command version checks, row locks, exact sum, reference idempotency, atomic linkage, retry-after-commit, and terminal paid state;
+- worker progress completed/failed lifecycle, duplicate-job convergence, and trusted scope;
+- staff/portal ACL and cross-tenant/cross-affiliate denial;
+- old link routes, waiting enum, Completed registry, signup disablement, and current click hardening regressions.
 
 ### Integration Coverage
 
-- `TC-FINOO-AFF-001`: staff creates a link; a human redirect sets the visitor cookie, appends the code, and counts one visit across duplicate requests.
-- `TC-FINOO-AFF-002`: bots, current Meta crawlers, previews, subresource loads, and non-navigation fetches redirect without increasing counts; transient limiting bounds cookie churn.
-- `TC-FINOO-AFF-003`: a Deal carrying the code and attribution custom fields becomes the affiliate's lead with the required columns.
-- `TC-FINOO-AFF-004`: another affiliate and another organization cannot read that lead or its metrics.
-- `TC-FINOO-AFF-005`: first Completed transition increments transactions once; reopen/re-complete and delayed delivery do not move or double count it; attaching an already-Completed Deal initializes both historical dates.
-- `TC-FINOO-AFF-006`: staff edits dictionary commission status and integer amount from the Deal tab with conflict handling.
-- `TC-FINOO-AFF-007`: dashboard defaults to 30 days, accepts a custom valid range, rejects >366 days, and zero-fills weeks.
-- `TC-FINOO-AFF-008`: public signup page/API are unavailable while invited/staff-created affiliate login remains functional.
+- `TC-FINOO-AFF-009`: staff invites an email; email success yields one reserved code, repeat invite reuses it, acceptance plus authenticated portal reconciliation creates/activates one primary link, and the repair CLI restores the same state after a simulated missed inline event. The ephemeral mail-capture path supplies the raw token; cleanup removes module fixtures and scoped invitation/user rows directly in test teardown because no invitation-delete API exists.
+- `TC-FINOO-AFF-010`: Affiliates table shows email, first/last fallback, code, and scoped Deal count; other organization is isolated.
+- `TC-FINOO-AFF-011`: attributed Deal first enters Accepted and creates exactly one processing transaction; leave/re-enter and event retry do not duplicate or move acceptedAt.
+- `TC-FINOO-AFF-012`: staff accepts/rejects/reprocesses only allowed transaction statuses; stale and illegal transitions fail; Deal/portal additive projection updates while the legacy attribution contract remains unchanged.
+- `TC-FINOO-AFF-013`: affiliate Profile saves/reloads encrypted bank data and cannot read/update another affiliate's profile.
+- `TC-FINOO-AFF-014`: payout preview rejects missing profile, mixed affiliates, non-approved rows, and wrong scope; valid preview returns exact total/reference/account data.
+- `TC-FINOO-AFF-015`: preview rejects invalid DataTable selections; confirm starts progress, duplicate jobs converge to one payout, all selected transactions link and become paid_out, retry after commit returns the payout, and any changed selection/version/profile binding returns `409` without duplication.
+- `TC-FINOO-AFF-016`: dashboard default/custom ranges show the additive Accepted transaction series, paid/pending decimal-string sums, and generated link while the legacy Completed series remains unchanged; portal payout list is own-affiliate only.
+- Existing `TC-FINOO-AFF-001..008` remain and are updated only where new additive/current status expectations require it.
 
-Integration tests create all links, users, Deals, role assignments, dictionary data, and transitions they require and clean up in `finally`. They do not depend on seeded demo data.
+All integration tests create and clean their own invitations/users/memberships/links/Deals/transitions/transactions/payouts and never rely on seeded/demo business data. Because invitation emails are external side effects, metadata-gated live email coverage is separated from deterministic local command/event coverage; production headed QA proves the configured mail path.
 
 ### Headed QA
 
-- Staff: create/copy/deactivate link; edit Deal affiliate/commission; observe validation and conflict states.
-- Affiliate desktop: login, dashboard default/custom range, Leads pagination and values.
-- Affiliate narrow viewport: dashboard charts/range and Leads table remain usable without clipped controls.
-- Public: signup CTA absent; signup URL unavailable; tracked link redirects correctly; bot proof uses route-level evidence rather than a visual-only claim.
+- Staff: invite affiliate; observe code; accept invitation through real email link; see active generated link and Deal count.
+- Staff: advance attributed Deal to Accepted; verify one processing transaction; move away and back; verify no duplicate.
+- Staff: reject/reprocess/approve; select approved rows; preview reference/total/account; verify warning; confirm only after a test payment declaration; verify payout and paid_out linkage.
+- Affiliate desktop: login, copy link, default/custom dashboard, paid/pending totals, Leads statuses/amounts, Profile save/reload, Payouts history.
+- Affiliate narrow viewport: same key dashboard, profile, payout, dialog/table interactions without clipped controls.
+- Public/security: signup unavailable; tracked redirect/click filters remain; cross-affiliate and cross-organization probes return no data.
 
-## Risks and Mitigations
+## Risks & Impact Review
 
-| Risk | Mitigation |
-|---|---|
-| Cross-tenant portal disclosure | derive affiliate from authenticated portal context and scope every query by tenant/org/user |
-| Open redirect | exact HTTPS host allowlist at write and redirect time |
-| Bot inflation | deterministic UA/purpose filtering; redirect without count |
-| Concurrent duplicate visits | transaction advisory lock plus indexed 24-hour lookup |
-| Lost commission updates | `updated_at` optimistic locking and unified conflict surface |
-| Incorrect transaction count | persisted transition history and earliest `Completed` timestamp only |
-| Application field drift | explicit configurable custom-field keys; no fuzzy matching |
-| Generic-core pollution | private app module; only additive portal-shell seam in shared UI |
-| Deployment drift | bind deployment to exact branch SHA and verify runtime provenance before QA |
+### Duplicate Transaction on Re-entry
 
-## Final Compliance Report
+- **Scenario**: Deal events retry or the Deal leaves and re-enters Accepted, causing double commission accrual.
+- **Severity**: High
+- **Affected area**: transaction ledger, dashboard, payout eligibility
+- **Mitigation**: immutable first-Accepted timestamp registry plus scoped unique transaction Deal constraint, idempotent command, fail-closed pre-edit snapshot attempts on all module-owned attribution writes and Deal deletion, nullable legacy-membership recovery, and eligible registry-only scheduled reconciliation for lost post-commit event enqueue.
+- **Residual risk**: incorrect historic stage labels require manual repair, but cannot create more than one transaction per Deal.
 
-### Scope and Simplicity
+### Partial or Duplicate Payout
 
-- One private module owns the complete end-to-end feature because link tracking, Deal attribution, and affiliate reporting share one acceptance chain.
-- No generic analytics subsystem, provider, queue, fingerprinting library, or production dependency is added.
-- Core changes are limited to an additive default-preserving portal self-registration display helper used by existing public portal surfaces.
+- **Scenario**: worker/network failure commits some rows, retries, or creates a second payout for the same selected transactions.
+- **Severity**: Critical
+- **Affected area**: financial ledger and affiliate trust
+- **Mitigation**: one database transaction, row/version revalidation, unique reference idempotency, non-null payout exclusion, and retry returning the committed winner.
+- **Residual risk**: an operator may record a transfer that was not actually made; the required warning and finance-only ACL are the approved operational control.
 
-### Architecture
+### Bank Data Disclosure
 
-- No cross-module ORM relationships.
-- All foreign module references are UUIDs and presentation snapshots.
-- Persistent customer events provide the write-side coupling; portal/staff widgets provide UI coupling.
-- The app-owned data extension declaration records the Deal link without moving ownership into CRM.
-- Required peer modules are explicit; the private module is not expected to run without them.
+- **Scenario**: account data appears in list APIs, logs, events, progress metadata, another tenant, or another affiliate's portal session.
+- **Severity**: Critical
+- **Affected area**: privacy/security
+- **Mitigation**: encryption maps, decryption-aware scoped reads, minimal response shapes, no sensitive event/audit/progress payloads, portal identity derivation, and payout-preview ACL.
+- **Residual risk**: authorized finance staff can view full data because manual payment requires it; access remains auditable.
 
-### Security and Data Protection
+### Invitation Without Membership or Link
 
-- Staff and portal ACLs are feature-based.
-- Tenant, organization, and affiliate scoping are server-enforced.
-- Redirects are allowlisted and non-cacheable.
-- Visit storage excludes IP, UA, raw cookie, and full referrer.
-- Free-text attribution snapshots use the platform encryption-map mechanism and decryption-aware reads.
-- No secrets or credentials are introduced.
+- **Scenario**: email succeeds but the second ensure request or activation subscriber fails.
+- **Severity**: Medium
+- **Affected area**: onboarding and link availability
+- **Mitigation**: idempotent ensure endpoint, storage-verified best-effort inline hooks, lazy authenticated portal reconciliation, reserved-code membership, mandatory deployment repair command, and visible invited/inactive state.
+- **Residual risk**: after a missed inline hook, activation may wait until the user's next authenticated portal request or operator reconciliation; no attribution or money is lost before activation.
 
-### Backward Compatibility
+### Legacy Contract Regression
 
-- Existing APIs, events, schemas, and default portal signup behavior remain unchanged outside the Finoo app configuration.
-- All schema changes are additive and app-owned.
-- Existing data needs no destructive migration.
+- **Scenario**: replacing link UI/status semantics breaks existing links, integrations, tests, or stored rows.
+- **Severity**: High
+- **Affected area**: THOM-88 runtime
+- **Mitigation**: additive tables/columns/new transaction enum, retained routes/events/Completed registry/waiting semantics, migration tests, and old integration-suite rerun.
+- **Residual risk**: hidden legacy page receives less routine QA but stays executable and API-covered.
 
-### Verification Gate
+### Stale or Illegal Status Updates
 
-- Completion requires fresh tests, diff inspection, one primary review, security review, exact-SHA deployment evidence, headed desktop/narrow QA, and Jira read-back.
-- This document has been self-audited for scope cohesion. Independent spec review is deferred to the mandatory post-implementation review because the active runtime instruction prohibits spawning subagents unless the user explicitly requests delegation.
+- **Scenario**: two staff users approve/reject/pay the same transaction or edit the Deal after acceptance.
+- **Severity**: High
+- **Affected area**: commission correctness
+- **Mitigation**: explicit state machine, updatedAt optimistic locking, payout row locks, Deal-widget transaction lock, and server-only paid transition.
+- **Residual risk**: business corrections after paid-out require a future adjustment-ledger process; direct mutation is intentionally unavailable.
+
+### Queue / Progress Unavailability
+
+- **Scenario**: confirmation occurs after an external payment but the payout worker is delayed or unavailable.
+- **Severity**: High
+- **Affected area**: ledger timeliness
+- **Mitigation**: durable queue, progress failure visibility, idempotent reference retries, no partial write, and deployment worker-health gate.
+- **Residual risk**: ledger update may be delayed until worker recovery; duplicate recording remains prevented.
+
+### Integer / Currency Misinterpretation
+
+- **Scenario**: an operator assumes minor units or a non-PLN currency, producing an incorrect transfer.
+- **Severity**: High
+- **Affected area**: payout amount
+- **Mitigation**: preserve existing whole-integer semantics, fixed stored/displayed `PLN`, explicit preview labels, and no currency selector.
+- **Residual risk**: fractional commissions are unsupported and must be rounded/entered according to Finoo's current process.
+
+### Public Tracking Abuse
+
+- **Scenario**: bots or forged navigations inflate click metrics or amplify writes.
+- **Severity**: Medium
+- **Affected area**: analytics/storage
+- **Mitigation**: retain THOM-88 fetch-metadata, crawler, cookie-dedupe, shared rate-limit, proxy-depth, and retention controls unchanged; regression tests remain.
+- **Residual risk**: deterministic filters cannot identify every sophisticated human-like bot, but click counts do not directly create payable transactions.
+
+## Final Compliance Report — 2026-08-13
+
+### AGENTS.md Files Reviewed
+
+- root `AGENTS.md`
+- `BACKWARD_COMPATIBILITY.md`
+- `packages/core/AGENTS.md`
+- `packages/core/src/modules/customers/AGENTS.md`
+- `packages/core/src/modules/customer_accounts/AGENTS.md`
+- `packages/core/src/modules/progress/AGENTS.md`
+- `packages/shared/AGENTS.md`
+- `packages/ui/AGENTS.md`
+- `packages/ui/src/backend/AGENTS.md`
+- `packages/events/AGENTS.md`
+- `packages/cli/AGENTS.md`
+- `.ai/specs/AGENTS.md`
+- `.ai/qa/AGENTS.md`
+- `.ai/ds-rules.md`
+- `.ai/docs/module-development.md`
+
+### Compliance Matrix
+
+| Rule Source | Rule | Status | Notes |
+|---|---|---|---|
+| root | private code under app module | Compliant | all behavior remains in `apps/mercato/src/modules/finoo_affiliates` |
+| root/core | no cross-module ORM relations or direct write services | Compliant | UUIDs/snapshots; existing invitation API and events |
+| root/core | tenant and organization scope | Compliant | required on every query/write; portal adds authenticated membership |
+| root/core | Zod, commands, events, mutation guards | Compliant | all custom endpoints and mutations are specified accordingly |
+| root/core | optimistic locking on editable/action rows | Compliant | membership profile and transaction versions; payout revalidates every selected version |
+| core/progress | user-visible bulk operation uses ProgressJob/queue | Compliant | every payout confirmation job is aggregate and duplicate jobs converge on one database-unique payout |
+| core/encryption | sensitive fields use encryption maps/decryption reads | Compliant | email/bank/deal snapshots declared; no hand crypto |
+| customer_accounts | invitation/auth/RBAC semantics unchanged | Compliant | reuse existing API/events and role; signup remains disabled only for FINOO |
+| events | one focused, idempotent subscriber per event | Compliant | invitation/acceptance are verified best-effort inline hooks with explicit reconciliation; Deal paths retain their existing delivery semantics |
+| UI/backend | DataTable, guarded writes, apiCall, shared states | Compliant | all list/write surfaces use canonical primitives |
+| DS | semantic tokens, shared controls/status/dialog/alert | Compliant | no hard-coded colors/raw controls; keyboard/a11y specified |
+| CLI/migrations | additive migration and synced snapshot | Compliant | no local migrate without deployment authorization; generator no-op required |
+| backward compatibility | no removal/narrowing of stable surfaces | Compliant | old routes/events/data/status/Completed semantics retained |
+| QA | module-local, self-contained integration tests | Compliant | TC-009..016 plus regression TC-001..008 |
+
+### Internal Consistency Check
+
+| Check | Status | Notes |
+|---|---|---|
+| Data models match API contracts | Pass | membership, transaction, preview reservation, payout, and version fields align |
+| API contracts match UI/UX | Pass | every page/dialog has owning endpoints and errors |
+| Risks cover all write operations | Pass | invitation repair, transaction idempotency, profile privacy, payout atomicity/queue covered |
+| Commands defined for all mutations | Pass | invitation ensure, activation, profile, transaction, payout; existing commands preserved |
+| Cache strategy covers reads | Pass | deliberate no-cache, bounded indexed queries |
+| Compatibility matches deployed THOM-88 | Pass | additive/legacy bridge explicitly defined |
+
+### Non-Compliant Items
+
+None identified before the required independent scope and pre-implementation reviews.
+
+### Verdict
+
+Ready for implementation. Independent scope, backward-compatibility, data/architecture, and UI/test audits passed after the documented amendments. The detailed readiness record is `.ai/specs/analysis/ANALYSIS-2026-08-12-finoo-affiliate-portal-and-attribution.md`.
 
 ## Changelog
 
-### 2026-08-12
-- Replaced the skeleton after confirmation of all four business decisions.
-- Finalized the private app-module boundary, `affiliate_code` handoff, first-Completed transaction rule, unified specification, data model, APIs, security controls, UI boundaries, migration, implementation phases, and test matrix.
-- Added Plausible CE as the privacy-minimized market reference and documented the intentionally narrower Finoo model.
-- Remediated the pre-implementation audit: added encryption maps, command/undo and module-event contracts, data-extension declaration, route metadata/OpenAPI requirements, no-cache/query budgets, and a complete signup display seam covering shell, landing, and login.
+### 2026-08-13
 
-### Review — 2026-08-12
-- **Reviewer**: Codex self-audit under no-subagent runtime constraint
-- **Security**: Passed after adding encryption, exact-host redirects, scoped reads, and complete signup enforcement
-- **Performance**: Passed with a 366-day cap, indexed bounded queries, and explicit cardinality assumptions
-- **Cache**: Passed; no cache is the deliberate MVP strategy
-- **Commands**: Passed after defining command, optimistic-lock, event, snapshot, and undo contracts
-- **Risks**: Passed; residual bot-classification and future-volume risks are documented and bounded
-- **Verdict**: Approved for implementation
+- Replaced the THOM-88-only specification with the consolidated THOM-89 contract approved by the user and CTO.
+- Added invitation-backed membership, primary generated links, first-Accepted idempotent transactions, the four-state commission lifecycle, encrypted affiliate profile, manual payout preview/confirmation, payout progress/idempotency, new staff/portal pages, ACLs, migrations, compatibility bridges, and integration coverage.
+- Preserved current click tracking, signup disablement, legacy links, first-Completed records/dashboard series, old routes/events, and the writable legacy waiting status.
+- Added separate transaction-status and dashboard projection fields instead of changing existing response semantics or narrowing the deployed Deal-attribution command.
+- Retained the scheduler dependency and named the bounded membership-repair CLI contract.
+- Documented existing CustomerUser/CRM name fallback, fixed PLN whole-integer semantics, and the manual external-payment boundary.
+- Added market-pattern review from Plausible, Refersion, Affilae, Rekomi, and Affonso; adopted only the patterns required by the approved scope.
+- Bound payout preview and confirmation to an exact transaction/profile/amount snapshot with deterministic post-commit retry behavior and duplicate-job convergence.
+- Excluded automatic historical Accepted/transaction creation so deployment cannot create unapproved liabilities from current Deal values.
+- Made bank-profile writes non-undoable with `skipLog: true` so command redo payloads cannot duplicate decrypted bank details into audit output.
+- Completed the pre-implementation audit with PASS verdicts for scope cohesion, all current backward-compatibility categories, data/architecture, and UI/test framework fit.

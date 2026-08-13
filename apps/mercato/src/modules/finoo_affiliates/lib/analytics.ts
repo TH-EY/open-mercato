@@ -12,6 +12,7 @@ import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import type { FinooScope } from "./service";
 
 type WeeklyCountRow = { week_start: string | Date; count: string | number };
+type DashboardMoneyRow = { total_paid_out: string | null; pending_payout: string | null };
 export type WeeklyCount = { weekStart: string; count: number };
 
 export type FinooAnalyticsRange = {
@@ -114,6 +115,28 @@ async function queryWeeklyCounts(
   return zeroFilledWeeks(range, rows);
 }
 
+async function queryAffiliateTransactions(
+  em: EntityManager,
+  affiliateUserId: string,
+  scope: FinooScope,
+  range: FinooAnalyticsRange,
+): Promise<WeeklyCount[]> {
+  const rows = await em.getConnection().execute<WeeklyCountRow[]>(
+    `select to_char(date_trunc('week', accepted_at at time zone ?), 'YYYY-MM-DD') as week_start,
+            count(*)::int as count
+       from finoo_affiliate_transactions
+      where tenant_id = ?
+        and organization_id = ?
+        and affiliate_user_id = ?
+        and accepted_at >= ?
+        and accepted_at < ?
+      group by 1
+      order by 1`,
+    [range.timezone, scope.tenantId, scope.organizationId, affiliateUserId, range.fromInstant, range.toExclusiveInstant],
+  );
+  return zeroFilledWeeks(range, rows);
+}
+
 export async function loadFinooDashboard(
   em: EntityManager,
   affiliateUserId: string,
@@ -123,8 +146,12 @@ export async function loadFinooDashboard(
   leads: WeeklyCount[];
   clicks: WeeklyCount[];
   transactions: WeeklyCount[];
+  affiliateTransactions: WeeklyCount[];
+  totalPaidOut: string;
+  pendingPayout: string;
+  currency: "PLN";
 }> {
-  const [leads, clicks, transactions] = await Promise.all([
+  const [leads, clicks, transactions, affiliateTransactions, moneyRows] = await Promise.all([
     queryWeeklyCounts(
       em,
       "finoo_deal_attributions",
@@ -149,6 +176,22 @@ export async function loadFinooDashboard(
       scope,
       range,
     ),
+    queryAffiliateTransactions(em, affiliateUserId, scope, range),
+    em.getConnection().execute<DashboardMoneyRow[]>(
+      `select coalesce(sum(commission_amount) filter (where commission_status = 'paid_out'), 0)::text as total_paid_out,
+              coalesce(sum(commission_amount) filter (where commission_status = 'approved'), 0)::text as pending_payout
+         from finoo_affiliate_transactions
+        where tenant_id = ? and organization_id = ? and affiliate_user_id = ? and currency = 'PLN'`,
+      [scope.tenantId, scope.organizationId, affiliateUserId],
+    ),
   ]);
-  return { leads, clicks, transactions };
+  return {
+    leads,
+    clicks,
+    transactions,
+    affiliateTransactions,
+    totalPaidOut: moneyRows[0]?.total_paid_out ?? "0",
+    pendingPayout: moneyRows[0]?.pending_payout ?? "0",
+    currency: "PLN",
+  };
 }

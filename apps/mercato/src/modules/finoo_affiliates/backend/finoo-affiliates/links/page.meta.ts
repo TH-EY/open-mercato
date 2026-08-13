@@ -7,6 +7,7 @@ export const metadata = {
   pageGroupKey: 'finooAffiliates.nav.group',
   pageOrder: 300,
   icon: 'link',
+  navHidden: true,
 }
 
 export default metadata

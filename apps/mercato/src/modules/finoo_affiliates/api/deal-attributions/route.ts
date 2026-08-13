@@ -12,7 +12,7 @@ import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/directory/utils/organizationScope'
 import { CustomerDeal } from '@open-mercato/core/modules/customers/data/entities'
-import { FinooDealAttribution } from '../../data/entities'
+import { FinooAffiliateTransaction, FinooDealAttribution } from '../../data/entities'
 import { finooDealAttributionUpsertSchema } from '../../data/validators'
 import type { FinooAffiliateService } from '../../lib/service'
 
@@ -51,11 +51,18 @@ export async function GET(request: Request): Promise<Response> {
   const em = resolved.container.resolve('em') as EntityManager
   if (!await requireDeal(em, parsed.data.dealId, resolved.scope)) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   const service = resolved.container.resolve('finooAffiliateService') as FinooAffiliateService
-  const [attribution, affiliates, statuses] = await Promise.all([
+  const [attribution, transaction, affiliates, statuses] = await Promise.all([
     findOneWithDecryption(
       em,
       FinooDealAttribution,
       { dealId: parsed.data.dealId, ...resolved.scope, deletedAt: null },
+      undefined,
+      resolved.scope,
+    ),
+    findOneWithDecryption(
+      em,
+      FinooAffiliateTransaction,
+      { dealId: parsed.data.dealId, ...resolved.scope },
       undefined,
       resolved.scope,
     ),
@@ -76,6 +83,10 @@ export async function GET(request: Request): Promise<Response> {
       commissionAmount: attribution.commissionAmount,
       leadAt: attribution.leadAt.toISOString(),
       transactionAt: attribution.transactionAt?.toISOString() ?? null,
+      affiliateProgramStatus: transaction?.commissionStatus ?? 'processing',
+      affiliateTransactionId: transaction?.id ?? null,
+      affiliateTransactionAmount: transaction?.commissionAmount ?? null,
+      affiliateTransactionAcceptedAt: transaction?.acceptedAt.toISOString() ?? null,
       updatedAt: attribution.updatedAt.toISOString(),
     } : null,
     affiliates: affiliates.map((user) => ({ id: user.id, displayName: user.displayName, email: user.email })),
@@ -163,6 +174,10 @@ const attributionSchema = z.object({
   commissionAmount: z.number().int(),
   leadAt: z.string().datetime(),
   transactionAt: z.string().datetime().nullable(),
+  affiliateProgramStatus: z.enum(['processing', 'approved', 'rejected', 'paid_out']),
+  affiliateTransactionId: z.string().uuid().nullable(),
+  affiliateTransactionAmount: z.number().int().nullable(),
+  affiliateTransactionAcceptedAt: z.string().datetime().nullable(),
   updatedAt: z.string().datetime(),
 })
 

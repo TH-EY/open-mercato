@@ -30,6 +30,8 @@ describe('Finoo affiliate analytics range', () => {
       .mockResolvedValueOnce([{ week_start: '2026-08-03', count: 2 }])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ week_start: '2026-08-10', count: 1 }])
+      .mockResolvedValueOnce([{ week_start: '2026-08-03', count: 3 }])
+      .mockResolvedValueOnce([{ total_paid_out: '9007199254740993', pending_payout: '42' }])
     const em = { getConnection: () => ({ execute }) }
     const range = resolveFinooAnalyticsRange({ from: '2026-08-03', to: '2026-08-16' })
 
@@ -55,5 +57,14 @@ describe('Finoo affiliate analytics range', () => {
       { weekStart: '2026-08-03', count: 0 },
       { weekStart: '2026-08-10', count: 1 },
     ])
+    expect(result.affiliateTransactions).toEqual([
+      { weekStart: '2026-08-03', count: 3 },
+      { weekStart: '2026-08-10', count: 0 },
+    ])
+    expect(result.totalPaidOut).toBe('9007199254740993')
+    expect(result.pendingPayout).toBe('42')
+    expect(result.currency).toBe('PLN')
+    expect(execute.mock.calls[2]?.[0]).toContain('transaction_at')
+    expect(execute.mock.calls[3]?.[0]).toContain('finoo_affiliate_transactions')
   })
 })

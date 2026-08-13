@@ -1,5 +1,4 @@
 import type { EntityManager } from '@mikro-orm/postgresql'
-import { randomBytes } from 'node:crypto'
 import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { CustomerRole, CustomerUser, CustomerUserRole } from '@open-mercato/core/modules/customer_accounts/data/entities'
 import { Dictionary, DictionaryEntry } from '@open-mercato/core/modules/dictionaries/data/entities'
@@ -12,11 +11,12 @@ import {
 import { FINOO_COMMISSION_STATUS_DICTIONARY_KEY } from '../setup'
 import { parseAllowedRedirectHosts, validateAffiliateDestination } from './tracking'
 import { FINOO_AFFILIATE_VISITOR_WINDOW_MS } from './visitRetention'
+import { generateAffiliateCode, withReservedAffiliateCode } from './membership'
 
 export type FinooScope = { tenantId: string; organizationId: string }
 
 export function createAffiliateCode(): string {
-  return randomBytes(18).toString('base64url')
+  return generateAffiliateCode()
 }
 
 export function createFinooAffiliateService(em: EntityManager) {
@@ -186,6 +186,10 @@ export function createFinooAffiliateService(em: EntityManager) {
     )
   }
 
+  async function withAvailableAffiliateCode<T>(create: (transactionalEm: EntityManager, code: string) => Promise<T>): Promise<T> {
+    return withReservedAffiliateCode(em, create)
+  }
+
   return {
     requireAffiliateUser,
     listAffiliateUsers,
@@ -195,6 +199,7 @@ export function createFinooAffiliateService(em: EntityManager) {
     findActiveLinkByCode,
     recordUniqueVisit,
     listCommissionStatuses,
+    withAvailableAffiliateCode,
   }
 }
 

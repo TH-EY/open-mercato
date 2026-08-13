@@ -1,4 +1,5 @@
 import type { EntityManager } from '@mikro-orm/postgresql'
+import type { CommandBus } from '@open-mercato/shared/lib/commands'
 import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { FinooDealAttribution } from '../data/entities'
 import { emitFinooAffiliateEvent } from '../events'
@@ -23,6 +24,18 @@ export default async function handleDealDeleted(payload: DealEventPayload, conte
     scope,
   )
   if (!attribution) return
+  const commandBus = parentContainer.resolve<CommandBus>('commandBus')
+  await commandBus.execute('finoo_affiliates.transaction.create', {
+    input: { dealId: payload.id, includeDeletedDeal: true },
+    ctx: {
+      container: parentContainer as never,
+      auth: { tenantId: scope.tenantId } as never,
+      organizationScope: null,
+      selectedOrganizationId: scope.organizationId,
+      organizationIds: [scope.organizationId],
+      systemActor: true,
+    },
+  })
   attribution.deletedAt = new Date()
   attribution.deletionReason = 'deal'
   await em.flush()

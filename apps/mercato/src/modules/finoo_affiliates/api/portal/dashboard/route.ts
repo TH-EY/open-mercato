@@ -8,11 +8,15 @@ import {
 } from "@open-mercato/core/modules/customer_accounts/lib/customerAuth";
 import type { CustomerRbacService } from "@open-mercato/core/modules/customer_accounts/services/customerRbacService";
 import type { EntityManager } from "@mikro-orm/postgresql";
+import type { CommandBus } from "@open-mercato/shared/lib/commands";
+import { FinooAffiliateLink, type FinooAffiliate } from "../../../data/entities";
+import { findOneWithDecryption } from "@open-mercato/shared/lib/encryption/find";
 import { finooDashboardRangeSchema } from "../../../data/validators";
 import {
   loadFinooDashboard,
   resolveFinooAnalyticsRange,
 } from "../../../lib/analytics";
+import { reconcileAffiliateForUser } from "../../../lib/membership";
 
 export const metadata = { GET: { requireAuth: false } };
 
@@ -48,16 +52,56 @@ export async function GET(request: Request): Promise<Response> {
     );
   }
   const em = container.resolve("em") as EntityManager;
+  const commandBus = container.resolve("commandBus") as CommandBus;
+  const membership = await reconcileAffiliateForUser(
+    em,
+    auth.sub,
+    { tenantId: auth.tenantId, organizationId: auth.orgId },
+    async (invitationId, userId, scope) => {
+      const { result } = await commandBus.execute<Record<string, unknown>, FinooAffiliate>(
+        "finoo_affiliates.affiliate.activate",
+        {
+          input: { invitationId, userId, ...scope },
+          ctx: {
+            container,
+            auth: null,
+            organizationScope: null,
+            selectedOrganizationId: scope.organizationId,
+            organizationIds: [scope.organizationId],
+            systemActor: true,
+          },
+        },
+      );
+      return result;
+    },
+  );
+  if (!membership)
+    return NextResponse.json(
+      { ok: false, error: "Affiliate membership is not active" },
+      { status: 403 },
+    );
   const series = await loadFinooDashboard(
     em,
     auth.sub,
     { tenantId: auth.tenantId, organizationId: auth.orgId },
     range,
   );
+  const scope = { tenantId: auth.tenantId, organizationId: auth.orgId };
+  const primaryLink = membership.primaryLinkId ? await findOneWithDecryption(
+    em,
+    FinooAffiliateLink,
+    { ...scope, id: membership.primaryLinkId, affiliateId: membership.id, isActive: true, deletedAt: null },
+    undefined,
+    scope,
+  ) : null;
   return NextResponse.json({
     ok: true,
     range: { from: range.from, to: range.to, timezone: range.timezone },
     ...series,
+    generatedLink: primaryLink ? {
+      code: primaryLink.code,
+      trackedUrl: new URL(`/api/finoo_affiliates/r/${primaryLink.code}`, request.url).toString(),
+    } : null,
   });
 }
 
@@ -86,6 +130,11 @@ export const openApi: OpenApiRouteDoc = {
             leads: z.array(weeklyCountSchema),
             clicks: z.array(weeklyCountSchema),
             transactions: z.array(weeklyCountSchema),
+            affiliateTransactions: z.array(weeklyCountSchema),
+            totalPaidOut: z.string().regex(/^\d+$/),
+            pendingPayout: z.string().regex(/^\d+$/),
+            currency: z.literal("PLN"),
+            generatedLink: z.object({ code: z.string(), trackedUrl: z.string().url() }).nullable(),
           }),
         },
       ],

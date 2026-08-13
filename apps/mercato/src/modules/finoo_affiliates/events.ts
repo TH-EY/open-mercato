@@ -7,6 +7,12 @@ const events = [
   { id: 'finoo_affiliates.deal_attribution.created', label: 'Deal Attribution Created', entity: 'deal_attribution', category: 'crud' },
   { id: 'finoo_affiliates.deal_attribution.updated', label: 'Deal Attribution Updated', entity: 'deal_attribution', category: 'crud' },
   { id: 'finoo_affiliates.deal_attribution.deleted', label: 'Deal Attribution Deleted', entity: 'deal_attribution', category: 'crud' },
+  { id: 'finoo_affiliates.affiliate.created', label: 'Affiliate Created', entity: 'affiliate', category: 'crud' },
+  { id: 'finoo_affiliates.affiliate.activated', label: 'Affiliate Activated', entity: 'affiliate', category: 'lifecycle' },
+  { id: 'finoo_affiliates.affiliate.profile_updated', label: 'Affiliate Profile Updated', entity: 'affiliate', category: 'crud' },
+  { id: 'finoo_affiliates.affiliate_transaction.created', label: 'Affiliate Transaction Created', entity: 'affiliate_transaction', category: 'crud' },
+  { id: 'finoo_affiliates.affiliate_transaction.updated', label: 'Affiliate Transaction Updated', entity: 'affiliate_transaction', category: 'crud' },
+  { id: 'finoo_affiliates.affiliate_payout.created', label: 'Affiliate Payout Created', entity: 'affiliate_payout', category: 'crud' },
 ] as const
 
 export const eventsConfig = createModuleEvents({ moduleId: 'finoo_affiliates', events })
