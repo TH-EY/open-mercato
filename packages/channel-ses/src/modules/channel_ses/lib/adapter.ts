@@ -19,7 +19,7 @@ import {
   toAddressList,
 } from '@open-mercato/core/modules/communication_channels/lib/email-mime'
 import { sesCapabilities } from '../capabilities'
-import { sesCredentialsSchema } from './credentials'
+import { resolveSesClientCredentials, sesCredentialsSchema } from './credentials'
 
 type SesAttachment = {
   filename: string
@@ -82,7 +82,11 @@ class SesChannelAdapter implements ChannelAdapter {
       return { externalMessageId: '', status: 'failed', error: '[internal] Email send requires a subject' }
     }
 
-    const sesClient = new SESv2Client({ region: credentials.region })
+    const explicitCredentials = resolveSesClientCredentials(credentials)
+    const sesClient = new SESv2Client({
+      region: credentials.region,
+      ...(explicitCredentials ? { credentials: explicitCredentials } : {}),
+    })
     const transporter = nodemailer.createTransport({
       SES: { sesClient, SendEmailCommand },
     } as Parameters<typeof nodemailer.createTransport>[0] & SesTransportOptions)

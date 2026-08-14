@@ -1,7 +1,7 @@
 import { GetAccountCommand, SESv2Client } from '@aws-sdk/client-sesv2'
 import type { IntegrationScope } from '@open-mercato/shared/modules/integrations/types'
 import { withTimeout } from '@open-mercato/shared/lib/http/fetchWithTimeout'
-import { sesCredentialsSchema } from './credentials'
+import { resolveSesClientCredentials, sesCredentialsSchema } from './credentials'
 
 type HealthCheckResult = {
   status: 'healthy' | 'unhealthy'
@@ -23,7 +23,11 @@ export const channelSesHealthCheck = {
       }
     }
 
-    const client = new SESv2Client({ region: parsed.data.region })
+    const explicitCredentials = resolveSesClientCredentials(parsed.data)
+    const client = new SESv2Client({
+      region: parsed.data.region,
+      ...(explicitCredentials ? { credentials: explicitCredentials } : {}),
+    })
     try {
       const account = await withTimeout(
         (signal) => client.send(new GetAccountCommand({}), { abortSignal: signal }),

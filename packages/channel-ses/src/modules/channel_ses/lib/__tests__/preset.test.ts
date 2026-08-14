@@ -1,18 +1,26 @@
 import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { sesCapabilities } from '../../capabilities'
+import { channelSesHealthCheck } from '../health'
 import {
   applySesEnvPreset,
   assertSesEnvPresetAbsent,
   assertSesEnvPresetExact,
+  assertSesExplicitCredentialsExact,
+  configureSesExplicitCredentials,
   readSesEnvPreset,
   removeSesEnvPreset,
+  restoreSesAmbientCredentials,
 } from '../preset'
 
 jest.mock('@open-mercato/shared/lib/encryption/find', () => ({
   findOneWithDecryption: jest.fn(),
 }))
+jest.mock('../health', () => ({
+  channelSesHealthCheck: { check: jest.fn() },
+}))
 
 const mockedFindOneWithDecryption = findOneWithDecryption as jest.MockedFunction<typeof findOneWithDecryption>
+const mockedHealthCheck = channelSesHealthCheck.check as jest.MockedFunction<typeof channelSesHealthCheck.check>
 
 describe('channel_ses env preset', () => {
   const originalEnv = process.env
@@ -24,6 +32,8 @@ describe('channel_ses env preset', () => {
       EMAIL_FROM: 'from@example.com',
     }
     mockedFindOneWithDecryption.mockReset()
+    mockedHealthCheck.mockReset()
+    mockedHealthCheck.mockResolvedValue({ status: 'healthy', message: 'healthy', details: {} })
   })
 
   afterEach(() => {
@@ -37,10 +47,11 @@ describe('channel_ses env preset', () => {
     const persist = jest.fn().mockReturnValue({ flush })
     const em = { create: jest.fn().mockReturnValue(channel), persist }
     const save = jest.fn().mockResolvedValue(undefined)
+    const resolve = jest.fn().mockResolvedValue(null)
 
     await applySesEnvPreset({
       em: em as never,
-      container: { resolve: () => ({ save }) } as never,
+      container: { resolve: () => ({ save, resolve }) } as never,
       tenantId: 'tenant-1',
       organizationId: 'organization-1',
     })
@@ -64,10 +75,12 @@ describe('channel_ses env preset', () => {
     mockedFindOneWithDecryption.mockResolvedValue(existing as never)
     const flush = jest.fn().mockResolvedValue(undefined)
     const em = { flush }
+    const resolve = jest.fn().mockResolvedValue({ region: 'eu-west-2', fromAddress: 'from@example.com' })
+    const save = jest.fn()
 
     await applySesEnvPreset({
       em: em as never,
-      container: { resolve: () => ({ save: jest.fn() }) } as never,
+      container: { resolve: () => ({ save, resolve }) } as never,
       tenantId: 'tenant-1',
       organizationId: 'organization-1',
     })
@@ -81,6 +94,62 @@ describe('channel_ses env preset', () => {
     )
     expect(existing).toEqual(expect.objectContaining({ isActive: true, status: 'connected', lastError: null }))
     expect(flush).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves a valid dedicated pair when reapplying the public environment preset', async () => {
+    mockedFindOneWithDecryption.mockResolvedValue({ isActive: true, status: 'connected', lastError: null } as never)
+    const resolve = jest.fn().mockResolvedValue({
+      region: 'eu-west-2',
+      fromAddress: 'from@example.com',
+      authMode: 'access_keys',
+      accessKeyId: 'access-key-id',
+      secretAccessKey: 'secret-access-key',
+    })
+    const save = jest.fn()
+
+    await applySesEnvPreset({
+      em: { flush: jest.fn() } as never,
+      container: { resolve: () => ({ save, resolve }) } as never,
+      tenantId: 'tenant-1',
+      organizationId: 'organization-1',
+    })
+
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('refuses to overwrite a partial dedicated credential pair during preset application', async () => {
+    const resolve = jest.fn().mockResolvedValue({
+      region: 'eu-west-2',
+      fromAddress: 'from@example.com',
+      authMode: 'access_keys',
+      accessKeyId: 'access-key-id',
+    })
+
+    await expect(applySesEnvPreset({
+      em: {} as never,
+      container: { resolve: () => ({ save: jest.fn(), resolve }) } as never,
+      tenantId: 'tenant-1',
+      organizationId: 'organization-1',
+    })).rejects.toThrow('SES_EXPLICIT_CREDENTIALS_INVALID')
+  })
+
+  it('refuses to rewrite a dedicated pair when public preset values differ', async () => {
+    const resolve = jest.fn().mockResolvedValue({
+      region: 'eu-west-1',
+      fromAddress: 'from@example.com',
+      authMode: 'access_keys',
+      accessKeyId: 'access-key-id',
+      secretAccessKey: 'secret-access-key',
+    })
+    const save = jest.fn()
+
+    await expect(applySesEnvPreset({
+      em: {} as never,
+      container: { resolve: () => ({ save, resolve }) } as never,
+      tenantId: 'tenant-1',
+      organizationId: 'organization-1',
+    })).rejects.toThrow('SES_EXPLICIT_CREDENTIALS_PUBLIC_PRESET_MISMATCH')
+    expect(save).not.toHaveBeenCalled()
   })
 
   it('requires an explicit region and sender address', () => {
@@ -119,6 +188,122 @@ describe('channel_ses env preset', () => {
       tenantId: 'tenant-1',
       organizationId: 'organization-1',
     })).resolves.toBeUndefined()
+  })
+
+  it('accepts the exact public preset with a valid dedicated credential pair', async () => {
+    const channel = {
+      displayName: 'Amazon SES system email',
+      externalIdentifier: 'from@example.com',
+      capabilities: { ...sesCapabilities },
+      isActive: true,
+      status: 'connected',
+      lastError: null,
+    }
+    mockedFindOneWithDecryption.mockResolvedValue(channel as never)
+    const explicit = {
+      region: 'eu-west-2',
+      fromAddress: 'from@example.com',
+      authMode: 'access_keys' as const,
+      accessKeyId: 'access-key-id',
+      secretAccessKey: 'secret-access-key',
+    }
+    const resolve = jest.fn().mockResolvedValue(explicit)
+    const count = jest.fn().mockResolvedValue(1)
+    const scope = {
+      em: { count } as never,
+      container: { resolve: () => ({ resolve }) } as never,
+      tenantId: 'tenant-1',
+      organizationId: 'organization-1',
+    }
+
+    await expect(assertSesEnvPresetExact(scope)).resolves.toBeUndefined()
+    await expect(assertSesExplicitCredentialsExact(scope)).resolves.toEqual(explicit)
+  })
+
+  it('health-checks a dedicated pair before saving it', async () => {
+    const channel = {
+      displayName: 'Amazon SES system email',
+      externalIdentifier: 'from@example.com',
+      capabilities: { ...sesCapabilities },
+      isActive: true,
+      status: 'connected',
+      lastError: null,
+    }
+    mockedFindOneWithDecryption.mockResolvedValue(channel as never)
+    const ambient = { region: 'eu-west-2', fromAddress: 'from@example.com' }
+    const explicit = {
+      ...ambient,
+      authMode: 'access_keys',
+      accessKeyId: 'access-key-id',
+      secretAccessKey: 'secret-access-key',
+    }
+    const resolve = jest.fn()
+      .mockResolvedValueOnce(ambient)
+      .mockResolvedValue(explicit)
+    const save = jest.fn().mockResolvedValue(undefined)
+    const count = jest.fn().mockResolvedValue(1)
+
+    await configureSesExplicitCredentials({
+      em: { count } as never,
+      container: { resolve: () => ({ resolve, save }) } as never,
+      tenantId: 'tenant-1',
+      organizationId: 'organization-1',
+    }, { accessKeyId: 'access-key-id', secretAccessKey: 'secret-access-key' })
+
+    expect(mockedHealthCheck).toHaveBeenCalledWith(explicit, expect.objectContaining({
+      tenantId: 'tenant-1',
+      organizationId: 'organization-1',
+    }))
+    expect(mockedHealthCheck.mock.invocationCallOrder[0]).toBeLessThan(save.mock.invocationCallOrder[0])
+    expect(save).toHaveBeenCalledWith('channel_ses', explicit, expect.any(Object))
+  })
+
+  it('does not save a dedicated pair when its health check fails', async () => {
+    const channel = {
+      displayName: 'Amazon SES system email',
+      externalIdentifier: 'from@example.com',
+      capabilities: { ...sesCapabilities },
+      isActive: true,
+      status: 'connected',
+      lastError: null,
+    }
+    mockedFindOneWithDecryption.mockResolvedValue(channel as never)
+    mockedHealthCheck.mockResolvedValueOnce({ status: 'unhealthy', message: 'denied', details: {} })
+    const save = jest.fn()
+    const resolve = jest.fn().mockResolvedValue({ region: 'eu-west-2', fromAddress: 'from@example.com' })
+
+    await expect(configureSesExplicitCredentials({
+      em: { count: jest.fn().mockResolvedValue(1) } as never,
+      container: { resolve: () => ({ resolve, save }) } as never,
+      tenantId: 'tenant-1',
+      organizationId: 'organization-1',
+    }, { accessKeyId: 'access-key-id', secretAccessKey: 'secret-access-key' }))
+      .rejects.toThrow('SES_EXPLICIT_CREDENTIALS_UNHEALTHY')
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('restores and verifies the exact ambient credential object', async () => {
+    const channel = {
+      displayName: 'Amazon SES system email',
+      externalIdentifier: 'from@example.com',
+      capabilities: { ...sesCapabilities },
+      isActive: true,
+      status: 'connected',
+      lastError: null,
+    }
+    mockedFindOneWithDecryption.mockResolvedValue(channel as never)
+    const ambient = { region: 'eu-west-2', fromAddress: 'from@example.com' }
+    const resolve = jest.fn().mockResolvedValue(ambient)
+    const save = jest.fn()
+
+    await restoreSesAmbientCredentials({
+      em: { count: jest.fn().mockResolvedValue(1) } as never,
+      container: { resolve: () => ({ resolve, save }) } as never,
+      tenantId: 'tenant-1',
+      organizationId: 'organization-1',
+    })
+
+    expect(save).toHaveBeenCalledWith('channel_ses', ambient, expect.any(Object))
   })
 
   it('rejects a mismatched existing environment preset without changing it', async () => {

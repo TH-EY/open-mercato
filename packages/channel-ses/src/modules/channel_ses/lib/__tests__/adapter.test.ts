@@ -91,4 +91,26 @@ describe('SesChannelAdapter', () => {
       error: 'SES_SEND_FAILED',
     }))
   })
+
+  it('uses dedicated credentials only when the channel explicitly opts in', async () => {
+    const adapter = getSesChannelAdapter()
+
+    await adapter.sendMessage({
+      content: { text: 'Hello' },
+      credentials: {
+        region: 'eu-west-2',
+        fromAddress: 'from@example.com',
+        authMode: 'access_keys',
+        accessKeyId: 'access-key-id',
+        secretAccessKey: 'secret-access-key',
+      },
+      scope: { tenantId: 'tenant', organizationId: 'org' },
+      metadata: { to: ['user@example.com'], subject: 'Hello' },
+    })
+
+    expect(SESv2ClientMock).toHaveBeenCalledWith({
+      region: 'eu-west-2',
+      credentials: { accessKeyId: 'access-key-id', secretAccessKey: 'secret-access-key' },
+    })
+  })
 })

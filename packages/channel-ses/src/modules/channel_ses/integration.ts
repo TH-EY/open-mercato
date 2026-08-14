@@ -55,6 +55,33 @@ export const integration: IntegrationDefinition = {
         required: false,
         helpText: 'Optional SES configuration set name.',
       },
+      {
+        key: 'authMode',
+        label: 'Authentication',
+        type: 'select',
+        required: false,
+        helpText: 'Use the AWS SDK default credential chain unless this channel has a dedicated access key.',
+        options: [
+          { value: 'ambient', label: 'AWS SDK default credential chain' },
+          { value: 'access_keys', label: 'Dedicated access key' },
+        ],
+      },
+      {
+        key: 'accessKeyId',
+        label: 'Access key ID',
+        type: 'secret',
+        required: true,
+        helpText: 'Dedicated IAM access key ID for this SES channel.',
+        visibleWhen: { field: 'authMode', equals: 'access_keys' },
+      },
+      {
+        key: 'secretAccessKey',
+        label: 'Secret access key',
+        type: 'secret',
+        required: true,
+        helpText: 'Dedicated IAM secret access key for this SES channel.',
+        visibleWhen: { field: 'authMode', equals: 'access_keys' },
+      },
     ],
   },
 }

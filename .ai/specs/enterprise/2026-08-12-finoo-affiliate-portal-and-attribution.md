@@ -12,6 +12,7 @@
 - Affiliate portal dashboard, Leads, Payouts, and Profile pages.
 - Staff Affiliates, Affiliate transactions, and Affiliate payouts pages.
 - Invitation orchestration, primary-link generation, encrypted bank profile, transaction state machine, payout preview/confirmation, migrations, tests, deployment, and headed QA.
+- FINOO outbound invitation delivery through the existing Amazon SES Communications Hub adapter using one organization-scoped dedicated credential pair stored by the encrypted integration-credentials service.
 - Reuse the existing `affiliate` and `intermediary` customer roles; only `affiliate` receives this module's portal grants.
 
 **Boundaries:**
@@ -20,6 +21,7 @@
 - Payout confirmation records an external payment; it does not call a bank, payment provider, or accounting service.
 - The intermediary portal remains out of scope.
 - This is private FINOO instance work. No upstream contribution, public branch, public issue, or public PR is allowed.
+- The shared EC2 role, IMDS settings, trust policies, CTO credentials, and existing real FINOO user credentials are not modified.
 
 **Concerns:**
 - Money state, encrypted bank details, invitations, portal authorization, tenant isolation, idempotent stage processing, and multi-record payout updates make the delivery `risk-high`.
@@ -30,6 +32,8 @@
 THOM-89 completes the operational affiliate loop started by THOM-88. The deployed module already provides human-unique click tracking, affiliate-code attribution, a portal dashboard, a Leads table, staff link CRUD, and a Deal commission widget. It does not yet have a durable affiliate membership record, invitation-driven primary-link lifecycle, Accepted-based commission transactions, bank profiles, or payout records.
 
 The extension remains one private application module at `apps/mercato/src/modules/finoo_affiliates`. It uses existing customer-account invitation APIs and events, customer Deal events and stage-transition history, module-local commands, the platform encryption map, progress jobs for payout confirmation, and existing backend/portal UI primitives. Core modules are not modified.
+
+The existing `@open-mercato/channel-ses` provider is extended additively with optional `authMode`, `accessKeyId`, and `secretAccessKey` credential fields. Both key fields are secret-typed and encrypted by the existing integration credential store. Adapter and health-check clients inject the pair only in explicit access-key mode; absent fields preserve the AWS SDK default chain. FINOO provisioning remains ambient-compatible, while the private upgrade gate requires a healthy explicit pair only for the exact FINOO tenant and organization. The pair enters the runtime through a stdin-only CLI command, is never accepted as a CLI option or environment variable, and is not printed.
 
 > **Market references:** Plausible Community Edition remains the reference for privacy-minimized first-party click storage. Refersion and Affilae document the common pending/approved/rejected conversion review model, while Rekomi and Affonso model payouts as batches connected to immutable conversion IDs and distinguish payable from paid. Finoo adopts idempotent conversion identity, explicit review states, a terminal paid state, and payout-to-transaction linkage. It deliberately rejects automatic transfers, clawbacks, multi-currency settlement, commission-rule engines, fraud scoring, and post-payment adjustments because none are in the approved scope.
 
@@ -85,6 +89,8 @@ The current implementation has six material gaps:
 - Payout warning: exactly “Please only Confirm if the payment was actually made”.
 - Bank payment: external/manual; confirmation records it only.
 - Currency: PLN; stored integer values remain whole PLN units for compatibility.
+- SES provider authentication: the AWS SDK default credential chain remains the provider default. The FINOO organization alone opts into a dedicated access-key pair; incomplete or implicit key pairs fail validation.
+- SES IAM scope: `ses:SendEmail` on `arn:aws:ses:eu-west-2:062648047691:identity/they.dev` only when `ses:FromAddress` equals `no-reply@they.dev`, plus `ses:GetAccount` on `*` for the existing health probe. Both statements require `aws:RequestedRegion = eu-west-2`; `SendRawEmail` and SES management actions are not granted.
 
 ## Proposed Solution
 
@@ -606,6 +612,7 @@ Membership/linkage repair runs in bounded tenant/organization batches through `y
 - `TC-FINOO-AFF-015`: preview rejects invalid DataTable selections; confirm starts progress, duplicate jobs converge to one payout, all selected transactions link and become paid_out, retry after commit returns the payout, and any changed selection/version/profile binding returns `409` without duplication.
 - `TC-FINOO-AFF-016`: dashboard default/custom ranges show the additive Accepted transaction series, paid/pending decimal-string sums, and generated link while the legacy Completed series remains unchanged; portal payout list is own-affiliate only.
 - Existing `TC-FINOO-AFF-001..008` remain and are updated only where new additive/current status expectations require it.
+- SES provider unit/contract coverage proves ambient backward compatibility, complete-pair validation, secret field metadata, identical adapter/health credential selection, health-before-save behavior, preset preservation, stdin-only configuration, and exact-scope deployment gates. A live invite and mailbox read-back prove delivery without exposing the credential pair.
 
 All integration tests create and clean their own invitations/users/memberships/links/Deals/transitions/transactions/payouts and never rely on seeded/demo business data. Because invitation emails are external side effects, metadata-gated live email coverage is separated from deterministic local command/event coverage; production headed QA proves the configured mail path.
 
@@ -692,6 +699,22 @@ All integration tests create and clean their own invitations/users/memberships/l
 - **Mitigation**: retain THOM-88 fetch-metadata, crawler, cookie-dedupe, shared rate-limit, proxy-depth, and retention controls unchanged; regression tests remain.
 - **Residual risk**: deterministic filters cannot identify every sophisticated human-like bot, but click counts do not directly create payable transactions.
 
+### Dedicated SES Credential Disclosure or Overreach
+
+- **Scenario**: a long-lived key leaks, is written to process/environment logs, is applied to the wrong tenant, or can send from an unapproved identity.
+- **Severity**: High
+- **Affected area**: invitations, password email, AWS account, recipient trust
+- **Mitigation**: exact tenant/organization CLI scope, stdin-only input, both credential fields secret-typed and encrypted by the platform service, no dotenv/build/SSM/Jira values, health-before-save, exact deployment assertions, an IAM resource restricted to the verified `they.dev` identity, exact `ses:FromAddress`, and only `SendEmail` plus `GetAccount`.
+- **Residual risk**: the FINOO application can send arbitrary transactional content and recipients from `no-reply@they.dev`; immediate key deactivation/deletion and restoring ambient credentials are the rollback controls.
+
+## Migration & Backward Compatibility — SES Authentication
+
+- No database migration is required; integration credentials remain an encrypted JSON object in the existing table.
+- Existing SES rows containing only region, sender, and optional configuration set keep using the AWS SDK default credential chain unchanged.
+- `authMode`, `accessKeyId`, and `secretAccessKey` are additive optional provider fields. Explicit credentials are used only when `authMode` is `access_keys` and both values are present.
+- Reapplying an already-matching environment preset does not rewrite a valid explicit pair. A public-preset mismatch or partial/invalid pair fails closed instead of performing a secret-bearing read-modify-write.
+- The first-rollout deployment flag records that credentials were newly staged. Every non-final deployment path restores and verifies the exact prior ambient object through a one-off container before candidate cleanup. The outer operator harness first deactivates the newly created key, verifies ambient restoration, then deletes the key, inline policy, and user; any uncertain cleanup remains an explicit security blocker.
+
 ## Final Compliance Report — 2026-08-13
 
 ### AGENTS.md Files Reviewed
@@ -716,7 +739,7 @@ All integration tests create and clean their own invitations/users/memberships/l
 
 | Rule Source | Rule | Status | Notes |
 |---|---|---|---|
-| root | private code under app module | Compliant | all behavior remains in `apps/mercato/src/modules/finoo_affiliates` |
+| root | private feature code and provider ownership | Compliant | affiliate behavior remains app-local; SES authentication stays in its provider package and private deployment script |
 | root/core | no cross-module ORM relations or direct write services | Compliant | UUIDs/snapshots; existing invitation API and events |
 | root/core | tenant and organization scope | Compliant | required on every query/write; portal adds authenticated membership |
 | root/core | Zod, commands, events, mutation guards | Compliant | all custom endpoints and mutations are specified accordingly |
@@ -751,6 +774,10 @@ None identified before the required independent scope and pre-implementation rev
 Ready for implementation. Independent scope, backward-compatibility, data/architecture, and UI/test audits passed after the documented amendments. The detailed readiness record is `.ai/specs/analysis/ANALYSIS-2026-08-12-finoo-affiliate-portal-and-attribution.md`.
 
 ## Changelog
+
+### 2026-08-14
+
+- Added the approved FINOO-only SES credential design: encrypted organization-scoped explicit credentials as an opt-in, default-chain compatibility, exact least-privilege IAM policy, stdin-only configuration, health/deployment gates, rollback, and live-delivery coverage.
 
 ### 2026-08-13
 

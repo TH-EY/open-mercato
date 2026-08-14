@@ -160,7 +160,7 @@ test('upgrade configures Finoo attribution securely without logging credentials'
   assert.match(upgradeScript, /chmod 600 "\$commit_temp" "\$digest_temp"/)
 })
 
-test('Finoo provisions and upgrades SES through the instance role without static AWS credentials', () => {
+test('Finoo keeps ambient SES as the default and gates its dedicated encrypted channel credentials', () => {
   for (const source of [deployScript, upgradeScript]) {
     assert.match(source, /SYSTEM_EMAIL_PROVIDER/)
     assert.match(source, /AWS_SES_REGION/)
@@ -172,8 +172,21 @@ test('Finoo provisions and upgrades SES through the instance role without static
   assert.match(deployScript, /set_env_value SYSTEM_EMAIL_PROVIDER ses/)
   assert.match(deployScript, /set_env_value AWS_SES_REGION eu-west-2/)
   assert.match(upgradeScript, /yarn mercato channel_ses assert-env-preset-exact/)
+  assert.match(upgradeScript, /yarn mercato channel_ses assert-explicit-credentials/)
+  assert.match(upgradeScript, /yarn mercato channel_ses assert-credentials-health/)
+  assert.match(upgradeScript, /FINOO_SES_CREDENTIALS_STAGED/)
+  assert.match(upgradeScript, /yarn mercado channel_ses restore-ambient-credentials/)
+  assert.match(upgradeScript, /ses_credentials_restored=ambient/)
+  assert.ok(
+    upgradeScript.indexOf('restore_staged_ses_credentials ||')
+      < upgradeScript.indexOf('docker rm -f "$candidate_container"'),
+    'staged SES credentials must be restored before candidate cleanup',
+  )
+  assert.match(upgradeScript, /FINOO_TENANT_ID=26d5dc28-6df5-4944-b0e9-0ff26a8bf8a6/)
+  assert.match(upgradeScript, /FINOO_ORGANIZATION_ID=4ec19265-3d35-4e9f-bcd2-531e62cf8385/)
   assert.doesNotMatch(upgradeScript, /yarn mercato channel_ses (?:assert-env-preset-absent|remove-env-preset)/)
   assert.doesNotMatch(upgradeScript, /yarn mercato seed:defaults --module channel_ses/)
+  assert.doesNotMatch(upgradeScript, /configure-explicit-credentials|accessKeyId|secretAccessKey/)
   assert.match(upgradeScript, /cp -p -- \.env "\$env_backup"/)
   assert.match(upgradeScript, /cp -p -- "\$env_backup" \.env/)
 })

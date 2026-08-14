@@ -62,4 +62,22 @@ describe('channelSesHealthCheck', () => {
       message: expect.stringContaining('sending is disabled'),
     }))
   })
+
+  it('uses the same dedicated credentials for the health probe', async () => {
+    await channelSesHealthCheck.check(
+      {
+        region: 'eu-west-2',
+        fromAddress: 'from@example.com',
+        authMode: 'access_keys',
+        accessKeyId: 'access-key-id',
+        secretAccessKey: 'secret-access-key',
+      },
+      { tenantId: 'tenant-1', organizationId: 'organization-1' },
+    )
+
+    expect(SESv2ClientMock).toHaveBeenCalledWith({
+      region: 'eu-west-2',
+      credentials: { accessKeyId: 'access-key-id', secretAccessKey: 'secret-access-key' },
+    })
+  })
 })
