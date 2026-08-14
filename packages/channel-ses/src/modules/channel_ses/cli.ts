@@ -2,7 +2,7 @@ import type { EntityManager } from '@mikro-orm/postgresql'
 import type { ModuleCli } from '@open-mercato/shared/modules/registry'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { Organization } from '@open-mercato/core/modules/directory/data/entities'
-import { assertSesEnvPresetAbsent, removeSesEnvPreset } from './lib/preset'
+import { assertSesEnvPresetAbsent, assertSesEnvPresetExact, removeSesEnvPreset } from './lib/preset'
 
 async function forEachOrganization(
   operation: (scope: {
@@ -41,4 +41,12 @@ const removeEnvPresetCommand: ModuleCli = {
   },
 }
 
-export default [assertEnvPresetAbsentCommand, removeEnvPresetCommand]
+const assertEnvPresetExactCommand: ModuleCli = {
+  command: 'assert-env-preset-exact',
+  async run() {
+    await forEachOrganization(assertSesEnvPresetExact)
+    console.log('Amazon SES environment preset state exactly matches every organization.')
+  },
+}
+
+export default [assertEnvPresetAbsentCommand, assertEnvPresetExactCommand, removeEnvPresetCommand]

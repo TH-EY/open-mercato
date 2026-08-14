@@ -1,7 +1,9 @@
 import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { sesCapabilities } from '../../capabilities'
 import {
   applySesEnvPreset,
   assertSesEnvPresetAbsent,
+  assertSesEnvPresetExact,
   readSesEnvPreset,
   removeSesEnvPreset,
 } from '../preset'
@@ -96,6 +98,61 @@ describe('channel_ses env preset', () => {
       tenantId: 'tenant-1',
       organizationId: 'organization-1',
     })).rejects.toThrow('SES_ENV_PRESET_ALREADY_EXISTS')
+  })
+
+  it('accepts only an exact existing environment preset', async () => {
+    const channel = {
+      displayName: 'Amazon SES system email',
+      externalIdentifier: 'from@example.com',
+      capabilities: { ...sesCapabilities },
+      isActive: true,
+      status: 'connected',
+      lastError: null,
+    }
+    mockedFindOneWithDecryption.mockResolvedValue(channel as never)
+    const resolve = jest.fn().mockResolvedValue({ region: 'eu-west-2', fromAddress: 'from@example.com' })
+    const count = jest.fn().mockResolvedValue(1)
+
+    await expect(assertSesEnvPresetExact({
+      em: { count } as never,
+      container: { resolve: () => ({ resolve }) } as never,
+      tenantId: 'tenant-1',
+      organizationId: 'organization-1',
+    })).resolves.toBeUndefined()
+  })
+
+  it('rejects a mismatched existing environment preset without changing it', async () => {
+    mockedFindOneWithDecryption.mockResolvedValue({
+      displayName: 'Amazon SES system email',
+      externalIdentifier: 'other@example.com',
+      capabilities: {},
+      isActive: true,
+      status: 'connected',
+      lastError: null,
+    } as never)
+    const resolve = jest.fn().mockResolvedValue({ region: 'eu-west-2', fromAddress: 'other@example.com' })
+    const count = jest.fn().mockResolvedValue(1)
+
+    await expect(assertSesEnvPresetExact({
+      em: { count } as never,
+      container: { resolve: () => ({ resolve }) } as never,
+      tenantId: 'tenant-1',
+      organizationId: 'organization-1',
+    })).rejects.toThrow('SES_ENV_PRESET_MISMATCH')
+  })
+
+  it('rejects duplicate preset rows before resolving either value', async () => {
+    const resolve = jest.fn()
+    const count = jest.fn().mockResolvedValueOnce(2).mockResolvedValueOnce(1)
+
+    await expect(assertSesEnvPresetExact({
+      em: { count } as never,
+      container: { resolve: () => ({ resolve }) } as never,
+      tenantId: 'tenant-1',
+      organizationId: 'organization-1',
+    })).rejects.toThrow('expected exactly one preset')
+    expect(resolve).not.toHaveBeenCalled()
+    expect(mockedFindOneWithDecryption).not.toHaveBeenCalled()
   })
 
   it('removes only the exactly scoped SES channel and credentials', async () => {

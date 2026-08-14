@@ -38,6 +38,86 @@ export async function assertSesEnvPresetAbsent(ctx: PresetScope): Promise<void> 
   }
 }
 
+function hasExactValue(actual: unknown, expected: unknown): boolean {
+  if (Array.isArray(actual) || Array.isArray(expected)) {
+    return Array.isArray(actual)
+      && Array.isArray(expected)
+      && actual.length === expected.length
+      && actual.every((value, index) => hasExactValue(value, expected[index]))
+  }
+  if (!actual || !expected || typeof actual !== 'object' || typeof expected !== 'object') {
+    return actual === expected
+  }
+  const actualRecord = actual as Record<string, unknown>
+  const expectedRecord = expected as Record<string, unknown>
+  const actualKeys = Object.keys(actualRecord).sort()
+  const expectedKeys = Object.keys(expectedRecord).sort()
+  return actualKeys.length === expectedKeys.length
+    && actualKeys.every((key, index) => (
+      key === expectedKeys[index] && hasExactValue(actualRecord[key], expectedRecord[key])
+    ))
+}
+
+export async function assertSesEnvPresetExact(ctx: PresetScope): Promise<void> {
+  const preset = readSesEnvPreset()
+  if (!preset) {
+    throw new Error('SES_ENV_PRESET_MISSING_ENV: SES environment preset is incomplete')
+  }
+
+  const credentialsService = ctx.container.resolve('integrationCredentialsService') as {
+    resolve: (
+      integrationId: string,
+      scope: { organizationId: string; tenantId: string; userId?: string | null },
+    ) => Promise<Record<string, unknown> | null>
+  }
+  const scope = { tenantId: ctx.tenantId, organizationId: ctx.organizationId, userId: null }
+  const credentialsFilter = {
+    integrationId: 'channel_ses',
+    tenantId: ctx.tenantId,
+    organizationId: ctx.organizationId,
+    userId: null,
+    deletedAt: null,
+  }
+  const channelFilter = {
+    providerKey: 'ses',
+    channelType: 'email',
+    tenantId: ctx.tenantId,
+    organizationId: ctx.organizationId,
+    userId: null,
+    deletedAt: null,
+  }
+  const [credentialsCount, channelCount] = await Promise.all([
+    ctx.em.count(IntegrationCredentials, credentialsFilter),
+    ctx.em.count(CommunicationChannel, channelFilter),
+  ])
+  if (credentialsCount !== 1 || channelCount !== 1) {
+    throw new Error(`SES_ENV_PRESET_MISMATCH: expected exactly one preset for organization ${ctx.organizationId}`)
+  }
+
+  const [credentials, channel] = await Promise.all([
+    credentialsService.resolve('channel_ses', scope),
+    findOneWithDecryption(
+      ctx.em,
+      CommunicationChannel,
+      channelFilter,
+      undefined,
+      { tenantId: ctx.tenantId, organizationId: ctx.organizationId },
+    ),
+  ])
+
+  const channelMatches = channel
+    && channel.displayName === 'Amazon SES system email'
+    && channel.externalIdentifier === preset.fromAddress
+    && channel.isActive === true
+    && channel.status === 'connected'
+    && channel.lastError == null
+    && hasExactValue(channel.capabilities ?? {}, sesCapabilities)
+
+  if (!credentials || !hasExactValue(credentials, preset) || !channelMatches) {
+    throw new Error(`SES_ENV_PRESET_MISMATCH: existing preset differs for organization ${ctx.organizationId}`)
+  }
+}
+
 export async function removeSesEnvPreset(ctx: PresetScope): Promise<void> {
   await ctx.em.transactional(async (em) => {
     await em.nativeDelete(CommunicationChannel, {
