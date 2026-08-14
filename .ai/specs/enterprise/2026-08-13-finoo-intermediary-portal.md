@@ -390,7 +390,7 @@ Default staff grants:
 
 - `portal.finoo_intermediaries.view`
 
-`setup.ts` declares `defaultCustomerRoleFeatures.intermediary = ['portal.finoo_intermediaries.view']`. The setup merge must not create the missing role; if the tenant-owned role is absent, setup leaves it absent and assignment fails closed. The live role exists, but integration fixtures create their own scoped role and membership.
+`setup.ts` declares `defaultCustomerRoleFeatures.intermediary = ['portal.finoo_intermediaries.view']` for first provision. An existing tenant is reconciled only with `yarn mercato finoo_intermediaries ensure-portal-role-feature --tenant <uuid> --organization <uuid> --apply` after the exact candidate is healthy. The command locks the exact scoped `intermediary` role and ACL in one transaction, adds only the missing portal feature, advances the role aggregate version, and invalidates only the target tenant's portal RBAC cache after commit. It must not enumerate organizations or create a missing role or ACL. The live role exists, but integration fixtures create their own scoped role and membership.
 
 The portal feature is necessary but never sufficient. Direct feature grants or portal-admin wildcard behavior cannot expose data without the active assignment, captured role membership, user scope, organization scope, and stage match.
 
