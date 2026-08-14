@@ -69,6 +69,48 @@ services:
     networks:
       - crm_network
 
+  opencode:
+    build:
+      context: ./docker/opencode
+    image: opencode-mvp
+    container_name: mercato-opencode-${DEPLOY_ENV:-local}
+    restart: unless-stopped
+    environment:
+      # Unified AI provider/model selection. OM_AI_* wins; OPENCODE_* stays
+      # as a BC fallback resolved by the opencode entrypoint script.
+      OM_AI_PROVIDER: ${OM_AI_PROVIDER:-openai}
+      OM_AI_MODEL: ${OM_AI_MODEL:-gpt-5-mini}
+      OPENCODE_PROVIDER: ${OPENCODE_PROVIDER:-}
+      OPENCODE_MODEL: ${OPENCODE_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GOOGLE_GENERATIVE_AI_API_KEY: ${GOOGLE_GENERATIVE_AI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-}
+      # In-network MCP wiring. MCP_SERVER_API_KEY (env) wins when set; the
+      # file fallback reads the key the mcp service provisioned into the
+      # shared volume after waiting for the MCP /health endpoint.
+      OPENCODE_MCP_URL: ${OPENCODE_MCP_URL:-http://mcp:3001/mcp}
+      MCP_SERVER_API_KEY: ${MCP_SERVER_API_KEY:-}
+      MCP_SERVER_API_KEY_FILE: /run/mcp-shared/mcp-api-key
+    volumes:
+      - mcp_shared:/run/mcp-shared:ro
+    depends_on:
+      mcp:
+        condition: service_started
+    # Visibility only (compose ps / smoke tests): the entrypoint owns the
+    # wait-for-MCP-and-key sequencing.
+    healthcheck:
+      test: [ "CMD", "curl", "-fsS", "--max-time", "5", "http://127.0.0.1:4096/global/health" ]
+      interval: 30s
+      timeout: 6s
+      retries: 20
+      start_period: 900s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - crm_network
+
   worker:
     image: ${APP_IMAGE}
     container_name: openmercato-crm-worker
