@@ -212,6 +212,43 @@ export function formatInitCredentialPassword(password: string, env = process.env
     : `║       Password: ${password.padEnd(44)} ║`
 }
 
+const NON_SECRET_CLI_CONTROLS = new Set([
+  'allow-secret-passthrough',
+  'allow-weak-password',
+  'skip-password-policy',
+])
+
+function isSensitiveCliFlag(flag: string): boolean {
+  const normalized = flag
+    .replace(/^-+/, '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/_/g, '-')
+    .toLowerCase()
+  if (NON_SECRET_CLI_CONTROLS.has(normalized)) return false
+  const segments = normalized.split('-').filter(Boolean)
+  if (segments.some((segment) => ['password', 'passwd', 'passphrase', 'secret', 'token'].includes(segment))) {
+    return true
+  }
+  return segments.includes('key') && segments.some((segment) => ['api', 'private', 'access', 'signing'].includes(segment))
+}
+
+export function redactCliArgsForLogging(args: string[]): string[] {
+  const redacted = [...args]
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index] ?? ''
+    if (!argument.startsWith('-')) continue
+    const equalsIndex = argument.indexOf('=')
+    const flag = equalsIndex >= 0 ? argument.slice(0, equalsIndex) : argument
+    if (!isSensitiveCliFlag(flag)) continue
+    if (equalsIndex >= 0) {
+      redacted[index] = `${flag}=****`
+    } else if (index + 1 < redacted.length) {
+      redacted[index + 1] = '****'
+    }
+  }
+  return redacted
+}
+
 function formatInitFailureMessage(error: unknown): string {
   const fallbackMessage = getFallbackErrorMessage(error)
   const databaseIssue = detectDatabaseConnectionIssue(error)
@@ -2622,9 +2659,7 @@ export async function run(argv = process.argv) {
 
   console.log('')
   const started = Date.now()
-  const loggedArgs = modName === 'deploy' && cmdName === 'railway'
-    ? (await import('./lib/deploy/railway/options')).redactRailwayCliArgs(rest)
-    : rest
+  const loggedArgs = redactCliArgsForLogging(rest)
   console.log(`🚀 Running ${modName}:${cmdName} ${loggedArgs.join(' ')}`)
   try {
     await cmd.run(rest)
