@@ -126,7 +126,11 @@ describe('Activity Executor (Unit Tests)', () => {
       expect(result.output.via).toBe('console')
       expect(mockLoggerInstance.info).toHaveBeenCalledWith(
         'Send email activity invoked',
-        expect.objectContaining({ subject: 'Welcome!' }),
+        { component: 'SEND_EMAIL' },
+      )
+      expect(mockLoggerInstance.info).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ subject: expect.anything() }),
       )
     })
 
@@ -223,7 +227,11 @@ describe('Activity Executor (Unit Tests)', () => {
       expect(result.output.subject).toBe('Hello John Doe')
       expect(mockLoggerInstance.info).toHaveBeenCalledWith(
         'Send email activity invoked',
-        expect.objectContaining({ subject: 'Hello John Doe' }),
+        { component: 'SEND_EMAIL' },
+      )
+      expect(mockLoggerInstance.info).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ subject: expect.anything() }),
       )
     })
   })

@@ -564,7 +564,7 @@ export async function executeSendEmail(
   }
 
   // For MVP: Log the email (actual email service integration can be added later)
-  logger.info('Send email activity invoked', { component: 'SEND_EMAIL', subject })
+  logger.info('Send email activity invoked', { component: 'SEND_EMAIL' })
 
   // Check if email service is available in container
   try {

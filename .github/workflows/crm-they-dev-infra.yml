@@ -2,15 +2,6 @@ name: CRM they.dev Terraform
 
 on:
   workflow_dispatch:
-    inputs:
-      action:
-        description: Terraform action
-        required: true
-        type: choice
-        options:
-          - plan
-          - apply
-        default: plan
 
 concurrency:
   group: crm-they-dev-terraform
@@ -23,7 +14,7 @@ env:
 
 jobs:
   terraform:
-    name: Terraform ${{ github.event.inputs.action }}
+    name: Terraform plan
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -62,8 +53,3 @@ jobs:
       - name: Tofu plan
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: tofu plan -input=false -out=tfplan
-
-      - name: Tofu apply
-        if: github.event.inputs.action == 'apply'
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: tofu apply -input=false -auto-approve tfplan
