@@ -210,6 +210,7 @@ jobs:
           admin_password="$(secret_value "${name_prefix}/initial-admin-password")"
           admin_email="$(param_value "/${name_prefix}/runtime/admin-email")"
           openrouter_api_key="$(secret_value "${name_prefix}/openrouter-api-key")"
+          mcpserver_api_key="$(secret_value "${name_prefix}/mcpserver_api_key")"
 
           cat > "${workdir}/.env.crm" <<ENV_CRM
           APP_IMAGE=${app_image}
@@ -230,6 +231,7 @@ jobs:
           DB_POOL_ACQUIRE_TIMEOUT=60000
           DATA_SYNC_QUEUE_CONCURRENCY=1
           OPENROUTER_API_KEY=${openrouter_api_key}
+          MCPSERVER_API_KEY= ${mcpserver_api_key}
           OM_AI_CUSTOMERS_PROVIDER=openrouter
           OM_AI_CUSTOMERS_MODEL=meta-llama/llama-3.3-70b-instruct
           OM_AI_CATALOG_PROVIDER=openrouter
