@@ -1,6 +1,8 @@
+import { LockMode } from '@mikro-orm/core'
 import type { EntityManager } from '@mikro-orm/postgresql'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
-import { loadAssignableIntermediary, loadEligibleDeal } from '../lib/access'
+import { assertAssignmentStillEligible, loadAssignableIntermediary, loadEligibleDeal } from '../lib/access'
+import type { FinooIntermediaryAssignment } from '../data/entities'
 
 const tenantId = '11111111-1111-4111-8111-111111111111'
 const organizationId = '22222222-2222-4222-8222-222222222222'
@@ -58,6 +60,26 @@ describe('finoo_intermediaries access invariants', () => {
 
     await expect(loadEligibleDeal(em, { tenantId, organizationId, dealId }))
       .rejects.toMatchObject<Partial<CrudHttpError>>({ status: 422 })
+  })
+
+  it('keeps a captured eligible stage valid after its label changes and locks the Deal for mutation', async () => {
+    const eligibleStageId = '55555555-5555-4555-8555-555555555555'
+    const em = mockEntityManager([{
+      id: dealId,
+      pipelineStageId: eligibleStageId,
+    }])
+
+    await expect(assertAssignmentStillEligible(em, {
+      tenantId,
+      organizationId,
+      dealId,
+      eligibleStageId,
+    } as FinooIntermediaryAssignment, { lock: true })).resolves.toBeUndefined()
+
+    expect((em.findOne as jest.Mock).mock.calls[0]?.[2]).toEqual({
+      lockMode: LockMode.PESSIMISTIC_WRITE,
+    })
+    expect(em.find).not.toHaveBeenCalled()
   })
 
   it('requires an active scoped intermediary role membership', async () => {

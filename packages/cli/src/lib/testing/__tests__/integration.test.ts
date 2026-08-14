@@ -190,6 +190,9 @@ describe('integration cache and options', () => {
       expect(environment?.commandEnvironment.OM_TEST_EMAIL_CAPTURE_PATH).toBe(
         path.join(projectRootDirectory, '.ai', 'qa', 'email-capture.jsonl'),
       )
+      expect(environment?.commandEnvironment.OM_TEST_CHANNEL_EMAIL_CAPTURE_PATH).toBe(
+        path.join(projectRootDirectory, 'apps', 'mercato', '.mercato', 'queue', 'channel-email-capture.jsonl'),
+      )
       expect(environment?.commandEnvironment.NEXT_PUBLIC_OM_EXAMPLE_CHECKOUT_TEST_INJECTIONS_ENABLED).toBeUndefined()
     } finally {
       fetchSpy.mockRestore()

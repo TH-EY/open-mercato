@@ -15,9 +15,9 @@ import {
   finooAffiliateLinkUpdateSchema,
   finooDealAttributionUpsertSchema,
 } from '../data/validators'
-import { FinooAffiliateLink, FinooDealAttribution } from '../data/entities'
+import { FinooAffiliate, FinooAffiliateLink, FinooDealAttribution } from '../data/entities'
 import { emitFinooAffiliateEvent } from '../events'
-import { createAffiliateCode, type FinooAffiliateService, type FinooScope } from '../lib/service'
+import { type FinooAffiliateService, type FinooScope } from '../lib/service'
 import { loadFirstCompletedAt } from '../lib/attributionSync'
 
 type LinkSnapshot = {
@@ -40,6 +40,7 @@ type AttributionSnapshot = {
   organizationId: string
   dealId: string
   affiliateUserId: string
+  affiliateId: string | null
   affiliateCode: string
   companyName: string | null
   landingPage: string | null
@@ -90,6 +91,7 @@ function attributionSnapshot(attribution: FinooDealAttribution): AttributionSnap
     organizationId: attribution.organizationId,
     dealId: attribution.dealId,
     affiliateUserId: attribution.affiliateUserId,
+    affiliateId: attribution.affiliateId ?? null,
     affiliateCode: attribution.affiliateCode,
     companyName: attribution.companyName ?? null,
     landingPage: attribution.landingPage ?? null,
@@ -117,6 +119,23 @@ async function loadLink(em: EntityManager, id: string, scope: FinooScope, includ
   )
   if (!link) throw new CrudHttpError(404, { error: '[internal] Affiliate link was not found' })
   return link
+}
+
+async function isPrimaryAffiliateLink(em: EntityManager, link: FinooAffiliateLink, scope: FinooScope): Promise<boolean> {
+  const affiliate = await findOneWithDecryption(
+    em,
+    FinooAffiliate,
+    { ...scope, primaryLinkId: link.id, deletedAt: null },
+    undefined,
+    scope,
+  )
+  return Boolean(affiliate)
+}
+
+async function rejectPrimaryLinkMutation(em: EntityManager, link: FinooAffiliateLink, scope: FinooScope): Promise<void> {
+  if (await isPrimaryAffiliateLink(em, link, scope)) {
+    throw new CrudHttpError(409, { error: 'PRIMARY_AFFILIATE_LINK_IMMUTABLE' })
+  }
 }
 
 async function emitLinkEvent(action: 'created' | 'updated' | 'deleted', link: FinooAffiliateLink): Promise<void> {
@@ -148,16 +167,19 @@ const createLinkCommand: CommandHandler<Record<string, unknown>, FinooAffiliateL
     const service = ctx.container.resolve('finooAffiliateService') as FinooAffiliateService
     await service.requireAffiliateUser(input.affiliateUserId, scope)
     const destinationUrl = await service.requireAllowedDestination(input.destinationUrl)
-    const link = em.create(FinooAffiliateLink, {
-      ...scope,
-      affiliateUserId: input.affiliateUserId,
-      code: createAffiliateCode(),
-      label: input.label,
-      destinationUrl,
-      isActive: input.isActive,
+    const link = await service.withAvailableAffiliateCode(async (transactionalEm, code) => {
+      const created = transactionalEm.create(FinooAffiliateLink, {
+        ...scope,
+        affiliateUserId: input.affiliateUserId,
+        code,
+        label: input.label,
+        destinationUrl,
+        isActive: input.isActive,
+      })
+      transactionalEm.persist(created)
+      await transactionalEm.flush()
+      return created
     })
-    em.persist(link)
-    await em.flush()
     await emitLinkEvent('created', link)
     return link
   },
@@ -179,7 +201,9 @@ const createLinkCommand: CommandHandler<Record<string, unknown>, FinooAffiliateL
     const after = extractUndoPayload<UndoPayload<LinkSnapshot>>(logEntry)?.after
     if (!after) return
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    const link = await loadLink(em, after.id, { tenantId: after.tenantId, organizationId: after.organizationId })
+    const scope = { tenantId: after.tenantId, organizationId: after.organizationId }
+    const link = await loadLink(em, after.id, scope)
+    await rejectPrimaryLinkMutation(em, link, scope)
     link.deletedAt = new Date()
     await em.flush()
     await emitLinkEvent('deleted', link)
@@ -201,6 +225,9 @@ const updateLinkCommand: CommandHandler<Record<string, unknown>, FinooAffiliateL
     const em = ctx.container.resolve('em') as EntityManager
     const service = ctx.container.resolve('finooAffiliateService') as FinooAffiliateService
     const link = await loadLink(em, input.id, scope)
+    if (input.affiliateUserId !== undefined || input.destinationUrl !== undefined || input.isActive !== undefined) {
+      await rejectPrimaryLinkMutation(em, link, scope)
+    }
     if (input.affiliateUserId) {
       await service.requireAffiliateUser(input.affiliateUserId, scope)
       link.affiliateUserId = input.affiliateUserId
@@ -234,7 +261,9 @@ const updateLinkCommand: CommandHandler<Record<string, unknown>, FinooAffiliateL
     const before = extractUndoPayload<UndoPayload<LinkSnapshot>>(logEntry)?.before
     if (!before) return
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    const link = await loadLink(em, before.id, { tenantId: before.tenantId, organizationId: before.organizationId }, true)
+    const scope = { tenantId: before.tenantId, organizationId: before.organizationId }
+    const link = await loadLink(em, before.id, scope, true)
+    await rejectPrimaryLinkMutation(em, link, scope)
     link.affiliateUserId = before.affiliateUserId
     link.label = before.label
     link.destinationUrl = before.destinationUrl
@@ -259,6 +288,7 @@ const deleteLinkCommand: CommandHandler<Record<string, unknown>, FinooAffiliateL
     const scope = requireScope(ctx)
     const em = ctx.container.resolve('em') as EntityManager
     const link = await loadLink(em, input.id, scope)
+    await rejectPrimaryLinkMutation(em, link, scope)
     link.deletedAt = new Date()
     await em.flush()
     await emitLinkEvent('deleted', link)
@@ -321,6 +351,13 @@ const upsertAttributionCommand: CommandHandler<Record<string, unknown>, FinooDea
     )
     if (!deal) throw new CrudHttpError(404, { error: '[internal] Deal was not found' })
     const completedAt = await loadFirstCompletedAt(em, deal.id, scope)
+    const affiliate = await findOneWithDecryption(
+      em,
+      FinooAffiliate,
+      { customerUserId: input.affiliateUserId, ...scope, isActive: true, deletedAt: null },
+      undefined,
+      scope,
+    )
     let attribution = await findOneWithDecryption(
       em,
       FinooDealAttribution,
@@ -328,12 +365,30 @@ const upsertAttributionCommand: CommandHandler<Record<string, unknown>, FinooDea
       undefined,
       scope,
     )
+    const commandBus = ctx.container.resolve('commandBus') as import('@open-mercato/shared/lib/commands').CommandBus
+    if (attribution) {
+      await commandBus.execute(
+        'finoo_affiliates.transaction.create',
+        {
+          input: { dealId: input.dealId },
+          ctx: {
+            container: ctx.container,
+            auth: ctx.auth,
+            organizationScope: ctx.organizationScope,
+            selectedOrganizationId: scope.organizationId,
+            organizationIds: [scope.organizationId],
+            systemActor: true,
+          },
+        },
+      )
+    }
     const wasCreated = !attribution || Boolean(attribution.deletedAt)
     if (!attribution) {
       attribution = em.create(FinooDealAttribution, {
         ...scope,
         dealId: input.dealId,
         affiliateUserId: input.affiliateUserId,
+        affiliateId: affiliate?.id ?? null,
         affiliateCode: '',
         commissionStatusEntryId: commission.entry.id,
         commissionStatus: commission.status,
@@ -351,6 +406,7 @@ const upsertAttributionCommand: CommandHandler<Record<string, unknown>, FinooDea
         request: ctx.request ?? null,
       })
       attribution.affiliateUserId = input.affiliateUserId
+      attribution.affiliateId = affiliate?.id ?? null
       attribution.commissionStatusEntryId = commission.entry.id
       attribution.commissionStatus = commission.status
       attribution.commissionAmount = input.commissionAmount
@@ -360,6 +416,20 @@ const upsertAttributionCommand: CommandHandler<Record<string, unknown>, FinooDea
     }
     await em.flush()
     await emitAttributionEvent(wasCreated ? 'created' : 'updated', attribution)
+    await commandBus.execute(
+      'finoo_affiliates.transaction.create',
+      {
+        input: { dealId: input.dealId },
+        ctx: {
+          container: ctx.container,
+          auth: ctx.auth,
+          organizationScope: ctx.organizationScope,
+          selectedOrganizationId: scope.organizationId,
+          organizationIds: [scope.organizationId],
+          systemActor: true,
+        },
+      },
+    )
     return attribution
   },
   captureAfter: (_input, result) => attributionSnapshot(result),
@@ -398,6 +468,7 @@ const upsertAttributionCommand: CommandHandler<Record<string, unknown>, FinooDea
     }
     const before = payload.before
     attribution.affiliateUserId = before.affiliateUserId
+    attribution.affiliateId = before.affiliateId
     attribution.affiliateCode = before.affiliateCode
     attribution.companyName = before.companyName
     attribution.landingPage = before.landingPage

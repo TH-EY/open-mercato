@@ -59,6 +59,7 @@
       "unassignedState": "Not assigned",
       "intermediary": "Intermediary",
       "selectIntermediary": "Select intermediary",
+      "reassignConfirm": "Transfer this deal to the selected intermediary?",
       "unassign": "Unassign",
       "unassignConfirm": "Remove this intermediary assignment?",
       "saved": "Intermediary assignment saved.",

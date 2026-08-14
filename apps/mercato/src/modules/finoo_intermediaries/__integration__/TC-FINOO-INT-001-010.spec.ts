@@ -612,12 +612,51 @@ test.describe.serial('THOM-90 FINOO intermediary portal', () => {
       'turnover',
       'updatedAt',
     ])
+    const replacementCompanyResponse = await apiRequest(request, 'POST', '/api/customers/companies', {
+      token: state.token,
+      data: {
+        displayName: 'Intermediary Company 004 replacement',
+        primaryPhone: '+48111222333',
+      },
+    })
+    expect(replacementCompanyResponse.status()).toBe(201)
+    const replacementCompanyId = expectId(
+      (await readJsonSafe<{ id?: string }>(replacementCompanyResponse))?.id,
+      'replacement company id',
+    )
+    try {
+      await queryTestDatabase(
+        `insert into customer_deal_companies (id, deal_id, company_entity_id, created_at)
+         values (gen_random_uuid(), $1, $2, now())`,
+        [bundle.dealId, replacementCompanyId],
+      )
+      await queryTestDatabase(
+        'update customer_entities set deleted_at = now() where id = $1 and organization_id = $2 and tenant_id = $3',
+        [bundle.companyId, state.organizationId, state.tenantId],
+      )
+      const replacementProjection = await readPortalDeal(request, state.firstSession, bundle.dealId)
+      expect(replacementProjection.response.status()).toBe(200)
+      expect(replacementProjection.deal).toMatchObject({
+        companyName: 'Intermediary Company 004 replacement',
+        companyPhone: '+48111222333',
+      })
+    } finally {
+      await queryTestDatabase(
+        'update customer_entities set deleted_at = null where id = $1 and organization_id = $2 and tenant_id = $3',
+        [bundle.companyId, state.organizationId, state.tenantId],
+      )
+      await queryTestDatabase(
+        'delete from customer_deal_companies where deal_id = $1 and company_entity_id = $2',
+        [bundle.dealId, replacementCompanyId],
+      )
+      await deleteEntityIfExists(request, state.token, '/api/customers/companies', replacementCompanyId)
+    }
     await deleteAssignment(request, assignment)
   })
 
   test('TC-FINOO-INT-005 gates access by captured stage UUID, not later stage label', async ({ request }) => {
     const bundle = await createDealBundle(request, { suffix: '005' })
-    const assignment = await createAssignment(request, bundle.dealId)
+    let assignment = await createAssignment(request, bundle.dealId)
     await updateDealStage(request, bundle.dealId, state.ineligibleStageId)
     expect((await readPortalDeal(request, state.firstSession, bundle.dealId)).response.status()).toBe(404)
     await updateDealStage(request, bundle.dealId, state.eligibleStageId)
@@ -629,12 +668,23 @@ test.describe.serial('THOM-90 FINOO intermediary portal', () => {
       })
       expect(rename.status()).toBe(200)
       expect((await readPortalDeal(request, state.firstSession, bundle.dealId)).response.status()).toBe(200)
+      const reassign = await apiRequest(request, 'PUT', `${ASSIGNMENTS}/${assignment.id}`, {
+        token: state.token,
+        data: {
+          intermediaryCustomerUserId: state.secondUser.id,
+          expectedUpdatedAt: assignment.updatedAt,
+        },
+      })
+      expect(reassign.status(), `renamed-stage reassignment response: ${await reassign.text()}`).toBe(200)
+      assignment = (await readJsonSafe<{ assignment: Assignment }>(reassign))?.assignment as Assignment
+      expect((await readPortalDeal(request, state.firstSession, bundle.dealId)).response.status()).toBe(404)
+      expect((await readPortalDeal(request, state.secondSession, bundle.dealId)).response.status()).toBe(200)
       await queryTestDatabase(
         'update customer_roles set slug = $1 where id = $2 and organization_id = $3 and tenant_id = $4',
         [`renamed-intermediary-${randomUUID().slice(0, 8)}`, state.roleId, state.organizationId, state.tenantId],
       )
       try {
-        expect((await readPortalDeal(request, state.firstSession, bundle.dealId)).response.status()).toBe(200)
+        expect((await readPortalDeal(request, state.secondSession, bundle.dealId)).response.status()).toBe(200)
       } finally {
         await queryTestDatabase(
           'update customer_roles set slug = $1 where id = $2 and organization_id = $3 and tenant_id = $4',
@@ -802,16 +852,17 @@ test.describe.serial('THOM-90 FINOO intermediary portal', () => {
     await deleteAssignment(request, restored)
   })
 
-  test('TC-FINOO-INT-008 exposes safe shared activities and excludes email/private/body data', async ({ request }) => {
+  test('TC-FINOO-INT-008 exposes public activities and excludes team/email/private/body data', async ({ request }) => {
     const bundle = await createDealBundle(request, { suffix: '008' })
     const assignment = await createAssignment(request, bundle.dealId)
     const interactionIds: string[] = []
     for (const input of [
-      { interactionType: 'call', title: '<b>Newer occurrence</b>', body: 'secret body', visibility: 'shared', occurredAt: '2026-08-12T10:00:00.000Z' },
-      { interactionType: 'meeting', title: 'Older occurrence', body: 'second secret body', visibility: 'shared', occurredAt: '2026-08-11T10:00:00.000Z' },
-      { interactionType: 'meeting', title: 'No occurrence', body: 'third secret body', visibility: 'shared', occurredAt: null },
+      { interactionType: 'call', title: '<b>Newer occurrence</b>', body: 'secret body', visibility: 'public', occurredAt: '2026-08-12T10:00:00.000Z' },
+      { interactionType: 'meeting', title: 'Older occurrence', body: 'second secret body', visibility: 'public', occurredAt: '2026-08-11T10:00:00.000Z' },
+      { interactionType: 'meeting', title: 'No occurrence', body: 'third secret body', visibility: 'public', occurredAt: null },
+      { interactionType: 'meeting', title: 'Team meeting', body: 'team body', visibility: 'team', occurredAt: '2026-08-13T11:00:00.000Z' },
       { interactionType: 'meeting', title: 'Private meeting', body: 'private body', visibility: 'private', occurredAt: '2026-08-13T10:00:00.000Z' },
-      { interactionType: 'email', title: 'Email subject', body: 'email body', visibility: 'shared', occurredAt: '2026-08-14T10:00:00.000Z' },
+      { interactionType: 'email', title: 'Email subject', body: 'email body', visibility: 'public', occurredAt: '2026-08-14T10:00:00.000Z' },
     ]) {
       const response = await apiRequest(request, 'POST', '/api/customers/interactions', {
         token: state.token,

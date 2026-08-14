@@ -229,7 +229,7 @@ Person selection uses the canonical `CustomerDealPersonLink.isPrimary`; without 
 
 ### Activity projection
 
-Only active canonical interactions linked to the primary Person and matching tenant/organization are considered. The response contains only:
+Only active canonical interactions linked to the primary Person, matching tenant/organization, and explicitly marked `visibility === public` are considered. `team`, `private`, unset-visibility, and email rows are excluded. The response contains only:
 
 - `id`;
 - `type` from `interactionType`;
@@ -241,7 +241,7 @@ The API excludes `body`, recipients, participants, author identity/email, attach
 
 ## Commands and State Transitions
 
-All writes use registered commands and custom write routes run the mutation-guard registry before command execution.
+All writes use registered commands and custom write routes run the mutation-guard registry before command execution. Mutations acquire database locks in the consistent order Deal → assignment → note, and validate the current Deal stage while holding the Deal lock.
 
 | Command | Execute | Undo |
 |---------|---------|------|
@@ -522,11 +522,11 @@ All tests create tenant, organization, stage, role, portal users, Deal relations
 | `TC-FINOO-INT-001` | Staff creates assignment for an active scoped intermediary while Deal is in exact `Sent To Partners`; read-back returns captured stage/role and leaves all Deal fields/custom values unchanged. |
 | `TC-FINOO-INT-002` | Assignment rejects `Sent To Intermediaries`, partial/case-unrelated labels, wrong role, inactive user, missing role, cross-organization user, duplicate active assignment, and inaccessible Deal. |
 | `TC-FINOO-INT-003` | Reassign/unassign requires `expectedUpdatedAt`; stale writes return 409; old user loses access immediately; new user gets Deal access but not the old user's notes; undo restores only when safe. |
-| `TC-FINOO-INT-004` | Portal list/detail returns the eight canonical fields with correct types and dictionary label, including null primary-link behavior, without extra CRM/PII fields. |
-| `TC-FINOO-INT-005` | Moving Deal away from captured stage hides it; returning to the same UUID restores it; renaming the same stage does not break it; a different similarly named stage never qualifies. |
+| `TC-FINOO-INT-004` | Portal list/detail returns the eight canonical fields with correct types and dictionary label, including null primary-link behavior and selection of the oldest active scoped Company when an older link targets a soft-deleted Company, without extra CRM/PII fields. |
+| `TC-FINOO-INT-005` | Moving Deal away from captured stage hides it; returning to the same UUID restores it; renaming the same stage does not break reads or reassignment; a different similarly named stage never qualifies. |
 | `TC-FINOO-INT-006` | Only `new → in_progress → done` succeeds; stale, same-state, backward, skipped, foreign-user, and stage-ineligible mutations fail; core Deal status/pipeline/custom fields remain byte-for-byte logically unchanged. |
 | `TC-FINOO-INT-007` | Note create/read/update/delete round-trip, encrypted-at-rest assertion, author isolation, stale conflict, cross-org denial, staff all-note read, reassignment isolation, and XSS-safe rendering. |
-| `TC-FINOO-INT-008` | Activities expose only type/time/direction/summary, exclude private/email/body/recipient/attachment/author/custom data, paginate deterministically, and provide no write route. |
+| `TC-FINOO-INT-008` | Activities expose only explicitly public type/time/direction/summary rows, exclude team/private/email/body/recipient/attachment/author/custom data, paginate deterministically, and provide no write route. |
 | `TC-FINOO-INT-009` | Forged Deal/assignment/note IDs, portal-admin feature wildcard without assignment, direct feature grant without captured role membership, cross-intermediary, cross-organization, and cross-tenant requests all fail closed with indistinguishable not-found responses. |
 | `TC-FINOO-INT-010` | Headed staff Deal tab and portal list/detail/status/notes flow work in desktop and narrow viewport; keyboard contracts, navigation visibility, loading/error/empty states, and stale retry are observable. |
 
@@ -611,7 +611,7 @@ No file under `apps/mercato/src/modules/finoo_affiliates/**` or the THOM-89 spec
 - **Scenario**: Concurrent staff reassignment or portal status/note edit overwrites newer state.
 - **Severity**: High
 - **Affected area**: All module writes.
-- **Mitigation**: `expectedUpdatedAt` comparison inside transaction, 409 response, guarded retry context, tests that modify an otherwise invisible field/timestamp.
+- **Mitigation**: Consistent Deal → assignment → note row-lock order, stage validation while the Deal is locked, `expectedUpdatedAt` comparison inside transaction, 409 response, guarded retry context, and concurrent/stale-write tests.
 - **Residual risk**: Users must consciously reapply their change after reviewing fresh state.
 
 ### Partial multi-record write

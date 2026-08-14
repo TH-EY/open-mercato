@@ -4,6 +4,7 @@ import {
   getCliModules,
   hasCliModules,
   formatInitCredentialPassword,
+  redactCliArgsForLogging,
   padByCodePointWidth,
   run,
 } from '../mercato'
@@ -20,6 +21,88 @@ describe('mercato init credential redaction', () => {
     expect(formatInitCredentialPassword(password, {})).toBe(
       `║       Password: ${password.padEnd(44)} ║`,
     )
+  })
+})
+
+describe('mercato CLI argument redaction', () => {
+  it('redacts separate and inline sensitive values without changing command arguments', () => {
+    const args = [
+      '--email',
+      'qa@example.test',
+      '--password',
+      'super-secret',
+      '--api-key=provider-key',
+      '--clientSecret=oauth-secret',
+      '--newPassword',
+      'next-secret',
+      '--secret-access-key=aws-secret',
+      '--roles',
+      'superadmin',
+    ]
+
+    expect(redactCliArgsForLogging(args)).toEqual([
+      '--email',
+      'qa@example.test',
+      '--password',
+      '****',
+      '--api-key=****',
+      '--clientSecret=****',
+      '--newPassword',
+      '****',
+      '--secret-access-key=****',
+      '--roles',
+      'superadmin',
+    ])
+    expect(args).toContain('super-secret')
+    expect(args).toContain('--api-key=provider-key')
+  })
+
+  it('does not treat password-policy and secret-passthrough controls as values', () => {
+    expect(redactCliArgsForLogging([
+      '--skip-password-policy',
+      '--allow-secret-passthrough',
+      'DATABASE_URL',
+    ])).toEqual([
+      '--skip-password-policy',
+      '--allow-secret-passthrough',
+      'DATABASE_URL',
+    ])
+  })
+
+  it('does not leak a later secret when a preceding sensitive flag has no value', () => {
+    expect(redactCliArgsForLogging([
+      '--password',
+      '--api-key',
+      'provider-key',
+      '--token=railway-token',
+    ])).toEqual([
+      '--password',
+      '****',
+      '****',
+      '--token=****',
+    ])
+  })
+
+  it('redacts a valid sensitive value that begins with a hyphen', () => {
+    expect(redactCliArgsForLogging([
+      '--password',
+      '--GeneratedStrong1!',
+    ])).toEqual([
+      '--password',
+      '****',
+    ])
+  })
+
+  it('keeps a later Railway-adjacent secret redacted after a missing token value', () => {
+    expect(redactCliArgsForLogging([
+      '--token',
+      '--api-key',
+      'provider-key',
+    ])).toEqual([
+      '--token',
+      '****',
+      '****',
+    ])
   })
 })
 

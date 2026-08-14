@@ -6,6 +6,7 @@ const widget: InjectionWidgetModule = {
     id: 'example.injection.portal-recent-activity',
     title: 'Recent Activity',
     description: 'Shows recent account activity in the portal dashboard.',
+    features: ['portal.orders.view'],
     priority: 10,
     enabled: true,
   },

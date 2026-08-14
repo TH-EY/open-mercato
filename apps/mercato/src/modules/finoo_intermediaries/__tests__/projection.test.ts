@@ -37,7 +37,7 @@ describe('finoo_intermediaries safe projection rules', () => {
       .toBe(125000)
   })
 
-  it('includes unset activity sources while excluding internal sources', () => {
+  it('includes only explicitly public non-email activities from non-internal sources', () => {
     expect(portalActivityWhere({
       personEntityId: 'person-1',
       tenantId: 'tenant-1',
@@ -45,7 +45,7 @@ describe('finoo_intermediaries safe projection rules', () => {
     })).toMatchObject({
       $or: [{ source: null }, { source: { $ne: 'internal' } }],
       interactionType: { $ne: 'email' },
-      visibility: { $in: [null, 'shared'] },
+      visibility: 'public',
     })
   })
 

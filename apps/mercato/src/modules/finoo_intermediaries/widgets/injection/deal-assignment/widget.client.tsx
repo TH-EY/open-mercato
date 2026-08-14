@@ -83,6 +83,13 @@ export default function DealAssignmentWidget({ context }: InjectionWidgetCompone
 
   async function saveAssignment() {
     if (!dealId || !selectedUserId) return
+    if (assignment && selectedUserId !== assignment.intermediaryCustomerUserId) {
+      const confirmed = await confirm({
+        title: t('finoo_intermediaries.staff.reassignConfirm', 'Transfer this deal to the selected intermediary?'),
+        variant: 'destructive',
+      })
+      if (!confirmed) return
+    }
     setSaving(true)
     try {
       await runMutation({

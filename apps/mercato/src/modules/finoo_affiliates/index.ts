@@ -7,5 +7,5 @@ export const metadata: ModuleInfo = {
   description: 'Finoo affiliate links, attribution, commissions, and portal reporting.',
   author: 'THEY.dev',
   license: 'UNLICENSED',
-  requires: ['customers', 'customer_accounts', 'portal', 'dictionaries', 'events', 'scheduler'],
+  requires: ['customers', 'customer_accounts', 'portal', 'dictionaries', 'events', 'progress', 'scheduler'],
 }

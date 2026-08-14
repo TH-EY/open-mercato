@@ -500,7 +500,7 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
     }
     if (call.ok && call.result?.credentials) {
       const next = { ...call.result.credentials }
-      if (currentIntegrationId === 'storage_s3') {
+      if (currentIntegrationId === 'storage_s3' || currentIntegrationId === 'channel_ses') {
         const authMode = next.authMode
         if (authMode !== 'access_keys' && authMode !== 'ambient') {
           const hasKeys = Boolean(next.accessKeyId || next.secretAccessKey)
@@ -714,7 +714,7 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
     setIsSavingCredentials(true)
     try {
       const sanitizedValues = { ...values }
-      if (currentIntegrationId === 'storage_s3') {
+      if (currentIntegrationId === 'storage_s3' || currentIntegrationId === 'channel_ses') {
         const authMode = sanitizedValues.authMode
         if (authMode !== 'access_keys' && authMode !== 'ambient') {
           const hasKeys = Boolean(sanitizedValues.accessKeyId || sanitizedValues.secretAccessKey)
@@ -723,7 +723,7 @@ export default function IntegrationDetailPage({ params }: IntegrationDetailPageP
         if (sanitizedValues.authMode === 'ambient') {
           delete sanitizedValues.accessKeyId
           delete sanitizedValues.secretAccessKey
-          delete sanitizedValues.sessionToken
+          if (currentIntegrationId === 'storage_s3') delete sanitizedValues.sessionToken
         }
       }
       const call = await runMutationWithContext({

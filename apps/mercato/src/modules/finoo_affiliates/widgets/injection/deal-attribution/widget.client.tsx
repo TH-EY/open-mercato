@@ -23,6 +23,9 @@ type Attribution = {
   initialReferrer: string | null
   commissionStatusEntryId: string
   commissionAmount: number
+  affiliateProgramStatus: 'processing' | 'approved' | 'rejected' | 'paid_out'
+  affiliateTransactionId: string | null
+  affiliateTransactionAmount: number | null
   updatedAt: string
 }
 type EditorPayload = { attribution: Attribution | null; affiliates: Option[]; statuses: Option[] }
@@ -135,6 +138,18 @@ export default function DealAttributionWidget({ context, disabled }: InjectionWi
           <div>
             <dt className="text-muted-foreground">{t('finooAffiliates.portal.leads.initialReferrer', 'Initial referrer')}</dt>
             <dd className="mt-1 break-all">{data.attribution.initialReferrer || '—'}</dd>
+          </div>
+        </dl>
+      ) : null}
+      {data?.attribution?.affiliateTransactionId ? (
+        <dl className="grid gap-4 border-t border-border pt-4 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-muted-foreground">{t('finooAffiliates.transactions.status', 'Commission status')}</dt>
+            <dd className="mt-1">{t(`finooAffiliates.transactions.statuses.${data.attribution.affiliateProgramStatus}`, data.attribution.affiliateProgramStatus)}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">{t('finooAffiliates.transactions.amount', 'Commission amount')}</dt>
+            <dd className="mt-1">{data.attribution.affiliateTransactionAmount?.toLocaleString() ?? '—'} PLN</dd>
           </div>
         </dl>
       ) : null}

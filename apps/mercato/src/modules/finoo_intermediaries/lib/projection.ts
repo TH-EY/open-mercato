@@ -267,7 +267,10 @@ export async function buildPortalDealProjections(
 
   return eligibleAssignments.map((assignment) => {
     const personLink = personLinkByDealId.get(assignment.dealId)
-    const companyLink = selectOldestCompanyLink(companyLinksByDealId.get(assignment.dealId) ?? [])
+    const companyLink = selectOldestCompanyLink(
+      (companyLinksByDealId.get(assignment.dealId) ?? [])
+        .filter((link) => entityById.has(link.company.id)),
+    )
     const personEntity = personLink ? entityById.get(personLink.person.id) : null
     const companyEntity = companyLink ? entityById.get(companyLink.company.id) : null
     const personProfile = personEntity ? personProfileByEntityId.get(personEntity.id) : null
@@ -342,7 +345,7 @@ export function portalActivityWhere(input: {
     tenantId: input.tenantId,
     organizationId: input.organizationId,
     interactionType: { $ne: 'email' },
-    visibility: { $in: [null, 'shared'] },
+    visibility: 'public',
     $or: [{ source: null }, { source: { $ne: 'internal' } }],
     ...(input.cursor?.timestamp ? {
       $and: [{

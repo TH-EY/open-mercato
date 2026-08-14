@@ -102,6 +102,8 @@ test('host checkout uses the public HTTPS endpoint without SSH host trust', () =
 
 test('operator-invoked upgrade keeps the healthy live port until candidate smoke and has verified rollback', () => {
   assert.match(upgradeScript, /image tag must bind the exact deployment commit/)
+  assert.match(upgradeScript, /OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL/)
+  assert.match(upgradeScript, /default affiliate destination must be https:\/\/finoo\.pl\//)
   assert.match(upgradeScript, /approved ECR repository and exact commit tag/)
   assert.match(upgradeScript, /immutable_image="\$\{deploy_app_image%:\*\}@\$\{deploy_app_digest\}"/)
   assert.match(upgradeScript, /org\.opencontainers\.image\.revision/)
@@ -156,6 +158,37 @@ test('upgrade configures Finoo attribution securely without logging credentials'
   assert.doesNotMatch(upgradeScript, /printf '.*password=%q/)
   assert.match(upgradeScript, /chmod 600 "\$pending_file"/)
   assert.match(upgradeScript, /chmod 600 "\$commit_temp" "\$digest_temp"/)
+})
+
+test('Finoo keeps ambient SES as the default and gates its dedicated encrypted channel credentials', () => {
+  for (const source of [deployScript, upgradeScript]) {
+    assert.match(source, /SYSTEM_EMAIL_PROVIDER/)
+    assert.match(source, /AWS_SES_REGION/)
+    assert.match(source, /EMAIL_FROM/)
+    assert.match(source, /NOTIFICATIONS_EMAIL_FROM/)
+    assert.match(source, /no-reply@they\.dev/)
+    assert.doesNotMatch(source, /AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN/)
+  }
+  assert.match(deployScript, /set_env_value SYSTEM_EMAIL_PROVIDER ses/)
+  assert.match(deployScript, /set_env_value AWS_SES_REGION eu-west-2/)
+  assert.match(upgradeScript, /yarn mercato channel_ses assert-env-preset-exact/)
+  assert.match(upgradeScript, /yarn mercato channel_ses assert-explicit-credentials/)
+  assert.match(upgradeScript, /yarn mercato channel_ses assert-credentials-health/)
+  assert.match(upgradeScript, /FINOO_SES_CREDENTIALS_STAGED/)
+  assert.match(upgradeScript, /yarn mercado channel_ses restore-ambient-credentials/)
+  assert.match(upgradeScript, /ses_credentials_restored=ambient/)
+  assert.ok(
+    upgradeScript.indexOf('restore_staged_ses_credentials ||')
+      < upgradeScript.indexOf('docker rm -f "$candidate_container"'),
+    'staged SES credentials must be restored before candidate cleanup',
+  )
+  assert.match(upgradeScript, /FINOO_TENANT_ID=26d5dc28-6df5-4944-b0e9-0ff26a8bf8a6/)
+  assert.match(upgradeScript, /FINOO_ORGANIZATION_ID=4ec19265-3d35-4e9f-bcd2-531e62cf8385/)
+  assert.doesNotMatch(upgradeScript, /yarn mercato channel_ses (?:assert-env-preset-absent|remove-env-preset)/)
+  assert.doesNotMatch(upgradeScript, /yarn mercato seed:defaults --module channel_ses/)
+  assert.doesNotMatch(upgradeScript, /configure-explicit-credentials|accessKeyId|secretAccessKey/)
+  assert.match(upgradeScript, /cp -p -- \.env "\$env_backup"/)
+  assert.match(upgradeScript, /cp -p -- "\$env_backup" \.env/)
 })
 
 test('authenticated smoke verifies email, role, and backend access', async () => {

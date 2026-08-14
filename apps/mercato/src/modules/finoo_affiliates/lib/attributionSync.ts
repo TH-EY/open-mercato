@@ -1,4 +1,5 @@
 import type { EntityManager } from '@mikro-orm/postgresql'
+import type { CommandBus } from '@open-mercato/shared/lib/commands'
 import { loadCustomFieldValues } from '@open-mercato/shared/lib/crud/custom-fields'
 import { normalizeCustomFieldResponse } from '@open-mercato/shared/lib/custom-fields/normalize'
 import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
@@ -24,6 +25,26 @@ type SubscriberContext = {
 
 function resolveFromContext<T>(context: SubscriberContext, name: string): T {
   return context.container?.resolve<T>(name) ?? context.resolve<T>(name)
+}
+
+async function triggerTransactionCreation(
+  dealId: string,
+  scope: FinooScope,
+  context: SubscriberContext,
+): Promise<void> {
+  const commandBus = resolveFromContext<CommandBus>(context, 'commandBus')
+  const container = context.container ?? { resolve: context.resolve }
+  await commandBus.execute('finoo_affiliates.transaction.create', {
+    input: { dealId },
+    ctx: {
+      container: container as never,
+      auth: { tenantId: scope.tenantId } as never,
+      organizationScope: null,
+      selectedOrganizationId: scope.organizationId,
+      organizationIds: [scope.organizationId],
+      systemActor: true,
+    },
+  })
 }
 
 function readBoundedCustomField(
@@ -149,12 +170,14 @@ export async function synchronizeFinooDealAttribution(
   )
 
   const wasCreated = !attribution
+  if (attribution) await triggerTransactionCreation(deal.id, scope, context)
   if (!attribution && link) {
     const commission = await service.getDefaultCommissionStatus(scope)
     attribution = em.create(FinooDealAttribution, {
       ...scope,
       dealId: deal.id,
       affiliateUserId: link.affiliateUserId,
+      affiliateId: link.affiliateId ?? null,
       affiliateCode: link.code,
       companyName,
       landingPage,
@@ -188,7 +211,10 @@ export async function synchronizeFinooDealAttribution(
       undefined,
       scope,
     )
-    if (concurrent) return
+    if (concurrent) {
+      await triggerTransactionCreation(deal.id, scope, context)
+      return
+    }
     throw error
   }
 
@@ -203,6 +229,7 @@ export async function synchronizeFinooDealAttribution(
     },
     { persistent: true },
   )
+  await triggerTransactionCreation(deal.id, scope, context)
 }
 
 export type { DealEventPayload, SubscriberContext }

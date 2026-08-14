@@ -7,7 +7,7 @@ import { readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
 import { Input } from '@open-mercato/ui/primitives/input'
 import { Label } from '@open-mercato/ui/primitives/label'
 
-type Metric = 'leads' | 'clicks' | 'transactions'
+type Metric = 'leads' | 'clicks' | 'transactions' | 'affiliateTransactions'
 type WeeklyPoint = { weekStart: string; count: number }
 type DashboardPayload = Record<Metric, WeeklyPoint[]> & {
   range: { from: string; to: string; timezone: string }

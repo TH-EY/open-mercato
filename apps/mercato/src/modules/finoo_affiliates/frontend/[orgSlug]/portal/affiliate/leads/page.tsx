@@ -6,16 +6,19 @@ import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { DataTable } from '@open-mercato/ui/backend/DataTable'
 import { readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
 import { PortalPageHeader } from '@open-mercato/ui/portal/components/PortalPageHeader'
+import { StatusBadge } from '@open-mercato/ui/primitives/status-badge'
 
-type CommissionStatus = 'approved' | 'waiting' | 'rejected'
+type AffiliateProgramStatus = 'processing' | 'approved' | 'rejected' | 'paid_out'
 
 type LeadRow = {
   id: string
   companyName: string | null
   landingPage: string | null
   initialReferrer: string | null
-  commissionStatus: CommissionStatus
+  commissionStatus: 'approved' | 'waiting' | 'rejected'
   commissionAmount: number
+  affiliateProgramStatus: AffiliateProgramStatus
+  affiliateTransactionAmount: number | null
   leadAt: string
 }
 
@@ -76,8 +79,8 @@ export default function AffiliateLeadsPage() {
     void load()
   }, [load])
 
-  const statusLabel = React.useCallback((status: CommissionStatus) => {
-    return t(`finooAffiliates.commissionStatus.${status}`, status)
+  const statusLabel = React.useCallback((status: AffiliateProgramStatus) => {
+    return t(`finooAffiliates.transactions.statuses.${status}`, status)
   }, [t])
 
   const columns = React.useMemo<ColumnDef<LeadRow>[]>(() => [
@@ -100,22 +103,23 @@ export default function AffiliateLeadsPage() {
       enableSorting: false,
     },
     {
-      accessorKey: 'commissionStatus',
+      accessorKey: 'affiliateProgramStatus',
+      enableSorting: false,
       header: t('finooAffiliates.portal.leads.commissionStatus', 'Commission status'),
       cell: ({ row }) => {
-        const status = row.original.commissionStatus
-        const styles = status === 'approved'
-          ? 'bg-status-success-bg text-status-success-text'
-          : status === 'rejected'
-            ? 'bg-status-error-bg text-status-error-text'
-            : 'bg-status-warning-bg text-status-warning-text'
-        return <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${styles}`}>{statusLabel(status)}</span>
+        const status = row.original.affiliateProgramStatus
+        return (
+          <StatusBadge variant={status === 'rejected' ? 'error' : status === 'approved' || status === 'paid_out' ? 'success' : 'warning'}>
+            {statusLabel(status)}
+          </StatusBadge>
+        )
       },
     },
     {
       accessorKey: 'commissionAmount',
+      enableSorting: false,
       header: t('finooAffiliates.portal.leads.commissionAmount', 'Commission amount'),
-      cell: ({ row }) => row.original.commissionAmount.toLocaleString(),
+      cell: ({ row }) => (row.original.affiliateTransactionAmount ?? row.original.commissionAmount).toLocaleString(),
     },
   ], [statusLabel, t])
 

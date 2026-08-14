@@ -157,13 +157,34 @@ async function requireAssignment(
   return assignment
 }
 
+async function requireEligibleAssignmentForMutation(
+  em: EntityManager,
+  id: string,
+  tenantId: string,
+  organizationId: string,
+  maskIneligible = false,
+) {
+  const candidate = await requireAssignment(em, id, tenantId, organizationId)
+  await assertAssignmentStillEligible(em, candidate, { lock: true, maskIneligible })
+  const assignment = await requireAssignment(em, id, tenantId, organizationId, true)
+  if (
+    assignment.dealId !== candidate.dealId
+    || assignment.eligibleStageId !== candidate.eligibleStageId
+  ) {
+    throw notFound()
+  }
+  return assignment
+}
+
 async function requirePortalAssignment(
   em: EntityManager,
   id: string,
   scope: ReturnType<typeof requireScope>,
   lock = false,
 ) {
-  const assignment = await requireAssignment(em, id, scope.tenantId, scope.organizationId, lock)
+  const assignment = lock
+    ? await requireEligibleAssignmentForMutation(em, id, scope.tenantId, scope.organizationId, true)
+    : await requireAssignment(em, id, scope.tenantId, scope.organizationId)
   await assertPortalAssignmentAccess(em, assignment, {
     tenantId: scope.tenantId,
     organizationId: scope.organizationId,
@@ -242,7 +263,7 @@ async function requirePortalSnapshotAccess(
   snapshot: Pick<AssignmentSnapshot | NoteSnapshot, 'tenantId' | 'organizationId'>,
   customerUserId: string,
 ): Promise<FinooIntermediaryAssignment> {
-  const assignment = await requireAssignment(
+  const assignment = await requireEligibleAssignmentForMutation(
     em,
     assignmentId,
     snapshot.tenantId,
@@ -281,6 +302,7 @@ export const createAssignmentCommand: CommandHandler<unknown, FinooIntermediaryA
     await requireStaffCommandAccess(ctx)
     try {
       return await inCommandTransaction(ctx, async (em) => {
+        const { stage } = await loadEligibleDeal(em, { ...scope, dealId: input.dealId }, true)
         const existing = await em.findOne(FinooIntermediaryAssignment, {
           tenantId: scope.tenantId,
           organizationId: scope.organizationId,
@@ -291,10 +313,10 @@ export const createAssignmentCommand: CommandHandler<unknown, FinooIntermediaryA
           throw new CrudHttpError(409, { error: 'Deal already has an active assignment', code: 'assignment_exists' })
         }
 
-        const [{ stage }, { role }] = await Promise.all([
-          loadEligibleDeal(em, { ...scope, dealId: input.dealId }),
-          loadAssignableIntermediary(em, { ...scope, customerUserId: input.intermediaryCustomerUserId }),
-        ])
+        const { role } = await loadAssignableIntermediary(em, {
+          ...scope,
+          customerUserId: input.intermediaryCustomerUserId,
+        })
         const assignment = em.create(FinooIntermediaryAssignment, {
           tenantId: scope.tenantId,
           organizationId: scope.organizationId,
@@ -321,17 +343,15 @@ export const createAssignmentCommand: CommandHandler<unknown, FinooIntermediaryA
     if (!snapshot) throw new Error('Missing assignment snapshot for undo')
     await requireStaffUndoAccess(ctx, snapshot)
     await inCommandTransaction(ctx, async (em) => {
-      const assignment = await requireAssignment(
+      const assignment = await requireEligibleAssignmentForMutation(
         em,
         snapshot.id,
         snapshot.tenantId,
         snapshot.organizationId,
-        true,
       )
       if (assignment.updatedAt.toISOString() !== snapshot.updatedAt) {
         throw new CrudHttpError(409, { error: 'Assignment changed after creation' })
       }
-      await assertAssignmentStillEligible(em, assignment)
       await assertPortalAssignmentAccess(em, assignment, {
         tenantId: snapshot.tenantId,
         organizationId: snapshot.organizationId,
@@ -358,12 +378,11 @@ export const updateAssignmentCommand: CommandHandler<unknown, FinooIntermediaryA
     const scope = requireScope(ctx)
     await requireStaffCommandAccess(ctx)
     return inCommandTransaction(ctx, async (em) => {
-      const assignment = await requireAssignment(
+      const assignment = await requireEligibleAssignmentForMutation(
         em,
         input.assignmentId,
         scope.tenantId,
         scope.organizationId,
-        true,
       )
       await enforceCommandOptimisticLockWithGuards(ctx.container, {
         resourceKind: 'finoo_intermediaries.assignment',
@@ -372,7 +391,6 @@ export const updateAssignmentCommand: CommandHandler<unknown, FinooIntermediaryA
         expected: input.expectedUpdatedAt,
         request: ctx.request,
       })
-      await assertAssignmentStillEligible(em, assignment)
       const { role } = await loadAssignableIntermediary(em, {
         ...scope,
         customerUserId: input.intermediaryCustomerUserId,
@@ -391,11 +409,15 @@ export const updateAssignmentCommand: CommandHandler<unknown, FinooIntermediaryA
     if (!before || !after) throw new Error('Missing assignment snapshots for undo')
     await requireStaffUndoAccess(ctx, before)
     await inCommandTransaction(ctx, async (em) => {
-      const assignment = await requireAssignment(em, after.id, after.tenantId, after.organizationId, true)
+      const assignment = await requireEligibleAssignmentForMutation(
+        em,
+        after.id,
+        after.tenantId,
+        after.organizationId,
+      )
       if (assignment.updatedAt.toISOString() !== after.updatedAt) {
         throw new CrudHttpError(409, { error: 'Assignment changed after update' })
       }
-      await assertAssignmentStillEligible(em, assignment)
       await assertPortalAssignmentAccess(em, assignment, {
         tenantId: after.tenantId,
         organizationId: after.organizationId,
@@ -429,12 +451,11 @@ export const deleteAssignmentCommand: CommandHandler<unknown, FinooIntermediaryA
     const scope = requireScope(ctx)
     await requireStaffCommandAccess(ctx)
     return inCommandTransaction(ctx, async (em) => {
-      const assignment = await requireAssignment(
+      const assignment = await requireEligibleAssignmentForMutation(
         em,
         input.assignmentId,
         scope.tenantId,
         scope.organizationId,
-        true,
       )
       await enforceCommandOptimisticLockWithGuards(ctx.container, {
         resourceKind: 'finoo_intermediaries.assignment',
@@ -455,6 +476,13 @@ export const deleteAssignmentCommand: CommandHandler<unknown, FinooIntermediaryA
     if (!before) throw new Error('Missing assignment snapshot for undo')
     await requireStaffUndoAccess(ctx, before)
     await inCommandTransaction(ctx, async (em) => {
+      const candidate = await em.findOne(FinooIntermediaryAssignment, {
+        id: before.id,
+        tenantId: before.tenantId,
+        organizationId: before.organizationId,
+      } as FilterQuery<FinooIntermediaryAssignment>)
+      if (!candidate) throw notFound()
+      await assertAssignmentStillEligible(em, candidate, { lock: true })
       const active = await em.findOne(FinooIntermediaryAssignment, {
         tenantId: before.tenantId,
         organizationId: before.organizationId,
@@ -468,7 +496,12 @@ export const deleteAssignmentCommand: CommandHandler<unknown, FinooIntermediaryA
         organizationId: before.organizationId,
       } as FilterQuery<FinooIntermediaryAssignment>, { lockMode: LockMode.PESSIMISTIC_WRITE })
       if (!assignment) throw notFound()
-      await assertAssignmentStillEligible(em, assignment)
+      if (
+        assignment.dealId !== candidate.dealId
+        || assignment.eligibleStageId !== candidate.eligibleStageId
+      ) {
+        throw notFound()
+      }
       const { role } = await loadAssignableIntermediary(em, {
         tenantId: before.tenantId,
         organizationId: before.organizationId,

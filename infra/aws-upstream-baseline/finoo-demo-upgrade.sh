@@ -6,9 +6,16 @@ DEPLOY_COMMIT="${DEPLOY_COMMIT:-}"
 DEPLOY_APP_IMAGE="${DEPLOY_APP_IMAGE:-}"
 DEPLOY_APP_DIGEST="${DEPLOY_APP_DIGEST:-}"
 OM_FINOO_AFFILIATE_REDIRECT_HOSTS="${OM_FINOO_AFFILIATE_REDIRECT_HOSTS:-}"
+OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL="${OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL:-}"
 RATE_LIMIT_TRUST_PROXY_DEPTH="${RATE_LIMIT_TRUST_PROXY_DEPTH:-}"
 FINOO_SUPERADMIN_PASSWORD_SECRET_ID="${FINOO_SUPERADMIN_PASSWORD_SECRET_ID:-}"
 FINOO_EMPLOYEE_PASSWORD_SECRET_ID="${FINOO_EMPLOYEE_PASSWORD_SECRET_ID:-}"
+FINOO_SES_CREDENTIALS_STAGED="${FINOO_SES_CREDENTIALS_STAGED:-false}"
+SYSTEM_EMAIL_PROVIDER=ses
+AWS_SES_REGION=eu-west-2
+AWS_SES_CONFIGURATION_SET=''
+EMAIL_FROM=no-reply@they.dev
+NOTIFICATIONS_EMAIL_FROM=no-reply@they.dev
 
 INSTANCE_NAME=openmercato-upstream-baseline-dokploy
 HOSTNAME=finoo.om.they.dev
@@ -19,6 +26,8 @@ ECR_REPOSITORY_NAME=openmercato-app
 WORKDIR=/opt/openmercato-demos/finoo
 ACTIVE_CONTAINER=demo-finoo-app-1
 CANDIDATE_CONTAINER=demo-finoo-app-candidate
+FINOO_TENANT_ID=26d5dc28-6df5-4944-b0e9-0ff26a8bf8a6
+FINOO_ORGANIZATION_ID=4ec19265-3d35-4e9f-bcd2-531e62cf8385
 
 require_value() {
   local name="$1"
@@ -31,7 +40,8 @@ require_value() {
 
 for required_name in \
   DEPLOY_COMMIT DEPLOY_APP_IMAGE DEPLOY_APP_DIGEST \
-  OM_FINOO_AFFILIATE_REDIRECT_HOSTS RATE_LIMIT_TRUST_PROXY_DEPTH \
+  OM_FINOO_AFFILIATE_REDIRECT_HOSTS OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL \
+  RATE_LIMIT_TRUST_PROXY_DEPTH \
   FINOO_SUPERADMIN_PASSWORD_SECRET_ID FINOO_EMPLOYEE_PASSWORD_SECRET_ID; do
   require_value "$required_name" "${!required_name}"
 done
@@ -57,8 +67,16 @@ if [[ "$OM_FINOO_AFFILIATE_REDIRECT_HOSTS" != finoo.pl ]]; then
   echo "Finoo affiliate redirects must be restricted to finoo.pl" >&2
   exit 1
 fi
+if [[ "$OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL" != https://finoo.pl/ ]]; then
+  echo "Finoo default affiliate destination must be https://finoo.pl/" >&2
+  exit 1
+fi
 if [[ "$RATE_LIMIT_TRUST_PROXY_DEPTH" != 1 ]]; then
   echo "Finoo requires the verified direct-ALB proxy depth of 1" >&2
+  exit 1
+fi
+if [[ "$FINOO_SES_CREDENTIALS_STAGED" != true && "$FINOO_SES_CREDENTIALS_STAGED" != false ]]; then
+  echo "Finoo SES staged-credential rollback mode must be true or false" >&2
   exit 1
 fi
 
@@ -130,9 +148,18 @@ trap 'rm -f -- "$REMOTE_SCRIPT"' EXIT
   printf 'deploy_app_image=%q\n' "$DEPLOY_APP_IMAGE"
   printf 'deploy_app_digest=%q\n' "$DEPLOY_APP_DIGEST"
   printf 'redirect_hosts=%q\n' "$OM_FINOO_AFFILIATE_REDIRECT_HOSTS"
+  printf 'default_affiliate_destination=%q\n' "$OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL"
   printf 'proxy_depth=%q\n' "$RATE_LIMIT_TRUST_PROXY_DEPTH"
+  printf 'system_email_provider=%q\n' "$SYSTEM_EMAIL_PROVIDER"
+  printf 'ses_region=%q\n' "$AWS_SES_REGION"
+  printf 'ses_configuration_set=%q\n' "$AWS_SES_CONFIGURATION_SET"
+  printf 'email_from=%q\n' "$EMAIL_FROM"
+  printf 'notifications_email_from=%q\n' "$NOTIFICATIONS_EMAIL_FROM"
   printf 'superadmin_secret_id=%q\n' "$FINOO_SUPERADMIN_PASSWORD_SECRET_ID"
   printf 'employee_secret_id=%q\n' "$FINOO_EMPLOYEE_PASSWORD_SECRET_ID"
+  printf 'ses_credentials_staged=%q\n' "$FINOO_SES_CREDENTIALS_STAGED"
+  printf 'finoo_tenant_id=%q\n' "$FINOO_TENANT_ID"
+  printf 'finoo_organization_id=%q\n' "$FINOO_ORGANIZATION_ID"
   printf 'workdir=%q\n' "$WORKDIR"
   printf 'live_port=%q\n' "$PORT"
   printf 'candidate_port=%q\n' "$CANDIDATE_PORT"
@@ -178,6 +205,31 @@ candidate_created=false
 cutover_started=false
 env_modified=false
 stage_complete=false
+immutable_image="${deploy_app_image%:*}@${deploy_app_digest}"
+
+restore_staged_ses_credentials() {
+  if [[ "$ses_credentials_staged" != true ]]; then return 0; fi
+  local restore_env
+  restore_env="$(mktemp)"
+  chmod 600 "$restore_env"
+  docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$active_container" > "$restore_env"
+  if docker run --rm \
+    --network mercato-network-finoo \
+    --volumes-from "$active_container" \
+    --env-file "$restore_env" \
+    --workdir /app/apps/mercato \
+    --user 0 \
+    "$immutable_image" \
+    yarn mercado channel_ses restore-ambient-credentials \
+      --tenant "$finoo_tenant_id" \
+      --organization "$finoo_organization_id"; then
+    rm -f -- "$restore_env"
+    echo "ses_credentials_restored=ambient"
+    return 0
+  fi
+  rm -f -- "$restore_env"
+  return 1
+}
 
 wait_for_login() {
   local port="$1"
@@ -217,13 +269,23 @@ restore_old() {
     echo "Finoo rollback failed; manual recovery required" >&2
     return 1
   fi
-  rm -f -- "$env_backup" "$commit_backup" "$digest_backup" "$pending_file"
 }
 
 cleanup() {
   local status=$?
+  local cleanup_failed=false
+  if [[ "$stage_complete" != true ]]; then
+    restore_staged_ses_credentials || {
+      echo "Finoo SES credential rollback failed; IAM revocation and manual recovery required" >&2
+      cleanup_failed=true
+      status=71
+    }
+  fi
   if [[ "$stage_complete" != true && "$cutover_started" == true ]]; then
-    restore_old || status=70
+    restore_old || {
+      cleanup_failed=true
+      status=70
+    }
   fi
   if [[ "$stage_complete" != true && "$cutover_started" != true ]]; then
     local pre_cutover_failed=false
@@ -235,10 +297,12 @@ cleanup() {
     fi
     if [[ "$pre_cutover_failed" == true ]]; then
       echo "Finoo pre-cutover configuration rollback failed; manual recovery required" >&2
+      cleanup_failed=true
       status=70
-    else
-      rm -f -- "$env_backup" "$commit_backup" "$digest_backup" "$pending_file"
     fi
+  fi
+  if [[ "$stage_complete" != true && "$cleanup_failed" != true ]]; then
+    rm -f -- "$env_backup" "$commit_backup" "$digest_backup" "$pending_file"
   fi
   if [[ "$candidate_created" == true ]]; then
     docker rm -f "$candidate_container" >/dev/null 2>&1 || true
@@ -265,6 +329,10 @@ cat > "$pending_file" <<EOF_PENDING
 deploy_token=${deploy_token}
 deploy_commit=${deploy_commit}
 deploy_app_digest=${deploy_app_digest}
+ses_credentials_staged=${ses_credentials_staged}
+finoo_tenant_id=${finoo_tenant_id}
+finoo_organization_id=${finoo_organization_id}
+immutable_image=${immutable_image}
 old_container_id=${old_container_id}
 old_image_id=${old_image_id}
 rollback_container=${rollback_container}
@@ -282,7 +350,6 @@ chmod 700 "$docker_config"
 chmod 600 "$runtime_env"
 export DOCKER_CONFIG="$docker_config"
 registry="${deploy_app_image%%/*}"
-immutable_image="${deploy_app_image%:*}@${deploy_app_digest}"
 aws ecr get-login-password --region "$aws_region" |
   docker login "$registry" --username AWS --password-stdin >/dev/null
 docker pull "$immutable_image" >/dev/null
@@ -300,7 +367,7 @@ new_image_id="$(docker image inspect --format '{{.Id}}' "$immutable_image")"
 printf 'new_image_id=%s\n' "$new_image_id" >> "$pending_file"
 
 docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$active_container" > "$runtime_env"
-python3 - "$runtime_env" "$redirect_hosts" "$proxy_depth" <<'PY'
+python3 - "$runtime_env" "$redirect_hosts" "$default_affiliate_destination" "$proxy_depth" "$system_email_provider" "$ses_region" "$ses_configuration_set" "$email_from" "$notifications_email_from" <<'PY'
 import sys
 from pathlib import Path
 
@@ -308,10 +375,16 @@ path = Path(sys.argv[1])
 updates = {
     'NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION': 'false',
     'OM_FINOO_AFFILIATE_REDIRECT_HOSTS': sys.argv[2],
+    'OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL': sys.argv[3],
     'RATE_LIMIT_ENABLED': 'true',
     'RATE_LIMIT_STRATEGY': 'redis',
-    'RATE_LIMIT_TRUST_PROXY_DEPTH': sys.argv[3],
+    'RATE_LIMIT_TRUST_PROXY_DEPTH': sys.argv[4],
     'REDIS_URL': 'redis://mercato-redis-finoo:6379',
+    'SYSTEM_EMAIL_PROVIDER': sys.argv[5],
+    'AWS_SES_REGION': sys.argv[6],
+    'AWS_SES_CONFIGURATION_SET': sys.argv[7],
+    'EMAIL_FROM': sys.argv[8],
+    'NOTIFICATIONS_EMAIL_FROM': sys.argv[9],
 }
 lines = [line for line in path.read_text().splitlines() if line.split('=', 1)[0] not in updates]
 lines.extend(f'{key}={value}' for key, value in updates.items())
@@ -335,13 +408,22 @@ if ! wait_for_login "$candidate_port"; then
   echo "Finoo candidate did not become reachable" >&2
   exit 1
 fi
+docker exec "$candidate_container" yarn mercato channel_ses assert-env-preset-exact
+echo "[finoo-email] Existing exact Amazon SES preset preserved"
+docker exec "$candidate_container" yarn mercato channel_ses assert-explicit-credentials \
+  --tenant "$finoo_tenant_id" \
+  --organization "$finoo_organization_id"
+docker exec "$candidate_container" yarn mercato channel_ses assert-credentials-health \
+  --tenant "$finoo_tenant_id" \
+  --organization "$finoo_organization_id"
+echo "[finoo-email] Dedicated FINOO Amazon SES credentials verified"
 signup_status="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${candidate_port}/api/customer_accounts/signup")"
 if [[ "$signup_status" != 404 && "$signup_status" != 405 ]]; then
   echo "Finoo candidate still exposes customer self-registration" >&2
   exit 1
 fi
 
-python3 - .env "$redirect_hosts" "$proxy_depth" <<'PY'
+python3 - .env "$redirect_hosts" "$default_affiliate_destination" "$proxy_depth" "$system_email_provider" "$ses_region" "$ses_configuration_set" "$email_from" "$notifications_email_from" <<'PY'
 import os
 import sys
 from pathlib import Path
@@ -350,10 +432,16 @@ path = Path(sys.argv[1])
 updates = {
     'NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION': 'false',
     'OM_FINOO_AFFILIATE_REDIRECT_HOSTS': sys.argv[2],
+    'OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL': sys.argv[3],
     'RATE_LIMIT_ENABLED': 'true',
     'RATE_LIMIT_STRATEGY': 'redis',
-    'RATE_LIMIT_TRUST_PROXY_DEPTH': sys.argv[3],
+    'RATE_LIMIT_TRUST_PROXY_DEPTH': sys.argv[4],
     'REDIS_URL': 'redis://mercato-redis-finoo:6379',
+    'SYSTEM_EMAIL_PROVIDER': sys.argv[5],
+    'AWS_SES_REGION': sys.argv[6],
+    'AWS_SES_CONFIGURATION_SET': sys.argv[7],
+    'EMAIL_FROM': sys.argv[8],
+    'NOTIFICATIONS_EMAIL_FROM': sys.argv[9],
 }
 lines = [line for line in path.read_text().splitlines() if line.split('=', 1)[0] not in updates]
 lines.extend(f'{key}={value}' for key, value in updates.items())
@@ -374,8 +462,6 @@ for key, value in labels.items():
     sys.stdout.buffer.write(f"{key}={value}".encode() + b"\0")
 ')
 
-docker rm -f "$candidate_container" >/dev/null
-candidate_created=false
 docker tag "$immutable_image" open-mercato/app:finoo
 cutover_started=true
 docker stop --time 30 "$active_container" >/dev/null
@@ -403,6 +489,8 @@ if ! wait_for_login "$live_port"; then
   echo "Upgraded Finoo app did not become reachable" >&2
   exit 1
 fi
+docker rm -f "$candidate_container" >/dev/null
+candidate_created=false
 
 docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"
 run_role_smoke() {
@@ -552,6 +640,29 @@ wait_for_login() {
   done
   return 1
 }
+restore_staged_ses_credentials() {
+  if [[ "$ses_credentials_staged" != true ]]; then return 0; fi
+  local restore_env
+  restore_env="$(mktemp)"
+  chmod 600 "$restore_env"
+  docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$active_container" > "$restore_env"
+  if docker run --rm \
+    --network mercato-network-finoo \
+    --volumes-from "$active_container" \
+    --env-file "$restore_env" \
+    --workdir /app/apps/mercato \
+    --user 0 \
+    "$immutable_image" \
+    yarn mercado channel_ses restore-ambient-credentials \
+      --tenant "$finoo_tenant_id" \
+      --organization "$finoo_organization_id"; then
+    rm -f -- "$restore_env"
+    echo "ses_credentials_restored=ambient"
+    return 0
+  fi
+  rm -f -- "$restore_env"
+  return 1
+}
 if [[ "$decision" == finalize ]]; then
   test "$(docker inspect --format '{{.Image}}' "$active_container")" = "$new_image_id"
   test "$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "$active_container")" = unless-stopped
@@ -589,6 +700,7 @@ if [[ -f "$env_backup" ]]; then
   cp -p -- "$env_backup" .env || failed=true
   chmod 600 .env || failed=true
 fi
+restore_staged_ses_credentials || failed=true
 if [[ "$prior_commit_present" == true ]]; then
   cp -p -- "$commit_backup" .finoo-active-commit || failed=true
   chmod 600 .finoo-active-commit || failed=true

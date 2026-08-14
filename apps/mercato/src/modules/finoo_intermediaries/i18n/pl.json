@@ -59,6 +59,7 @@
       "unassignedState": "Nieprzypisane",
       "intermediary": "Pośrednik",
       "selectIntermediary": "Wybierz pośrednika",
+      "reassignConfirm": "Przekazać tę sprawę wybranemu pośrednikowi?",
       "unassign": "Usuń przypisanie",
       "unassignConfirm": "Usunąć przypisanie pośrednika?",
       "saved": "Przypisanie pośrednika zostało zapisane.",

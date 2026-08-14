@@ -502,6 +502,11 @@ set_env_value TENANT_DATA_ENCRYPTION_KEY "$(openssl rand -hex 48)"
 set_env_value MEILISEARCH_MASTER_KEY "$(openssl rand -hex 32)"
 set_env_value DEMO_MODE true
 set_env_value SELF_SERVICE_ONBOARDING_ENABLED false
+set_env_value SYSTEM_EMAIL_PROVIDER ses
+set_env_value AWS_SES_REGION eu-west-2
+set_env_value AWS_SES_CONFIGURATION_SET ''
+set_env_value EMAIL_FROM no-reply@they.dev
+set_env_value NOTIFICATIONS_EMAIL_FROM no-reply@they.dev
 set_env_value MERCATO_INIT_ARGS --no-examples
 set_env_value OM_INIT_REDACT_CREDENTIAL_OUTPUT true
 set_env_value OM_INIT_SUPERADMIN_EMAIL superadmin@finoo.om.they.dev

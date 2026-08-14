@@ -1,3 +1,4 @@
+import { LockMode } from '@mikro-orm/core'
 import type { EntityManager, FilterQuery } from '@mikro-orm/postgresql'
 import {
   CustomerRole,
@@ -33,14 +34,24 @@ function inaccessible(): CrudHttpError {
   return new CrudHttpError(404, { error: 'Resource not found' })
 }
 
-export async function loadEligibleDeal(em: EntityManager, input: ScopedDealInput) {
+async function loadScopedDeal(
+  em: EntityManager,
+  input: ScopedDealInput,
+  lock = false,
+) {
   const deal = await em.findOne(CustomerDeal, {
     id: input.dealId,
     tenantId: input.tenantId,
     organizationId: input.organizationId,
     deletedAt: null,
-  } as FilterQuery<CustomerDeal>)
-  if (!deal?.pipelineStageId) throw inaccessible()
+  } as FilterQuery<CustomerDeal>, lock ? { lockMode: LockMode.PESSIMISTIC_WRITE } : undefined)
+  if (!deal) throw inaccessible()
+  return deal
+}
+
+export async function loadEligibleDeal(em: EntityManager, input: ScopedDealInput, lock = false) {
+  const deal = await loadScopedDeal(em, input, lock)
+  if (!deal.pipelineStageId) throw inaccessible()
 
   const pipelines = await em.find(CustomerPipeline, {
     tenantId: input.tenantId,
@@ -76,13 +87,17 @@ export async function loadEligibleDeal(em: EntityManager, input: ScopedDealInput
 export async function assertAssignmentStillEligible(
   em: EntityManager,
   assignment: FinooIntermediaryAssignment,
+  options: { lock?: boolean; maskIneligible?: boolean } = {},
 ): Promise<void> {
-  const { stage } = await loadEligibleDeal(em, {
+  const deal = await loadScopedDeal(em, {
     tenantId: assignment.tenantId,
     organizationId: assignment.organizationId,
     dealId: assignment.dealId,
-  })
-  if (stage.id !== assignment.eligibleStageId) throw inaccessible()
+  }, options.lock)
+  if (deal.pipelineStageId !== assignment.eligibleStageId) {
+    if (options.maskIneligible) throw inaccessible()
+    throw new CrudHttpError(422, { error: 'Deal is not in the eligible stage', code: 'ineligible_stage' })
+  }
 }
 
 export async function loadAssignableIntermediary(
