@@ -62,6 +62,19 @@ describe('Phase 4 UI boundaries', () => {
     )
     expect(polish['finooAffiliates.portal.leads.landingPage']).toBe('Strona docelowa')
     expect(polish['finooAffiliates.portal.leads.initialReferrer']).toBe('Pierwsze źródło wejścia')
+    expect(polish['finooAffiliates.affiliates.emptyTitle']).toBe('Brak afiliantów')
+    expect(polish['finooAffiliates.transactions.emptyTitle']).toBe('Brak transakcji afiliacyjnych')
+
+    const affiliates = readFileSync(
+      resolve(process.cwd(), 'src/modules/finoo_affiliates/components/affiliates/affiliates.client.tsx'),
+      'utf8',
+    )
+    const transactions = readFileSync(
+      resolve(process.cwd(), 'src/modules/finoo_affiliates/components/transactions.client.tsx'),
+      'utf8',
+    )
+    expect(affiliates).toContain("title={t('finooAffiliates.affiliates.emptyTitle', 'No affiliates yet')}")
+    expect(transactions).toContain("title={t('finooAffiliates.transactions.emptyTitle', 'No affiliate transactions yet')}")
 
     const untranslatedPortalKeys = Object.keys(polish).filter(
       (key) => key.includes('.portal.') && polish[key] === english[key],

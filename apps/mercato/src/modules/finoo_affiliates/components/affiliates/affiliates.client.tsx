@@ -178,6 +178,7 @@ export default function AffiliatesClient() {
           emptyState={(
             <ListEmptyState
               entityName={t('finooAffiliates.affiliates.title', 'Affiliates')}
+              title={t('finooAffiliates.affiliates.emptyTitle', 'No affiliates yet')}
               onCreate={inviteAction ? () => setInviteOpen(true) : undefined}
               createLabel={inviteAction ? t('finooAffiliates.affiliates.invite', 'Invite affiliate') : undefined}
             />

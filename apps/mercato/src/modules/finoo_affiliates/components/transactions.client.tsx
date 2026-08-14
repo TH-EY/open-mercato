@@ -172,7 +172,12 @@ export default function TransactionsClient() {
           error={error}
           perspective={{ tableId: 'finoo_affiliates.transactions' }}
           entityId="finoo_affiliates:finoo_affiliate_transaction"
-          emptyState={<ListEmptyState entityName={t('finooAffiliates.transactions.title', 'Affiliate transactions')} />}
+          emptyState={(
+            <ListEmptyState
+              entityName={t('finooAffiliates.transactions.title', 'Affiliate transactions')}
+              title={t('finooAffiliates.transactions.emptyTitle', 'No affiliate transactions yet')}
+            />
+          )}
           pagination={{
             page,
             pageSize,
