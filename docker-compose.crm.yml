@@ -65,7 +65,7 @@ services:
       OM_AI_CATALOG_PROVIDER: ${OM_AI_CATALOG_PROVIDER:-}
       OM_AI_CATALOG_MODEL: ${OM_AI_CATALOG_MODEL:-}
       OPENCODE_URL: ${OPENCODE_URL:-http://opencode:4096}
-      MCP_URL: ${MCP_URL:-http://mcp:3001}
+      MCP_URL: ${MCP_URL:-http://mcp:3002}
     depends_on:
       redis:
         condition: service_healthy
@@ -147,6 +147,8 @@ services:
         sh /app/docker/scripts/mcp-entrypoint.sh
     volumes:
       - crm_mcp_shared:/run/mcp-shared
+    ports:
+      - "${MCP_HOST_PORT:-3002}:3001"
     logging:
       driver: awslogs
       options:
@@ -183,7 +185,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GOOGLE_GENERATIVE_AI_API_KEY: ${GOOGLE_GENERATIVE_AI_API_KEY:-}
-      MCP_PORT: "3001"
+      MCP_PORT: "3002"
       MCP_SERVER_API_KEY_FILE: /run/mcp-shared/mcp-api-key
       MCP_WAIT_FOR_APP_TIMEOUT: ${MCP_WAIT_FOR_APP_TIMEOUT:-1800}
       MCP_DEBUG: ${MCP_DEBUG:-false}
