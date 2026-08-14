@@ -51,6 +51,15 @@ test('every CRM container uses bounded non-blocking awslogs delivery', () => {
   }
 })
 
+test('CRM MCP port mapping and healthcheck match the configured listener', () => {
+  const compose = fs.readFileSync(COMPOSE_PATH, 'utf8')
+  const mcp = readService(compose, 'mcp')
+
+  assert.match(mcp, /^      - "\$\{MCP_HOST_PORT:-3002\}:3002"$/m)
+  assert.match(mcp, /^      MCP_PORT: "3002"$/m)
+  assert.match(mcp, /http:\/\/127\.0\.0\.1:3002\/health/)
+})
+
 test('Terraform owns every CRM log destination and preserves retained evidence', () => {
   const terraform = fs.readFileSync(TERRAFORM_PATH, 'utf8')
   const resources = [
