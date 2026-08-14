@@ -10,6 +10,10 @@ const TERRAFORM_PATH = path.resolve(
   ROOT,
   'infra/terraform/modules/single_ec2_rds_crm/main.tf',
 )
+const TERRAFORM_ENV_VARIABLES_PATH = path.resolve(
+  ROOT,
+  'infra/terraform/environments/crm-they-dev/variables.tf',
+)
 const DEPLOY_SCRIPT_PATH = path.resolve(ROOT, 'scripts/crm/deploy-crm-they-dev.sh')
 const INFRA_WORKFLOW_PATH = path.resolve(ROOT, '.github/workflows/crm-they-dev-infra.yml')
 
@@ -31,6 +35,15 @@ function readService(compose, serviceName) {
   const nextService = compose.slice(remainderStart).match(/\n  [a-zA-Z0-9_-]+:/)
   const next = nextService ? remainderStart + nextService.index : -1
   return compose.slice(start, next === -1 ? compose.length : next)
+}
+
+function readTerraformResource(terraform, resourceType, resourceName) {
+  const marker = `resource "${resourceType}" "${resourceName}" {`
+  const start = terraform.indexOf(marker)
+  assert.notStrictEqual(start, -1, `Terraform must define ${resourceType}.${resourceName}`)
+
+  const next = terraform.indexOf('\nresource "', start + marker.length)
+  return terraform.slice(start, next === -1 ? terraform.length : next)
 }
 
 test('every CRM container uses bounded non-blocking awslogs delivery', () => {
@@ -58,6 +71,48 @@ test('CRM MCP port mapping and healthcheck match the configured listener', () =>
   assert.match(mcp, /^      - "\$\{MCP_HOST_PORT:-3002\}:3002"$/m)
   assert.match(mcp, /^      MCP_PORT: "3002"$/m)
   assert.match(mcp, /http:\/\/127\.0\.0\.1:3002\/health/)
+})
+
+test('Terraform preserves the CRM MCP ingress routing boundary', () => {
+  const terraform = fs.readFileSync(TERRAFORM_PATH, 'utf8')
+  const environmentVariables = fs.readFileSync(TERRAFORM_ENV_VARIABLES_PATH, 'utf8')
+  const appSecurityGroup = readTerraformResource(terraform, 'aws_security_group', 'app')
+  const mcpTargetGroup = readTerraformResource(terraform, 'aws_lb_target_group', 'mcp')
+  const mcpListenerRule = readTerraformResource(terraform, 'aws_lb_listener_rule', 'mcp')
+  const mcpIngressBlocks = [...appSecurityGroup.matchAll(/(?:^|\n)  ingress \{[\s\S]*?\n  \}/g)]
+    .map((match) => match[0])
+    .filter((block) => block.includes('description     = "they-lb Open Mercato mcp"'))
+
+  assert.strictEqual(mcpIngressBlocks.length, 1, 'app security group must define one MCP ingress block')
+  const [mcpIngress] = mcpIngressBlocks
+  assert.match(mcpIngress, /from_port\s*=\s*var\.mcp_port/)
+  assert.match(mcpIngress, /to_port\s*=\s*var\.mcp_port/)
+  assert.match(mcpIngress, /protocol\s*=\s*"tcp"/)
+  assert.match(mcpIngress, /security_groups\s*=\s*\[var\.alb_security_group_id\]/)
+  assert.doesNotMatch(mcpIngress, /cidr_blocks/)
+
+  assert.match(mcpTargetGroup, /port\s*=\s*var\.mcp_port/)
+  assert.match(mcpTargetGroup, /target_type\s*=\s*"instance"/)
+  assert.match(mcpTargetGroup, /path\s*=\s*"\/health"/)
+
+  assert.match(mcpListenerRule, /priority\s*=\s*var\.mcp_listener_rule_priority/)
+  assert.match(mcpListenerRule, /target_group_arn\s*=\s*aws_lb_target_group\.mcp\.arn/)
+  assert.match(mcpListenerRule, /values\s*=\s*\[var\.domain_name\]/)
+  assert.match(mcpListenerRule, /values\s*=\s*\["\/mcp"\]/)
+
+  assert.match(
+    environmentVariables,
+    /variable "listener_rule_priority" \{[\s\S]*?default\s*=\s*1003[\s\S]*?\n\}/,
+  )
+  assert.match(
+    environmentVariables,
+    /variable "mcp_listener_rule_priority" \{[\s\S]*?default\s*=\s*1002[\s\S]*?\n\}/,
+  )
+  assert.match(
+    environmentVariables,
+    /variable "mcp_port" \{[\s\S]*?default\s*=\s*3002[\s\S]*?\n\}/,
+  )
+  assert.doesNotMatch(terraform, /resource "aws_lb_target_group_attachment" "mcp"/)
 })
 
 test('Terraform owns every CRM log destination and preserves retained evidence', () => {

@@ -127,6 +127,14 @@ resource "aws_security_group" "app" {
     security_groups = [var.alb_security_group_id]
   }
 
+  ingress {
+    description     = "they-lb Open Mercato mcp"
+    from_port       = var.mcp_port
+    to_port         = var.mcp_port
+    protocol        = "tcp"
+    security_groups = [var.alb_security_group_id]
+  }
+
   dynamic "ingress" {
     for_each = var.allowed_admin_cidr_blocks
     content {
@@ -517,6 +525,24 @@ resource "aws_lb_target_group_attachment" "app" {
   port             = var.app_port
 }
 
+resource "aws_lb_target_group" "mcp" {
+  name        = "om-crm-mcp-they-tg"
+  port        = var.mcp_port
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "instance"
+
+  health_check {
+    enabled             = true
+    path                = "/health"
+    matcher             = "200"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 5
+    unhealthy_threshold = 2
+  }
+}
+
 resource "aws_lb_listener_rule" "app" {
   listener_arn = var.https_listener_arn
   priority     = var.listener_rule_priority
@@ -529,6 +555,28 @@ resource "aws_lb_listener_rule" "app" {
   condition {
     host_header {
       values = [var.domain_name]
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "mcp" {
+  listener_arn = var.https_listener_arn
+  priority     = var.mcp_listener_rule_priority
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.mcp.arn
+  }
+
+  condition {
+    host_header {
+      values = [var.domain_name]
+    }
+  }
+
+  condition {
+    path_pattern {
+      values = ["/mcp"]
     }
   }
 }
