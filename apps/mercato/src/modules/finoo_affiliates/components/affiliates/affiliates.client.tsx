@@ -6,13 +6,15 @@ import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { useOrganizationScopeVersion } from '@open-mercato/shared/lib/frontend/useOrganizationScope'
 import { Page, PageBody, PageHeader } from '@open-mercato/ui/backend/Page'
 import { DataTable } from '@open-mercato/ui/backend/DataTable'
+import { RowActions } from '@open-mercato/ui/backend/RowActions'
 import { ListEmptyState } from '@open-mercato/ui/backend/filters/ListEmptyState'
 import { apiCall, readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { Button } from '@open-mercato/ui/primitives/button'
 import InviteAffiliateDialog from './invite-affiliate-dialog.client'
+import CommissionSettingsDialog, { type AffiliateCommissionSettings } from './commission-settings-dialog.client'
 
-type AffiliateRow = {
+type AffiliateRow = AffiliateCommissionSettings & {
   id: string
   email: string
   firstName: string
@@ -21,7 +23,6 @@ type AffiliateRow = {
   trackedUrl: string
   relatedDeals: number
   state: 'invited' | 'active'
-  updatedAt: string
 }
 
 type AffiliatesResponse = {
@@ -51,6 +52,8 @@ export default function AffiliatesClient() {
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [inviteOptions, setInviteOptions] = React.useState<InviteOptions | null>(null)
   const [canInvite, setCanInvite] = React.useState(false)
+  const [canManage, setCanManage] = React.useState(false)
+  const [editingAffiliate, setEditingAffiliate] = React.useState<AffiliateRow | null>(null)
   const [reloadToken, setReloadToken] = React.useState(0)
 
   React.useEffect(() => {
@@ -64,10 +67,11 @@ export default function AffiliatesClient() {
           body: JSON.stringify({ features: ['finoo_affiliates.manage', 'customer_accounts.invite'] }),
         })
         const granted = Array.isArray(access.result?.granted) ? access.result.granted : []
-        const permitted = access.ok
-          && granted.includes('finoo_affiliates.manage')
+        const managePermitted = granted.includes('finoo_affiliates.manage')
+        const permitted = managePermitted
           && granted.includes('customer_accounts.invite')
         if (cancelled) return
+        setCanManage(managePermitted)
         setCanInvite(permitted)
         if (!permitted) {
           setInviteOptions(null)
@@ -78,6 +82,7 @@ export default function AffiliatesClient() {
       } catch {
         if (!cancelled) {
           setCanInvite(false)
+          setCanManage(false)
           setInviteOptions(null)
         }
       }
@@ -148,6 +153,20 @@ export default function AffiliatesClient() {
     },
     { accessorKey: 'relatedDeals', header: t('finooAffiliates.affiliates.relatedDeals', 'Related deals') },
     {
+      id: 'commission',
+      header: t('finooAffiliates.affiliates.commission', 'Commission'),
+      cell: ({ row }) => {
+        if (row.original.commissionMode === 'percentage' && row.original.commissionRateBps !== null) {
+          return t('finooAffiliates.affiliates.commissionPercentageValue', '{value}%').replace('{value}', String(row.original.commissionRateBps / 100))
+        }
+        if (row.original.commissionMode === 'fixed' && row.original.commissionFixedAmount !== null) {
+          return t('finooAffiliates.affiliates.commissionFixedValue', '{value} PLN').replace('{value}', String(row.original.commissionFixedAmount))
+        }
+        return t('finooAffiliates.affiliates.commissionLegacy', 'Per Deal')
+      },
+      enableSorting: false,
+    },
+    {
       accessorKey: 'state',
       header: t('finooAffiliates.affiliates.state', 'State'),
       cell: ({ row }) => row.original.state === 'active'
@@ -183,6 +202,13 @@ export default function AffiliatesClient() {
               createLabel={inviteAction ? t('finooAffiliates.affiliates.invite', 'Invite affiliate') : undefined}
             />
           )}
+          rowActions={canManage ? (row) => (
+            <RowActions items={[{
+              id: 'edit',
+              label: t('finooAffiliates.affiliates.commissionEdit', 'Edit commission'),
+              onSelect: () => setEditingAffiliate(row),
+            }]} />
+          ) : undefined}
           pagination={{
             page,
             pageSize,
@@ -206,6 +232,14 @@ export default function AffiliatesClient() {
           onSynchronized={() => setReloadToken((token) => token + 1)}
         />
       ) : null}
+      <CommissionSettingsDialog
+        affiliate={editingAffiliate}
+        onOpenChange={(open) => { if (!open) setEditingAffiliate(null) }}
+        onSaved={(settings) => {
+          setRows((current) => current.map((row) => row.id === settings.id ? { ...row, ...settings } : row))
+          setEditingAffiliate(null)
+        }}
+      />
     </Page>
   )
 }

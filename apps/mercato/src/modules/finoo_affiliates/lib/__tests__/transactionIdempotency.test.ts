@@ -85,10 +85,60 @@ describe('Finoo affiliate transaction idempotency', () => {
       dealName: 'Finoo Deal',
       dealCompany: 'Finoo Company',
       commissionAmount: 125,
+      commissionMode: 'legacy_deal_amount',
+      commissionRateBps: null,
+      commissionFixedAmount: null,
+      commissionBaseAmount: null,
       commissionStatus: 'processing',
       acceptedAt: acceptance.acceptedAt,
     })
     expect(findOne.mock.calls[4]?.[2]).toMatchObject({ deletedAt: null })
+  })
+
+  it('snapshots an affiliate percentage rule and the accepted Deal value', async () => {
+    const acceptance = {
+      acceptedAt: new Date('2026-08-14T10:00:00.000Z'),
+      dealValueAmount: '1234.56',
+      dealValueCurrency: 'PLN',
+    }
+    findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(acceptance as never)
+      .mockResolvedValueOnce({
+        affiliateId: 'affiliate-1',
+        affiliateUserId: 'user-1',
+        commissionAmount: 125,
+        companyName: null,
+      } as never)
+      .mockResolvedValueOnce({ title: 'Percentage Deal', valueAmount: '9999.99', valueCurrency: 'PLN' } as never)
+      .mockResolvedValueOnce({
+        id: 'affiliate-1',
+        customerUserId: 'user-1',
+        commissionMode: 'percentage',
+        commissionRateBps: 750,
+        commissionFixedAmount: null,
+      } as never)
+      .mockResolvedValueOnce({ id: 'dictionary-1' } as never)
+      .mockResolvedValueOnce({ id: 'processing-1' } as never)
+    const created: Record<string, unknown>[] = []
+    const transactionalEm = {
+      create: jest.fn((_entity, input) => { created.push(input); return input }),
+      persist: jest.fn(),
+      flush: jest.fn().mockResolvedValue(undefined),
+    }
+    const em = { transactional: (callback: (trx: unknown) => unknown) => callback(transactionalEm) }
+
+    await createAffiliateTransactionForDeal(em as never, 'deal-1', scope)
+
+    expect(created[0]).toMatchObject({
+      commissionAmount: 93,
+      commissionMode: 'percentage',
+      commissionRateBps: 750,
+      commissionFixedAmount: null,
+      commissionBaseAmount: '1234.56',
+    })
+    expect(findOne.mock.calls[5]?.[3]).toMatchObject({ lockMode: expect.anything() })
   })
 
   it('can recover an Accepted transaction while the source Deal is already soft-deleted', async () => {

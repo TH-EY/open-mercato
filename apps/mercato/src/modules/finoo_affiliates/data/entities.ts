@@ -108,6 +108,8 @@ export class FinooDealCompletion {
 
 export type FinooCommissionStatus = 'approved' | 'waiting' | 'rejected'
 export type FinooAffiliateTransactionStatus = 'processing' | 'approved' | 'rejected' | 'paid_out'
+export type FinooAffiliateCommissionMode = 'percentage' | 'fixed'
+export type FinooAffiliateTransactionCommissionMode = 'legacy_deal_amount' | FinooAffiliateCommissionMode
 export type FinooAttributionSource = 'automatic' | 'staff'
 export type FinooAttributionDeletionReason = 'deal' | 'staff'
 export type FinooPayoutSelectionItem = { id: string; updatedAt: string }
@@ -200,7 +202,7 @@ export class FinooDealAttribution {
 })
 @Index({ name: 'finoo_affiliates_scope_active_idx', properties: ['tenantId', 'organizationId', 'isActive', 'createdAt'] })
 export class FinooAffiliate {
-  [OptionalProps]?: 'invitationId' | 'customerUserId' | 'primaryLinkId' | 'accountHolderName' | 'accountNumber' | 'isActive' | 'createdAt' | 'updatedAt' | 'deletedAt'
+  [OptionalProps]?: 'invitationId' | 'customerUserId' | 'primaryLinkId' | 'accountHolderName' | 'accountNumber' | 'commissionMode' | 'commissionRateBps' | 'commissionFixedAmount' | 'isActive' | 'createdAt' | 'updatedAt' | 'deletedAt'
 
   @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
   id!: string
@@ -235,6 +237,15 @@ export class FinooAffiliate {
   @Property({ name: 'account_number', type: 'text', nullable: true })
   accountNumber?: string | null
 
+  @Property({ name: 'commission_mode', type: 'text', nullable: true })
+  commissionMode?: FinooAffiliateCommissionMode | null
+
+  @Property({ name: 'commission_rate_bps', type: 'int', nullable: true })
+  commissionRateBps?: number | null
+
+  @Property({ name: 'commission_fixed_amount', type: 'int', nullable: true })
+  commissionFixedAmount?: number | null
+
   @Property({ name: 'is_active', type: 'boolean', default: false })
   isActive: boolean = false
 
@@ -251,7 +262,7 @@ export class FinooAffiliate {
 @Entity({ tableName: 'finoo_deal_acceptances' })
 @Unique({ name: 'finoo_deal_acceptances_scope_deal_unique', properties: ['tenantId', 'organizationId', 'dealId'] })
 export class FinooDealAcceptance {
-  [OptionalProps]?: 'createdAt' | 'updatedAt'
+  [OptionalProps]?: 'dealValueAmount' | 'dealValueCurrency' | 'createdAt' | 'updatedAt'
 
   @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
   id!: string
@@ -268,6 +279,12 @@ export class FinooDealAcceptance {
   @Property({ name: 'accepted_at', type: Date })
   acceptedAt!: Date
 
+  @Property({ name: 'deal_value_amount', type: 'numeric', precision: 14, scale: 2, nullable: true })
+  dealValueAmount?: string | null
+
+  @Property({ name: 'deal_value_currency', type: 'text', nullable: true })
+  dealValueCurrency?: string | null
+
   @Property({ name: 'created_at', type: Date, onCreate: () => new Date() })
   createdAt: Date = new Date()
 
@@ -281,7 +298,7 @@ export class FinooDealAcceptance {
 @Index({ name: 'finoo_affiliate_transactions_scope_user_time_idx', properties: ['tenantId', 'organizationId', 'affiliateUserId', 'acceptedAt'] })
 @Index({ name: 'finoo_affiliate_transactions_scope_payout_idx', properties: ['tenantId', 'organizationId', 'payoutId'] })
 export class FinooAffiliateTransaction {
-  [OptionalProps]?: 'dealName' | 'dealCompany' | 'currency' | 'payoutId' | 'createdEventPublishedAt' | 'createdAt' | 'updatedAt'
+  [OptionalProps]?: 'dealName' | 'dealCompany' | 'commissionMode' | 'commissionRateBps' | 'commissionFixedAmount' | 'commissionBaseAmount' | 'currency' | 'payoutId' | 'createdEventPublishedAt' | 'createdAt' | 'updatedAt'
 
   @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
   id!: string
@@ -309,6 +326,18 @@ export class FinooAffiliateTransaction {
 
   @Property({ name: 'commission_amount', type: 'int' })
   commissionAmount!: number
+
+  @Property({ name: 'commission_mode', type: 'text', default: 'legacy_deal_amount' })
+  commissionMode: FinooAffiliateTransactionCommissionMode = 'legacy_deal_amount'
+
+  @Property({ name: 'commission_rate_bps', type: 'int', nullable: true })
+  commissionRateBps?: number | null
+
+  @Property({ name: 'commission_fixed_amount', type: 'int', nullable: true })
+  commissionFixedAmount?: number | null
+
+  @Property({ name: 'commission_base_amount', type: 'numeric', precision: 14, scale: 2, nullable: true })
+  commissionBaseAmount?: string | null
 
   @Property({ type: 'text', default: 'PLN' })
   currency: string = 'PLN'

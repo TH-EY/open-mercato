@@ -8,7 +8,12 @@ import {
   reconcileAcceptedDeals,
 } from '../lib/acceptanceReconciliation'
 
-type ReconciliationPayload = { tenantId?: string; organizationId?: string }
+type ReconciliationPayload = {
+  tenantId?: string
+  organizationId?: string
+  afterAcceptedAt?: string
+  afterAcceptanceId?: string
+}
 type HandlerContext = JobContext & { resolve: <T = unknown>(name: string) => T }
 
 const logger = createLogger('finoo_affiliates')
@@ -54,8 +59,26 @@ export default async function handle(job: QueuedJob<ReconciliationPayload>, cont
       })
       return Boolean((executed as { result?: unknown } | null)?.result)
     },
+    {
+      after: job.payload?.afterAcceptedAt && job.payload?.afterAcceptanceId
+        ? {
+            acceptedAt: job.payload.afterAcceptedAt,
+            acceptanceId: job.payload.afterAcceptanceId,
+          }
+        : null,
+      onFailure: (dealId, error) => {
+        logger.error('Affiliate acceptance reconciliation failed for Deal', {
+          dealId,
+          err: error,
+        })
+      },
+    },
   )
-  if (result.selected >= FINOO_ACCEPTANCE_RECONCILIATION_BATCH_SIZE && result.succeeded === result.selected) {
-    await getContinuationQueue().enqueue(scope, { delayMs: 1_000 })
+  if (result.selected >= FINOO_ACCEPTANCE_RECONCILIATION_BATCH_SIZE && result.continuation) {
+    await getContinuationQueue().enqueue({
+      ...scope,
+      afterAcceptedAt: result.continuation.acceptedAt,
+      afterAcceptanceId: result.continuation.acceptanceId,
+    }, { delayMs: 1_000 })
   }
 }

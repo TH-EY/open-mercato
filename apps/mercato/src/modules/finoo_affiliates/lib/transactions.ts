@@ -15,6 +15,7 @@ import {
 } from '../data/entities'
 import type { FinooAffiliateTransactionAction } from '../data/validators'
 import { FINOO_AFFILIATE_TRANSACTION_STATUS_DICTIONARY_KEY } from '../setup'
+import { resolveAffiliateCommissionSnapshot } from './commission'
 import type { FinooScope } from './service'
 
 export type TransactionCreationResult = {
@@ -131,18 +132,27 @@ export async function createAffiliateTransactionForDeal(
             transactionalEm,
             FinooAffiliate,
             { id: attribution.affiliateId, customerUserId: attribution.affiliateUserId, ...scope, isActive: true, deletedAt: null },
-            undefined,
+            { lockMode: LockMode.PESSIMISTIC_WRITE },
             scope,
           )
         : await findOneWithDecryption(
             transactionalEm,
             FinooAffiliate,
             { customerUserId: attribution.affiliateUserId, ...scope, isActive: true, deletedAt: null },
-            undefined,
+            { lockMode: LockMode.PESSIMISTIC_WRITE },
             scope,
           )
       if (!affiliate) return { transaction: null, created: false }
       if (!attribution.affiliateId) attribution.affiliateId = affiliate.id
+
+      const commission = resolveAffiliateCommissionSnapshot({
+        commissionMode: affiliate.commissionMode ?? null,
+        commissionRateBps: affiliate.commissionRateBps ?? null,
+        commissionFixedAmount: affiliate.commissionFixedAmount ?? null,
+        attributionCommissionAmount: attribution.commissionAmount,
+        dealValueAmount: acceptance.dealValueAmount ?? null,
+        dealValueCurrency: acceptance.dealValueCurrency ?? null,
+      })
 
       const processing = await resolveStatusEntry(transactionalEm, scope, 'processing')
       const transaction = transactionalEm.create(FinooAffiliateTransaction, {
@@ -152,7 +162,7 @@ export async function createAffiliateTransactionForDeal(
         dealId,
         dealName: deal.title.trim().slice(0, 300) || null,
         dealCompany: attribution.companyName ?? null,
-        commissionAmount: attribution.commissionAmount,
+        ...commission,
         currency: 'PLN',
         commissionStatusEntryId: processing.id,
         commissionStatus: 'processing',

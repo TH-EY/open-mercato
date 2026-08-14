@@ -34,6 +34,24 @@ export const finooAffiliateProfileSchema = z.object({
   updatedAt: z.string().datetime(),
 })
 
+const finooAffiliateCommissionCommonSchema = z.object({
+  id: z.string().uuid(),
+  updatedAt: z.string().datetime(),
+})
+
+export const finooAffiliateCommissionUpdateSchema = z.discriminatedUnion('commissionMode', [
+  finooAffiliateCommissionCommonSchema.extend({
+    commissionMode: z.literal('percentage'),
+    commissionRateBps: z.number().int().min(1).max(10_000),
+    commissionFixedAmount: z.null(),
+  }),
+  finooAffiliateCommissionCommonSchema.extend({
+    commissionMode: z.literal('fixed'),
+    commissionRateBps: z.null(),
+    commissionFixedAmount: z.number().int().min(0).max(2_147_483_647),
+  }),
+])
+
 export const finooPayoutSelectionItemSchema = z.object({
   id: z.string().uuid(),
   updatedAt: z.string().datetime(),
@@ -94,6 +112,7 @@ export type FinooAffiliateLinkCreateInput = z.infer<typeof finooAffiliateLinkCre
 export type FinooAffiliateLinkUpdateInput = z.infer<typeof finooAffiliateLinkUpdateSchema>
 export type FinooDealAttributionUpsertInput = z.infer<typeof finooDealAttributionUpsertSchema>
 export type FinooAffiliateProfileInput = z.infer<typeof finooAffiliateProfileSchema>
+export type FinooAffiliateCommissionUpdateInput = z.infer<typeof finooAffiliateCommissionUpdateSchema>
 export type FinooAffiliateTransactionStatus = z.infer<typeof finooAffiliateTransactionStatusSchema>
 export type FinooAffiliateTransactionAction = z.infer<typeof finooAffiliateTransactionActionSchema>
 export type FinooAffiliateTransactionTransitionInput = z.infer<typeof finooAffiliateTransactionTransitionSchema>

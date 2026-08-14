@@ -4,17 +4,37 @@ import type { FinooScope } from './service'
 export const FINOO_ACCEPTANCE_RECONCILIATION_QUEUE = 'finoo-affiliates-acceptance-reconciliation'
 export const FINOO_ACCEPTANCE_RECONCILIATION_BATCH_SIZE = 100
 
-type MissingTransactionRow = { deal_id: string }
-export type AcceptanceReconciliationResult = { selected: number; succeeded: number }
+type MissingTransactionRow = {
+  deal_id: string
+  acceptance_id: string
+  accepted_at: Date | string
+}
+export type AcceptanceReconciliationCursor = { acceptedAt: string; acceptanceId: string }
+export type AcceptanceReconciliationResult = {
+  selected: number
+  succeeded: number
+  failed: number
+  continuation: AcceptanceReconciliationCursor | null
+}
+
+type AcceptanceReconciliationOptions = {
+  batchSize?: number
+  after?: AcceptanceReconciliationCursor | null
+  onFailure?: (dealId: string, error: unknown) => void
+}
 
 export async function reconcileAcceptedDeals(
   em: EntityManager,
   scope: FinooScope,
   createTransaction: (dealId: string) => Promise<boolean>,
-  batchSize = FINOO_ACCEPTANCE_RECONCILIATION_BATCH_SIZE,
+  options: AcceptanceReconciliationOptions = {},
 ): Promise<AcceptanceReconciliationResult> {
+  const batchSize = options.batchSize ?? FINOO_ACCEPTANCE_RECONCILIATION_BATCH_SIZE
+  const cursorPredicate = options.after
+    ? 'and (acceptance.accepted_at, acceptance.id) > (?, ?)'
+    : ''
   const rows = await em.getConnection().execute<MissingTransactionRow[]>(
-    `select acceptance.deal_id
+    `select acceptance.deal_id, acceptance.id as acceptance_id, acceptance.accepted_at
        from finoo_deal_acceptances acceptance
        inner join finoo_deal_attributions attribution
          on attribution.tenant_id = acceptance.tenant_id
@@ -39,14 +59,37 @@ export async function reconcileAcceptedDeals(
         and transaction.deal_id = acceptance.deal_id
       where acceptance.tenant_id = ?
         and acceptance.organization_id = ?
+        ${cursorPredicate}
         and (transaction.id is null or transaction.created_event_published_at is null)
       order by acceptance.accepted_at asc, acceptance.id asc
       limit ?`,
-    [scope.tenantId, scope.organizationId, batchSize],
+    [
+      scope.tenantId,
+      scope.organizationId,
+      ...(options.after ? [options.after.acceptedAt, options.after.acceptanceId] : []),
+      batchSize,
+    ],
   )
   let succeeded = 0
+  let failed = 0
   for (const row of rows) {
-    if (await createTransaction(row.deal_id)) succeeded += 1
+    try {
+      if (await createTransaction(row.deal_id)) succeeded += 1
+    } catch (error) {
+      failed += 1
+      options.onFailure?.(row.deal_id, error)
+    }
   }
-  return { selected: rows.length, succeeded }
+  const last = rows.at(-1)
+  return {
+    selected: rows.length,
+    succeeded,
+    failed,
+    continuation: last
+      ? {
+          acceptedAt: new Date(last.accepted_at).toISOString(),
+          acceptanceId: last.acceptance_id,
+        }
+      : null,
+  }
 }

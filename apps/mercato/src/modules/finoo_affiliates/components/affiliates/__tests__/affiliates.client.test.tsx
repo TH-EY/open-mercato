@@ -21,19 +21,31 @@ jest.mock('@open-mercato/ui/backend/DataTable', () => ({
   DataTable: (props: {
     actions?: React.ReactNode
     data: Array<{ email: string }>
+    rowActions?: (row: { email: string }) => React.ReactNode
     pagination?: { onPageChange: (page: number) => void }
   }) => (
     <div>
       {props.actions}
-      {props.data.map((row) => <span key={row.email}>{row.email}</span>)}
+      {props.data.map((row) => <div key={row.email}><span>{row.email}</span>{props.rowActions?.(row)}</div>)}
       <button type="button" onClick={() => props.pagination?.onPageChange(2)}>Next page</button>
     </div>
+  ),
+}))
+
+jest.mock('@open-mercato/ui/backend/RowActions', () => ({
+  RowActions: ({ items }: { items: Array<{ id: string; label: string; onSelect: () => void }> }) => (
+    <div>{items.map((item) => <button key={item.id} type="button" onClick={item.onSelect}>{item.label}</button>)}</div>
   ),
 }))
 
 jest.mock('../invite-affiliate-dialog.client', () => ({
   __esModule: true,
   default: ({ open }: { open: boolean }) => open ? <div>Invite dialog open</div> : null,
+}))
+
+jest.mock('../commission-settings-dialog.client', () => ({
+  __esModule: true,
+  default: ({ affiliate }: { affiliate: { email: string } | null }) => affiliate ? <div>Commission dialog for {affiliate.email}</div> : null,
 }))
 
 jest.mock('@open-mercato/ui/backend/utils/apiCall', () => ({
@@ -55,6 +67,9 @@ function affiliateList() {
       trackedUrl: 'https://example.test/tracked',
       relatedDeals: 2,
       state: 'active',
+      commissionMode: null,
+      commissionRateBps: null,
+      commissionFixedAmount: null,
       updatedAt: '2026-08-13T00:00:00.000Z',
     }],
     total: 1,
@@ -105,6 +120,20 @@ describe('AffiliatesClient', () => {
     await screen.findByText('affiliate@example.test')
     expect(screen.queryByRole('button', { name: 'Invite affiliate' })).not.toBeInTheDocument()
     expect(mockReadApiResult).not.toHaveBeenCalledWith('/api/finoo_affiliates/invite-options')
+  })
+
+  it('allows commission editing with manage permission even without invitation permission', async () => {
+    mockApiCall.mockResolvedValue({
+      ok: true,
+      status: 200,
+      result: { ok: false, granted: ['finoo_affiliates.manage'] },
+    } as never)
+
+    render(<AffiliatesClient />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit commission' }))
+    expect(screen.getByText('Commission dialog for affiliate@example.test')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Invite affiliate' })).not.toBeInTheDocument()
   })
 
   it('forwards pagination to the scoped list endpoint', async () => {

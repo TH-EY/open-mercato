@@ -1,12 +1,15 @@
 import { z } from 'zod'
+import { LockMode } from '@mikro-orm/core'
 import type { EntityManager } from '@mikro-orm/postgresql'
 import type { CommandHandler, CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import { registerCommand } from '@open-mercato/shared/lib/commands'
 import { extractUndoPayload } from '@open-mercato/shared/lib/commands/undo'
 import { ensureOrganizationScope, ensureTenantScope } from '@open-mercato/shared/lib/commands/scope'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
+import { enforceCommandOptimisticLockWithGuards } from '@open-mercato/shared/lib/crud/optimistic-lock-command'
 import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { FinooAffiliate } from '../data/entities'
+import { finooAffiliateCommissionUpdateSchema } from '../data/validators'
 import { emitFinooAffiliateEvent } from '../events'
 import { activateAffiliateForInvitation, ensureAffiliateForInvitation } from '../lib/membership'
 import type { FinooScope } from '../lib/service'
@@ -94,5 +97,51 @@ const activateInvitationCommand: CommandHandler<ActivateAffiliateInvitationInput
   },
 }
 
+const updateCommissionCommand: CommandHandler<Record<string, unknown>, FinooAffiliate> = {
+  id: 'finoo_affiliates.affiliate.update_commission',
+  isUndoable: false,
+  async execute(rawInput, ctx) {
+    const input = finooAffiliateCommissionUpdateSchema.parse(rawInput)
+    const tenantId = ctx.auth?.tenantId
+    const organizationId = ctx.selectedOrganizationId ?? ctx.auth?.orgId
+    if (!tenantId || !organizationId) throw new CrudHttpError(403, { error: 'Forbidden' })
+    const scope = { tenantId, organizationId }
+    const em = (ctx.container.resolve('em') as EntityManager).fork()
+    const affiliate = await em.transactional(async (transactionalEm) => {
+      const locked = await findOneWithDecryption(
+        transactionalEm,
+        FinooAffiliate,
+        { id: input.id, ...scope, deletedAt: null },
+        { lockMode: LockMode.PESSIMISTIC_WRITE },
+        scope,
+      )
+      if (!locked) throw new CrudHttpError(404, { error: 'Not found' })
+      await enforceCommandOptimisticLockWithGuards(ctx.container, {
+        resourceKind: 'finoo_affiliates.affiliate',
+        resourceId: locked.id,
+        current: locked.updatedAt,
+        expected: input.updatedAt,
+        request: ctx.request,
+      })
+      locked.commissionMode = input.commissionMode
+      locked.commissionRateBps = input.commissionRateBps
+      locked.commissionFixedAmount = input.commissionFixedAmount
+      await transactionalEm.flush()
+      return locked
+    })
+    return affiliate
+  },
+  async buildLog({ result }) {
+    return {
+      actionLabel: 'Update Finoo affiliate commission',
+      resourceKind: 'finoo_affiliates.affiliate',
+      resourceId: result.id,
+      tenantId: result.tenantId,
+      organizationId: result.organizationId,
+    }
+  },
+}
+
 registerCommand(ensureInvitationCommand)
 registerCommand(activateInvitationCommand)
+registerCommand(updateCommissionCommand)
