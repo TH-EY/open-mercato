@@ -6,6 +6,7 @@ const widget: InjectionWidgetModule = {
     id: 'example.injection.portal-stats',
     title: 'Account Overview',
     description: 'Key account metrics at a glance.',
+    features: ['portal.orders.view'],
     priority: 5,
     enabled: true,
   },

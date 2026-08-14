@@ -6,6 +6,7 @@ const widget: InjectionWidgetModule = {
     id: 'example.injection.portal-quick-links',
     title: 'Quick Links',
     description: 'Shortcut cards for common portal actions.',
+    features: ['portal.orders.view'],
     priority: 20,
     enabled: true,
   },

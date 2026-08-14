@@ -86,11 +86,11 @@ The current implementation has six material gaps:
 - Payout eligibility: only `approved` transactions.
 - Payout selection: one or more transactions belonging to exactly one affiliate and one tenant/organization.
 - Payout effect: one payout row plus links to all selected transactions and their transition to `paid_out`, in one database transaction.
-- Payout warning: exactly “Please only Confirm if the payment was actually made”.
+- Payout warning: localized through `finooAffiliates.payouts.confirmWarning`; Polish displays “Potwierdź wyłącznie wtedy, gdy płatność została faktycznie wykonana.”
 - Bank payment: external/manual; confirmation records it only.
 - Currency: PLN; stored integer values remain whole PLN units for compatibility.
 - SES provider authentication: the AWS SDK default credential chain remains the provider default. The FINOO organization alone opts into a dedicated access-key pair; incomplete or implicit key pairs fail validation.
-- SES IAM scope: `ses:SendEmail` on `arn:aws:ses:eu-west-2:062648047691:identity/they.dev` only when `ses:FromAddress` equals `no-reply@they.dev`, plus `ses:GetAccount` on `*` for the existing health probe. Both statements require `aws:RequestedRegion = eu-west-2`; `SendRawEmail` and SES management actions are not granted.
+- SES IAM scope: `ses:SendRawEmail` on `arn:aws:ses:eu-west-2:062648047691:identity/they.dev` only when `ses:FromAddress` equals `no-reply@they.dev`, plus `ses:GetAccount` on `*` for the existing health probe. Both statements require `aws:RequestedRegion = eu-west-2`; ordinary `SendEmail` and SES management actions are not granted.
 
 ## Proposed Solution
 
@@ -476,13 +476,14 @@ Uses `Dialog`, `FormField`, `EmailInput`, and same-size `Button`s. Only email is
 
 ### Payout Preview and Confirmation
 
-The Pay out action sends the selected rows to preview. A valid approved same-affiliate selection opens a focused `Dialog` showing total PLN amount, affiliate, account holder, account number, generated reference, and selected count; invalid selections receive the scoped preview error and remain selected. An `Alert status="warning"` displays exactly “Please only Confirm if the payment was actually made”. Confirm is the primary action and is disabled while submitting. `Cmd/Ctrl+Enter` confirms and `Escape` cancels. After the confirm endpoint returns `202`, the host bulk action resolves successfully so canonical DataTable selection clears, while the shared global progress UI hydrates and follows the returned job. No custom table or polling loop is added.
+The Pay out action sends the selected rows to preview. A valid approved same-affiliate selection opens a focused `Dialog` showing total PLN amount, affiliate, account holder, account number, generated reference, and selected count; invalid selections receive the scoped preview error and remain selected. An `Alert status="warning"` resolves `finooAffiliates.payouts.confirmWarning`; Polish displays “Potwierdź wyłącznie wtedy, gdy płatność została faktycznie wykonana.” Confirm is the primary action and is disabled while submitting. `Cmd/Ctrl+Enter` confirms and `Escape` cancels. After the confirm endpoint returns `202`, the host bulk action resolves successfully so canonical DataTable selection clears, while the shared global progress UI hydrates and follows the returned job. No custom table or polling loop is added.
 
 ### Portal Dashboard
 
 - Existing three weekly charts retain independent adjustable date ranges and default last 30 days.
 - Summary values show total paid out and pending payout in PLN.
 - Generated individual link/code has an accessible Copy action and an inactive/setup message if membership activation is incomplete.
+- Unrelated example showcase widgets require `portal.orders.view`, so an affiliate-only role sees only the FINOO affiliate dashboard content and no English demo placeholders.
 
 ### Portal Pages
 
@@ -704,7 +705,7 @@ All integration tests create and clean their own invitations/users/memberships/l
 - **Scenario**: a long-lived key leaks, is written to process/environment logs, is applied to the wrong tenant, or can send from an unapproved identity.
 - **Severity**: High
 - **Affected area**: invitations, password email, AWS account, recipient trust
-- **Mitigation**: exact tenant/organization CLI scope, stdin-only input, both credential fields secret-typed and encrypted by the platform service, no dotenv/build/SSM/Jira values, health-before-save, exact deployment assertions, an IAM resource restricted to the verified `they.dev` identity, exact `ses:FromAddress`, and only `SendEmail` plus `GetAccount`.
+- **Mitigation**: exact tenant/organization CLI scope, stdin-only input, both credential fields secret-typed and encrypted by the platform service, no dotenv/build/SSM/Jira values, health-before-save, exact deployment assertions, an IAM resource restricted to the verified `they.dev` identity, exact `ses:FromAddress`, and only `SendRawEmail` plus `GetAccount`; ordinary `SendEmail` remains ungranted.
 - **Residual risk**: the FINOO application can send arbitrary transactional content and recipients from `no-reply@they.dev`; immediate key deactivation/deletion and restoring ambient credentials are the rollback controls.
 
 ## Migration & Backward Compatibility — SES Authentication
@@ -778,6 +779,8 @@ Ready for implementation. Independent scope, backward-compatibility, data/archit
 ### 2026-08-14
 
 - Added the approved FINOO-only SES credential design: encrypted organization-scoped explicit credentials as an opt-in, default-chain compatibility, exact least-privilege IAM policy, stdin-only configuration, health/deployment gates, rollback, and live-delivery coverage.
+- Corrected the final SES permission to the Nodemailer raw-MIME path (`SendRawEmail`) and kept ordinary `SendEmail` denied.
+- Localized the Polish payout warning and invite-success close action, and feature-gated unrelated example portal widgets away from affiliate-only users after headed QA exposed English demo content.
 
 ### 2026-08-13
 

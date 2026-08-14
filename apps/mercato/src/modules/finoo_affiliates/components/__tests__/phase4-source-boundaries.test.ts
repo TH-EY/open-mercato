@@ -32,4 +32,40 @@ describe('Phase 4 UI boundaries', () => {
       },
     })
   })
+
+  it('keeps affiliate-only Polish portal content free of unrelated English demo widgets', () => {
+    const examplePortalWidgets = [
+      'portal-quick-links',
+      'portal-recent-activity',
+      'portal-stats',
+    ]
+    for (const widget of examplePortalWidgets) {
+      const source = readFileSync(
+        resolve(process.cwd(), `src/modules/example/widgets/injection/${widget}/widget.ts`),
+        'utf8',
+      )
+      expect(source).toContain("features: ['portal.orders.view']")
+    }
+
+    const polish = JSON.parse(
+      readFileSync(resolve(process.cwd(), 'src/modules/finoo_affiliates/i18n/pl.json'), 'utf8'),
+    ) as Record<string, string>
+    const english = JSON.parse(
+      readFileSync(resolve(process.cwd(), 'src/modules/finoo_affiliates/i18n/en.json'), 'utf8'),
+    ) as Record<string, string>
+    expect(polish['finooAffiliates.common.close']).toBe('Zamknij')
+    expect(polish['finooAffiliates.payouts.confirmWarning']).toBe(
+      'Potwierdź wyłącznie wtedy, gdy płatność została faktycznie wykonana.',
+    )
+    expect(polish['finooAffiliates.portal.dashboard.loadError']).toBe(
+      'Nie udało się załadować danych panelu.',
+    )
+    expect(polish['finooAffiliates.portal.leads.landingPage']).toBe('Strona docelowa')
+    expect(polish['finooAffiliates.portal.leads.initialReferrer']).toBe('Pierwsze źródło wejścia')
+
+    const untranslatedPortalKeys = Object.keys(polish).filter(
+      (key) => key.includes('.portal.') && polish[key] === english[key],
+    )
+    expect(untranslatedPortalKeys).toEqual([])
+  })
 })
