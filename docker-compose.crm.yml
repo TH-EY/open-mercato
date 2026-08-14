@@ -16,6 +16,15 @@ services:
     volumes:
       - crm_init_marker:/tmp/init-marker
       - crm_attachments_storage:/app/apps/mercato/storage
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-eu-west-2}
+        awslogs-group: /openmercato/crm/app
+        awslogs-create-group: "false"
+        tag: "{{.Name}}/{{.ID}}"
+        mode: non-blocking
+        max-buffer-size: 8m
     environment:
       NODE_ENV: production
       DEPLOY_ENV: crm-they-dev
@@ -77,6 +86,15 @@ services:
     image: opencode-mvp
     container_name: mercato-crm-opencode
     restart: unless-stopped
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-eu-west-2}
+        awslogs-group: /openmercato/crm/opencode
+        awslogs-create-group: "false"
+        tag: "{{.Name}}/{{.ID}}"
+        mode: non-blocking
+        max-buffer-size: 8m
     environment:
       # Unified AI provider/model selection. OM_AI_* wins; OPENCODE_* stays
       # as a BC fallback resolved by the opencode entrypoint script.
@@ -129,6 +147,15 @@ services:
         sh /app/docker/scripts/mcp-entrypoint.sh
     volumes:
       - crm_mcp_shared:/run/mcp-shared
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-eu-west-2}
+        awslogs-group: /openmercato/crm/mcp
+        awslogs-create-group: "false"
+        tag: "{{.Name}}/{{.ID}}"
+        mode: non-blocking
+        max-buffer-size: 8m
     environment:
       NODE_ENV: development
       NODE_OPTIONS: ${MCP_NODE_OPTIONS:---max-old-space-size=2048}
@@ -190,6 +217,15 @@ services:
       - -c
       - yarn mercato queue worker --all
     working_dir: /app/apps/mercato
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-eu-west-2}
+        awslogs-group: /openmercato/crm/worker
+        awslogs-create-group: "false"
+        tag: "{{.Name}}/{{.ID}}"
+        mode: non-blocking
+        max-buffer-size: 8m
     environment:
       NODE_ENV: production
       DEPLOY_ENV: crm-they-dev
@@ -237,6 +273,15 @@ services:
     restart: unless-stopped
     volumes:
       - crm_redis_data:/data
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-eu-west-2}
+        awslogs-group: /openmercato/crm/redis
+        awslogs-create-group: "false"
+        tag: "{{.Name}}/{{.ID}}"
+        mode: non-blocking
+        max-buffer-size: 8m
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -255,6 +300,15 @@ services:
       MEILI_NO_ANALYTICS: "true"
     volumes:
       - crm_meilisearch_data:/meili_data
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-eu-west-2}
+        awslogs-group: /openmercato/crm/meilisearch
+        awslogs-create-group: "false"
+        tag: "{{.Name}}/{{.ID}}"
+        mode: non-blocking
+        max-buffer-size: 8m
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7700/health"]
       interval: 10s

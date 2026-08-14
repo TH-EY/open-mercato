@@ -3,6 +3,32 @@ data "aws_iam_role" "github_deploy" {
   name = var.github_deploy_role_name
 }
 
+data "aws_secretsmanager_secret" "openrouter_api_key" {
+  name = "${var.name_prefix}/openrouter-api-key"
+}
+
+data "aws_secretsmanager_secret" "mcpserver_api_key" {
+  name = "${var.name_prefix}/mcpserver_api_key"
+}
+
+locals {
+  crm_runtime_tags = {
+    Environment = "production"
+    Lifecycle   = "permanent"
+    Owner       = "they.dev"
+    Workload    = "crm"
+  }
+
+  crm_sensitive_data_identifiers = [
+    "arn:aws:dataprotection::aws:data-identifier/AwsSecretKey",
+    "arn:aws:dataprotection::aws:data-identifier/EmailAddress",
+    "arn:aws:dataprotection::aws:data-identifier/OpenSshPrivateKey",
+    "arn:aws:dataprotection::aws:data-identifier/PgpPrivateKey",
+    "arn:aws:dataprotection::aws:data-identifier/PkcsPrivateKey",
+    "arn:aws:dataprotection::aws:data-identifier/PuttyPrivateKey"
+  ]
+}
+
 data "aws_ami" "ubuntu_amd64" {
   most_recent = true
   owners      = ["099720109477"]
@@ -154,24 +180,25 @@ resource "aws_db_parameter_group" "crm" {
 }
 
 resource "aws_db_instance" "crm" {
-  identifier                = "${var.name_prefix}-postgres"
-  engine                    = "postgres"
-  engine_version            = "17.9"
-  instance_class            = var.db_instance_class
-  allocated_storage         = var.db_allocated_storage_gb
-  storage_type              = "gp3"
-  storage_encrypted         = true
-  db_name                   = "openmercato"
-  username                  = "openmercato"
-  password                  = random_password.db_password.result
-  publicly_accessible       = false
-  deletion_protection       = true
-  backup_retention_period   = var.db_backup_retention_days
-  skip_final_snapshot       = false
-  final_snapshot_identifier = "${var.name_prefix}-final-${formatdate("YYYYMMDDhhmmss", timestamp())}"
-  db_subnet_group_name      = aws_db_subnet_group.crm.name
-  parameter_group_name      = aws_db_parameter_group.crm.name
-  vpc_security_group_ids    = [aws_security_group.db.id]
+  identifier                      = "${var.name_prefix}-postgres"
+  engine                          = "postgres"
+  engine_version                  = "17.9"
+  instance_class                  = var.db_instance_class
+  allocated_storage               = var.db_allocated_storage_gb
+  storage_type                    = "gp3"
+  storage_encrypted               = true
+  db_name                         = "openmercato"
+  username                        = "openmercato"
+  password                        = random_password.db_password.result
+  publicly_accessible             = false
+  deletion_protection             = true
+  backup_retention_period         = var.db_backup_retention_days
+  skip_final_snapshot             = false
+  final_snapshot_identifier       = "${var.name_prefix}-final-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+  db_subnet_group_name            = aws_db_subnet_group.crm.name
+  parameter_group_name            = aws_db_parameter_group.crm.name
+  vpc_security_group_ids          = [aws_security_group.db.id]
+  enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
 
   lifecycle {
     ignore_changes = [final_snapshot_identifier]
@@ -218,6 +245,122 @@ resource "aws_ecr_lifecycle_policy" "app" {
   })
 }
 
+resource "aws_cloudwatch_log_group" "app" {
+  name              = "/openmercato/crm/app"
+  retention_in_days = var.cloudwatch_log_retention_days
+  skip_destroy      = true
+  tags              = local.crm_runtime_tags
+}
+
+resource "aws_cloudwatch_log_group" "worker" {
+  name              = "/openmercato/crm/worker"
+  retention_in_days = var.cloudwatch_log_retention_days
+  skip_destroy      = true
+  tags              = local.crm_runtime_tags
+}
+
+resource "aws_cloudwatch_log_group" "redis" {
+  name              = "/openmercato/crm/redis"
+  retention_in_days = var.cloudwatch_log_retention_days
+  skip_destroy      = true
+  tags              = local.crm_runtime_tags
+}
+
+resource "aws_cloudwatch_log_group" "meilisearch" {
+  name              = "/openmercato/crm/meilisearch"
+  retention_in_days = var.cloudwatch_log_retention_days
+  skip_destroy      = true
+  tags              = local.crm_runtime_tags
+}
+
+resource "aws_cloudwatch_log_group" "mcp" {
+  name              = "/openmercato/crm/mcp"
+  retention_in_days = var.cloudwatch_log_retention_days
+  skip_destroy      = true
+  tags              = local.crm_runtime_tags
+}
+
+resource "aws_cloudwatch_log_group" "opencode" {
+  name              = "/openmercato/crm/opencode"
+  retention_in_days = var.cloudwatch_log_retention_days
+  skip_destroy      = true
+  tags              = local.crm_runtime_tags
+}
+
+resource "aws_cloudwatch_log_group" "host" {
+  name              = "/openmercato/crm/host"
+  retention_in_days = var.cloudwatch_log_retention_days
+  skip_destroy      = true
+  tags              = local.crm_runtime_tags
+}
+
+resource "aws_cloudwatch_log_group" "ssm_deploy" {
+  name              = "/aws/ssm/${var.name_prefix}/deploy"
+  retention_in_days = var.ssm_log_retention_days
+  skip_destroy      = true
+  tags              = local.crm_runtime_tags
+}
+
+resource "aws_cloudwatch_log_group" "rds_postgresql" {
+  name              = "/aws/rds/instance/${var.name_prefix}-postgres/postgresql"
+  retention_in_days = var.cloudwatch_log_retention_days
+  skip_destroy      = true
+  tags              = local.crm_runtime_tags
+}
+
+resource "aws_cloudwatch_log_group" "rds_upgrade" {
+  name              = "/aws/rds/instance/${var.name_prefix}-postgres/upgrade"
+  retention_in_days = var.cloudwatch_log_retention_days
+  skip_destroy      = true
+  tags              = local.crm_runtime_tags
+}
+
+locals {
+  crm_protected_log_groups = {
+    app            = aws_cloudwatch_log_group.app.name
+    worker         = aws_cloudwatch_log_group.worker.name
+    redis          = aws_cloudwatch_log_group.redis.name
+    meilisearch    = aws_cloudwatch_log_group.meilisearch.name
+    mcp            = aws_cloudwatch_log_group.mcp.name
+    opencode       = aws_cloudwatch_log_group.opencode.name
+    host           = aws_cloudwatch_log_group.host.name
+    ssm_deploy     = aws_cloudwatch_log_group.ssm_deploy.name
+    rds_postgresql = aws_cloudwatch_log_group.rds_postgresql.name
+    rds_upgrade    = aws_cloudwatch_log_group.rds_upgrade.name
+  }
+}
+
+resource "aws_cloudwatch_log_data_protection_policy" "crm" {
+  for_each = local.crm_protected_log_groups
+
+  log_group_name = each.value
+  policy_document = jsonencode({
+    Name        = "crm-${each.key}-sensitive-data"
+    Description = "Audit and mask common credentials and email addresses in CRM operational logs."
+    Version     = "2021-06-01"
+    Statement = [
+      {
+        Sid            = "AuditSensitiveData"
+        DataIdentifier = local.crm_sensitive_data_identifiers
+        Operation = {
+          Audit = {
+            FindingsDestination = {}
+          }
+        }
+      },
+      {
+        Sid            = "MaskSensitiveData"
+        DataIdentifier = local.crm_sensitive_data_identifiers
+        Operation = {
+          Deidentify = {
+            MaskConfig = {}
+          }
+        }
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role" "instance" {
   name = "${var.name_prefix}-ec2-role"
 
@@ -255,7 +398,9 @@ resource "aws_iam_role_policy" "runtime" {
           aws_secretsmanager_secret.jwt_secret.arn,
           aws_secretsmanager_secret.encryption_key.arn,
           aws_secretsmanager_secret.meilisearch_master_key.arn,
-          aws_secretsmanager_secret.admin_password.arn
+          aws_secretsmanager_secret.admin_password.arn,
+          data.aws_secretsmanager_secret.openrouter_api_key.arn,
+          data.aws_secretsmanager_secret.mcpserver_api_key.arn
         ]
       },
       {
@@ -267,7 +412,8 @@ resource "aws_iam_role_policy" "runtime" {
           aws_ssm_parameter.admin_email.arn,
           aws_ssm_parameter.deploy_repo_url.arn,
           aws_ssm_parameter.deploy_branch.arn,
-          aws_ssm_parameter.app_image.arn
+          aws_ssm_parameter.app_image.arn,
+          aws_ssm_parameter.cloudwatch_agent_config.arn
         ]
       },
       {
@@ -286,6 +432,33 @@ resource "aws_iam_role_policy" "runtime" {
           "ecr:DescribeImages"
         ]
         Resource = aws_ecr_repository.app.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:DescribeLogGroups"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:DescribeLogStreams",
+          "logs:PutLogEvents"
+        ]
+        Resource = flatten([
+          for log_group in [
+            aws_cloudwatch_log_group.app,
+            aws_cloudwatch_log_group.worker,
+            aws_cloudwatch_log_group.redis,
+            aws_cloudwatch_log_group.meilisearch,
+            aws_cloudwatch_log_group.mcp,
+            aws_cloudwatch_log_group.opencode,
+            aws_cloudwatch_log_group.host,
+            aws_cloudwatch_log_group.ssm_deploy
+          ] : [log_group.arn, "${log_group.arn}:*"]
+        ])
       }
     ]
   })
@@ -394,6 +567,76 @@ resource "aws_ssm_parameter" "admin_email" {
   name  = "/${var.name_prefix}/runtime/admin-email"
   type  = "String"
   value = var.admin_email
+}
+
+resource "aws_ssm_parameter" "cloudwatch_agent_config" {
+  name        = "/${var.name_prefix}/cloudwatch-agent/config"
+  description = "CloudWatch Agent logs-only config for crm.they.dev"
+  type        = "String"
+  value = jsonencode({
+    agent = {
+      run_as_user = "root"
+    }
+    logs = {
+      logs_collected = {
+        files = {
+          collect_list = [
+            {
+              file_path       = "/var/log/syslog"
+              log_group_name  = aws_cloudwatch_log_group.host.name
+              log_stream_name = "{instance_id}/syslog"
+              timezone        = "UTC"
+            },
+            {
+              file_path       = "/var/log/auth.log"
+              log_group_name  = aws_cloudwatch_log_group.host.name
+              log_stream_name = "{instance_id}/auth"
+              timezone        = "UTC"
+            }
+          ]
+        }
+      }
+    }
+  })
+}
+
+resource "aws_ssm_association" "cloudwatch_agent_package" {
+  name                             = "AWS-ConfigureAWSPackage"
+  wait_for_success_timeout_seconds = 600
+
+  parameters = {
+    action  = "Install"
+    name    = "AmazonCloudWatchAgent"
+    version = "latest"
+  }
+
+  targets {
+    key    = "tag:Name"
+    values = [var.name_prefix]
+  }
+}
+
+resource "aws_ssm_association" "cloudwatch_agent_config" {
+  name                             = "AmazonCloudWatch-ManageAgent"
+  wait_for_success_timeout_seconds = 300
+
+  parameters = {
+    action                        = "configure"
+    mode                          = "ec2"
+    optionalConfigurationSource   = "ssm"
+    optionalConfigurationLocation = aws_ssm_parameter.cloudwatch_agent_config.name
+    optionalRestart               = "yes"
+  }
+
+  targets {
+    key    = "tag:Name"
+    values = [var.name_prefix]
+  }
+
+  depends_on = [
+    aws_iam_role_policy.runtime,
+    aws_ssm_association.cloudwatch_agent_package
+  ]
 }
 
 resource "aws_iam_role_policy" "github_deploy" {

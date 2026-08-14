@@ -122,6 +122,18 @@ variable "db_backup_retention_days" {
   default     = 7
 }
 
+variable "cloudwatch_log_retention_days" {
+  type        = number
+  description = "CloudWatch Logs retention for CRM container, host, and RDS logs."
+  default     = 30
+}
+
+variable "ssm_log_retention_days" {
+  type        = number
+  description = "CloudWatch Logs retention for CRM deployment and diagnostic SSM output."
+  default     = 14
+}
+
 variable "deploy_repo_url" {
   type        = string
   description = "Git repository cloned by the CRM host deploy script."

@@ -14,6 +14,7 @@ require_cmd jq
 export AWS_PAGER=""
 AWS_REGION="${AWS_REGION:-eu-west-2}"
 NAME_PREFIX="${NAME_PREFIX:-openmercato-crm-they-dev}"
+SSM_CLOUDWATCH_LOG_GROUP="${SSM_CLOUDWATCH_LOG_GROUP:-/aws/ssm/${NAME_PREFIX}/deploy}"
 BRANCH="${BRANCH:-fork/crm-they-dev}"
 DEPLOY_MODE="${DEPLOY_MODE:-full}"
 APP_IMAGE="${APP_IMAGE:-}"
@@ -151,11 +152,13 @@ wait_for_local_login() {
 }
 
 if [[ "$deploy_mode" == "config-restart" ]]; then
-  echo "Config-only CRM deploy: skipping image pull and recreating app/worker with existing image."
-  docker compose --env-file .env.crm -f docker-compose.crm.yml up -d --no-build --force-recreate app worker
+  echo "Config-only CRM deploy: skipping image pull and recreating the active CRM services with existing images."
+  active_services=(app worker mcp redis meilisearch)
+  docker compose --env-file .env.crm -f docker-compose.crm.yml up -d --no-build --force-recreate "${active_services[@]}"
 else
-  docker compose --env-file .env.crm -f docker-compose.crm.yml pull
-  docker compose --env-file .env.crm -f docker-compose.crm.yml up -d --remove-orphans
+  active_services=(app worker mcp redis meilisearch)
+  docker compose --env-file .env.crm -f docker-compose.crm.yml pull "${active_services[@]}"
+  docker compose --env-file .env.crm -f docker-compose.crm.yml up -d --no-build --remove-orphans "${active_services[@]}"
 fi
 wait_for_local_login
 
@@ -176,6 +179,7 @@ COMMAND_ID="$(aws ssm send-command \
   --document-name AWS-RunShellScript \
   --comment "Deploy Open Mercato CRM" \
   --parameters "${COMMANDS_JSON}" \
+  --cloud-watch-output-config "CloudWatchOutputEnabled=true,CloudWatchLogGroupName=${SSM_CLOUDWATCH_LOG_GROUP}" \
   --query 'Command.CommandId' \
   --output text)"
 
