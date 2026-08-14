@@ -466,7 +466,7 @@ No existing table/column, type, function signature, import path, event ID, injec
 
 Migrations are generated from ORM entities with `corepack yarn db:generate`; no migration is handwritten. They contain only additive table/index/constraint statements and no backfill. Do not run `db:migrate` locally without explicit approval. If generation emits unrelated WMS drift, preserve the unrelated source and apply the repository's generated-migration cleanup rule.
 
-Deployment is private and requires a database restore point, migration diff read-back, exact artifact provenance, safe rollback, and explicit preservation of the existing CTO password. No deployment occurs from this spec phase.
+Deployment is private and requires a database restore point, migration diff read-back, exact artifact provenance, safe rollback, and explicit preservation of the existing CTO password. The FINOO image must be built with `NEXT_PUBLIC_OM_PORTAL_ALLOW_SELF_REGISTRATION=false` as an explicit Docker build argument, because this public flag is compiled into the portal client bundle; setting it only on the runtime container does not hide registration links. Runtime configuration must repeat the same value, and headed acceptance must confirm that registration links are absent while signup POST remains unavailable. No deployment occurs from this spec phase.
 
 ## Implementation Plan
 
