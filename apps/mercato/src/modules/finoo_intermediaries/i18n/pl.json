@@ -44,7 +44,7 @@
       },
       "activities": {
         "title": "Aktywności",
-        "empty": "Brak udostępnionych aktywności."
+        "empty": "Brak publicznych aktywności."
       },
       "errors": {
         "load": "Nie udało się pobrać przypisanych spraw.",
