@@ -115,7 +115,7 @@ services:
 
   mcp:
     image: ${APP_IMAGE}
-    container_name: mercato-crm-mcp
+    container_name: openmercato-crm-mcp
     restart: unless-stopped
     user: "0"
     command:
@@ -133,6 +133,8 @@ services:
       NODE_ENV: development
       NODE_OPTIONS: ${MCP_NODE_OPTIONS:---max-old-space-size=2048}
       DEPLOY_ENV: crm-they-dev
+      DB_SSL: "true"
+      DB_SSL_REJECT_UNAUTHORIZED: "false"
       DATABASE_URL: ${DATABASE_URL}
       CACHE_REDIS_URL: redis://redis:6379
       CACHE_STRATEGY: redis
