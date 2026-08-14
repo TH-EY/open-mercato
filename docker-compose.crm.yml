@@ -130,14 +130,14 @@ services:
     environment:
       NODE_ENV: development
       NODE_OPTIONS: ${MCP_NODE_OPTIONS:---max-old-space-size=2048}
-      DEPLOY_ENV: ${DEPLOY_ENV:-local}
-      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@mercato-postgres-${DEPLOY_ENV:-local}:5432/${POSTGRES_DB:-open-mercato}
-      CACHE_REDIS_URL: redis://mercato-redis-${DEPLOY_ENV:-local}:6379
+      DEPLOY_ENV: crm-they-dev
+      DATABASE_URL: ${DATABASE_URL}
+      CACHE_REDIS_URL: redis://redis:6379
       CACHE_STRATEGY: redis
       AUTO_SPAWN_WORKERS: "false"
       AUTO_SPAWN_SCHEDULER: "false"
-      MEILISEARCH_HOST: http://mercato-meilisearch-${DEPLOY_ENV:-local}:7700
-      MEILISEARCH_API_KEY: ${MEILISEARCH_MASTER_KEY:-meilisearch-dev-key}
+      MEILISEARCH_HOST: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILISEARCH_MASTER_KEY}
       JWT_SECRET: ${JWT_SECRET:-JWT}
       # Code Mode api.request() must call back into the app over service DNS.
       # NEXT_PUBLIC_* are pinned so a stray .env cannot hijack the base URL.
