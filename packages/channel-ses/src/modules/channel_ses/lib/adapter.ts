@@ -18,8 +18,11 @@ import {
   stringOrUndefined,
   toAddressList,
 } from '@open-mercato/core/modules/communication_channels/lib/email-mime'
+import { createLogger } from '@open-mercato/shared/lib/logger'
 import { sesCapabilities } from '../capabilities'
 import { resolveSesClientCredentials, sesCredentialsSchema } from './credentials'
+
+const logger = createLogger('channel_ses')
 
 type SesAttachment = {
   filename: string
@@ -44,6 +47,56 @@ type SesMailOptions = Parameters<ReturnType<typeof nodemailer.createTransport>['
   ses?: {
     ConfigurationSetName?: string
   }
+}
+
+type SesProviderErrorCategory = 'authorization' | 'credentials' | 'throttling' | 'configuration' | 'provider'
+
+const knownSesProviderErrorTokens = new Set([
+  'AccessDeniedException',
+  'AccountSuspendedException',
+  'BadRequestException',
+  'ConfigurationSetDoesNotExistException',
+  'CredentialsProviderError',
+  'EAI_AGAIN',
+  'ECONNECTION',
+  'ECONNRESET',
+  'ENOTFOUND',
+  'ESES',
+  'ETIMEDOUT',
+  'ExpiredTokenException',
+  'InvalidParameterValue',
+  'InvalidSignatureException',
+  'MailFromDomainNotVerifiedException',
+  'MessageRejected',
+  'NotFoundException',
+  'SendingPausedException',
+  'ThrottlingException',
+  'TooManyRequestsException',
+  'UnauthorizedException',
+  'UnrecognizedClientException',
+])
+
+function knownErrorToken(value: unknown, fallback: string): string {
+  return typeof value === 'string' && knownSesProviderErrorTokens.has(value) ? value : fallback
+}
+
+function classifySesProviderError(error: unknown): {
+  errorName: string
+  errorCode: string
+  category: SesProviderErrorCategory
+} {
+  const record = error && typeof error === 'object' ? error as Record<string, unknown> : {}
+  const errorName = knownErrorToken(record.name, 'UnknownProviderError')
+  const errorCode = knownErrorToken(record.code, 'UNKNOWN')
+  const classificationToken = `${errorName}:${errorCode}`.toLowerCase()
+  let category: SesProviderErrorCategory = 'provider'
+
+  if (/accessdenied|unauthorized/.test(classificationToken)) category = 'authorization'
+  else if (/credential|expiredtoken|invalidsignature|unrecognizedclient/.test(classificationToken)) category = 'credentials'
+  else if (/throttl|toomanyrequests/.test(classificationToken)) category = 'throttling'
+  else if (/invalidparameter|messagerejected|mailfromdomainnotverified/.test(classificationToken)) category = 'configuration'
+
+  return { errorName, errorCode, category }
 }
 
 function attachmentsFromMeta(value: unknown): SesAttachment[] | undefined {
@@ -110,7 +163,8 @@ class SesChannelAdapter implements ChannelAdapter {
         status: 'sent',
         metadata: info.response ? { response: info.response } : undefined,
       }
-    } catch {
+    } catch (error) {
+      logger.error('channel_ses SES send failed', classifySesProviderError(error))
       return { externalMessageId: '', status: 'failed', error: 'SES_SEND_FAILED' }
     }
   }

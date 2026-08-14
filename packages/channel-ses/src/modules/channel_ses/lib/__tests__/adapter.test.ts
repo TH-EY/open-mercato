@@ -4,6 +4,7 @@ var sendMailMock: jest.Mock
 var createTransportMock: jest.Mock
 var SESv2ClientMock: jest.Mock
 var SendEmailCommandMock: jest.Mock
+var loggerErrorMock: jest.Mock
 
 jest.mock('nodemailer', () => {
   sendMailMock = jest.fn().mockResolvedValue({ messageId: 'ses-1', response: 'ok' })
@@ -20,6 +21,19 @@ jest.mock('@aws-sdk/client-sesv2', () => {
   }
 })
 
+jest.mock('@open-mercato/shared/lib/logger', () => {
+  loggerErrorMock = jest.fn()
+  return {
+    createLogger: jest.fn(() => ({
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: loggerErrorMock,
+      child: jest.fn(),
+    })),
+  }
+})
+
 describe('SesChannelAdapter', () => {
   const originalEnv = process.env
 
@@ -29,6 +43,7 @@ describe('SesChannelAdapter', () => {
     createTransportMock.mockClear()
     SESv2ClientMock.mockClear()
     SendEmailCommandMock.mockClear()
+    loggerErrorMock.mockClear()
   })
 
   afterEach(() => {
@@ -76,7 +91,12 @@ describe('SesChannelAdapter', () => {
   })
 
   it('returns a failed result when the SES transport rejects', async () => {
-    sendMailMock.mockRejectedValueOnce(new Error('temporary outage'))
+    sendMailMock.mockRejectedValueOnce({
+      name: 'AccessDeniedException',
+      code: 'ESES',
+      message: 'secret/request payload marker',
+      request: { credentials: 'must-not-be-logged' },
+    })
     const adapter = getSesChannelAdapter()
 
     const result = await adapter.sendMessage({
@@ -90,6 +110,37 @@ describe('SesChannelAdapter', () => {
       status: 'failed',
       error: 'SES_SEND_FAILED',
     }))
+    expect(loggerErrorMock).toHaveBeenCalledWith('channel_ses SES send failed', {
+      errorName: 'AccessDeniedException',
+      errorCode: 'ESES',
+      category: 'authorization',
+    })
+    expect(JSON.stringify(loggerErrorMock.mock.calls)).not.toContain('secret/request payload marker')
+    expect(JSON.stringify(loggerErrorMock.mock.calls)).not.toContain('must-not-be-logged')
+  })
+
+  it.each([
+    ['AKIAEXAMPLECREDENTIAL', 'OpaqueSecretToken123456'],
+    ['user@example.com', 'request-123'],
+    ['AccessDeniedException\nforged', 'ESES\nforged'],
+  ])('redacts unknown provider error identifiers', async (name, code) => {
+    sendMailMock.mockRejectedValueOnce({ name, code })
+    const adapter = getSesChannelAdapter()
+
+    await adapter.sendMessage({
+      content: { text: 'Hello' },
+      credentials: { region: 'eu-west-2', fromAddress: 'from@example.com' },
+      scope: { tenantId: 'tenant', organizationId: 'org' },
+      metadata: { to: ['user@example.com'], subject: 'Hello' },
+    })
+
+    expect(loggerErrorMock).toHaveBeenCalledWith('channel_ses SES send failed', {
+      errorName: 'UnknownProviderError',
+      errorCode: 'UNKNOWN',
+      category: 'provider',
+    })
+    expect(JSON.stringify(loggerErrorMock.mock.calls)).not.toContain(name)
+    expect(JSON.stringify(loggerErrorMock.mock.calls)).not.toContain(code)
   })
 
   it('uses dedicated credentials only when the channel explicitly opts in', async () => {
