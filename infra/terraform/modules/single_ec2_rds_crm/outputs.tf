@@ -14,6 +14,10 @@ output "target_group_arn" {
   value = aws_lb_target_group.app.arn
 }
 
+output "mcp_target_group_arn" {
+  value = aws_lb_target_group.mcp.arn
+}
+
 output "ecr_repository_url" {
   value = aws_ecr_repository.app.repository_url
 }

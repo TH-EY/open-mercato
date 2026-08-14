@@ -77,7 +77,13 @@ variable "https_listener_arn" {
 
 variable "listener_rule_priority" {
   type        = number
-  description = "Dedicated they-lb listener priority for crm.they.dev."
+  description = "Fallback they-lb listener priority for crm.they.dev application traffic."
+  default     = 1003
+}
+
+variable "mcp_listener_rule_priority" {
+  type        = number
+  description = "Higher-priority they-lb listener rule for the public MCP path."
   default     = 1002
 }
 
@@ -102,6 +108,12 @@ variable "app_port" {
   type        = number
   description = "Host port exposed to the ALB target group."
   default     = 3001
+}
+
+variable "mcp_port" {
+  type        = number
+  description = "Host port exposed to the dedicated MCP target group."
+  default     = 3002
 }
 
 variable "db_instance_class" {

@@ -14,6 +14,10 @@ output "target_group_arn" {
   value = module.crm.target_group_arn
 }
 
+output "mcp_target_group_arn" {
+  value = module.crm.mcp_target_group_arn
+}
+
 output "ecr_repository_url" {
   value = module.crm.ecr_repository_url
 }
