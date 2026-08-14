@@ -311,7 +311,7 @@ jobs:
             exit 0
           fi
 
-          docker compose --env-file .env.crm -f docker-compose.crm.yml up -d --no-build --remove-orphans --force-recreate app worker
+          docker compose --env-file .env.crm -f docker-compose.crm.yml up -d --no-build --remove-orphans --force-recreate app worker mcp opencode
           docker ps --filter name=openmercato-crm --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
           SSM
           } | bash scripts/crm/ssm-run-step.sh
