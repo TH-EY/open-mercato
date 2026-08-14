@@ -158,8 +158,6 @@ services:
       MCP_WAIT_FOR_APP_TIMEOUT: ${MCP_WAIT_FOR_APP_TIMEOUT:-1800}
       MCP_DEBUG: ${MCP_DEBUG:-false}
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
       meilisearch:
