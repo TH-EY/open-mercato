@@ -65,7 +65,7 @@ services:
       OM_AI_CATALOG_PROVIDER: ${OM_AI_CATALOG_PROVIDER:-}
       OM_AI_CATALOG_MODEL: ${OM_AI_CATALOG_MODEL:-}
       OPENCODE_URL: ${OPENCODE_URL:-http://opencode:4096}
-      MCP_URL: ${MCP_URL:-http://mcp:3002}
+      MCP_URL: ${MCP_URL:-https://crm.they.dev/mcp}
     depends_on:
       redis:
         condition: service_healthy
