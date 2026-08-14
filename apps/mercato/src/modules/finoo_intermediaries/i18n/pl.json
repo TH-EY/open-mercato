@@ -1,0 +1,74 @@
+{
+  "finoo_intermediaries": {
+    "fields": {
+      "companyName": "Firma",
+      "companyPhone": "Telefon firmy",
+      "personMobile": "Telefon osoby",
+      "personEmail": "E-mail osoby",
+      "turnover": "Obrót",
+      "businessStartDate": "Data rozpoczęcia działalności",
+      "arrears": "Zaległości",
+      "industry": "Branża",
+      "partnerStatus": "Status partnera"
+    },
+    "status": {
+      "new": "Nowe",
+      "in_progress": "W trakcie",
+      "done": "Zakończone",
+      "advance": {
+        "in_progress": "Rozpocznij pracę",
+        "done": "Oznacz jako zakończone"
+      }
+    },
+    "portal": {
+      "nav": { "deals": "Przypisane sprawy" },
+      "deals": {
+        "label": "Pośrednik",
+        "title": "Przypisane sprawy",
+        "emptyTitle": "Brak przypisanych spraw",
+        "emptyDescription": "Tutaj pojawią się kwalifikujące sprawy przypisane do Ciebie."
+      },
+      "deal": {
+        "label": "Przypisana sprawa",
+        "title": "Szczegóły sprawy",
+        "untitled": "Szczegóły sprawy"
+      },
+      "status": { "updated": "Status partnera został zaktualizowany." },
+      "notes": {
+        "title": "Prywatne notatki",
+        "add": "Dodaj notatkę",
+        "edit": "Edytuj notatkę",
+        "saved": "Notatka została zapisana.",
+        "empty": "Brak notatek.",
+        "deleteConfirm": "Usunąć tę notatkę?"
+      },
+      "activities": {
+        "title": "Aktywności",
+        "empty": "Brak publicznych aktywności."
+      },
+      "errors": {
+        "load": "Nie udało się pobrać przypisanych spraw.",
+        "loadDetail": "Nie udało się pobrać szczegółów sprawy.",
+        "blocked": "Operacja została zablokowana przez walidację."
+      },
+      "retryAvailable": "Zablokowaną operację można ponowić po rozwiązaniu konfliktu."
+    },
+    "staff": {
+      "tabLabel": "Pośrednik",
+      "currentStatus": "Status partnera",
+      "unassignedState": "Nieprzypisane",
+      "intermediary": "Pośrednik",
+      "selectIntermediary": "Wybierz pośrednika",
+      "reassignConfirm": "Przekazać tę sprawę wybranemu pośrednikowi?",
+      "unassign": "Usuń przypisanie",
+      "unassignConfirm": "Usunąć przypisanie pośrednika?",
+      "saved": "Przypisanie pośrednika zostało zapisane.",
+      "unassigned": "Przypisanie pośrednika zostało usunięte.",
+      "blocked": "Zmiana przypisania została zablokowana.",
+      "loadError": "Nie udało się pobrać przypisania pośrednika.",
+      "missingDeal": "Kontekst sprawy jest niedostępny.",
+      "notesTitle": "Notatki partnera",
+      "notesEmpty": "Brak notatek partnera."
+    }
+  }
+}

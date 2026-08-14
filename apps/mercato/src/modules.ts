@@ -128,6 +128,7 @@ export const enabledModules: ModuleEntry[] = [
   { id: 'webhooks', from: '@open-mercato/webhooks' },
   { id: 'customer_accounts', from: '@open-mercato/core' },
   { id: 'portal', from: '@open-mercato/core' },
+  { id: 'finoo_intermediaries', from: '@app' },
   {
     id: 'finoo_affiliates',
     from: '@app',
