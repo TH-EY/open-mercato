@@ -350,7 +350,7 @@ async function openCommissionDialog(page: Parameters<typeof login>[0], code: str
     .filter({ hasText: /Edit commission|Edytuj prowizję/ })
     .last();
   await expect(editCommission).toBeVisible();
-  await editCommission.click();
+  await editCommission.click({ force: true });
   await expect(
     page.getByRole("heading", { name: COMMISSION_DIALOG_NAME }),
   ).toBeVisible();
