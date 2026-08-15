@@ -344,7 +344,6 @@ async function openCommissionDialog(page: Parameters<typeof login>[0], code: str
   ).toBeVisible();
   const row = page.getByRole("row", { name: new RegExp(code) });
   const actions = row.getByRole("button", { name: /Open actions|Otwórz akcje/ });
-  await actions.scrollIntoViewIfNeeded();
   await actions.click();
   const editCommission = page
     .locator('[role="menuitem"]:visible')
