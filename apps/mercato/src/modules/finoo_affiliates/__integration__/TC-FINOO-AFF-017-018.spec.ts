@@ -10,6 +10,8 @@ import {
   createCustomerUserFixture,
   deleteCustomerRoleFixture,
   deleteCustomerUserFixture,
+  portalCookieHeaders,
+  portalLogin,
   type CustomerUserFixture,
 } from "@open-mercato/core/helpers/integration/customerAccountsFixtures";
 import {
@@ -328,18 +330,28 @@ async function readTransaction(
     : null;
 }
 
+async function countTransactions(client: DbClient, dealId: string): Promise<number> {
+  const result = await client.query<{ count: string }>(
+    "select count(*)::text as count from finoo_affiliate_transactions where deal_id = $1",
+    [dealId],
+  );
+  return Number(result.rows[0]?.count ?? 0);
+}
+
 async function openCommissionDialog(page: Parameters<typeof login>[0], code: string) {
   await expect(
     page.getByRole("button", { name: /Invite affiliate|Zaproś/ }),
   ).toBeVisible();
   const row = page.getByRole("row", { name: new RegExp(code) });
   const actions = row.getByRole("button", { name: /Open actions|Otwórz akcje/ });
-  await actions.click({ force: true });
-  const editCommission = page.getByRole("menuitem", {
-    name: /Edit commission|Edytuj prowizję/,
-  });
+  await actions.scrollIntoViewIfNeeded();
+  await actions.click();
+  const editCommission = page
+    .locator('[role="menuitem"]:visible')
+    .filter({ hasText: /Edit commission|Edytuj prowizję/ })
+    .last();
   await expect(editCommission).toBeVisible();
-  await editCommission.click({ force: true });
+  await editCommission.click();
   await expect(
     page.getByRole("heading", { name: COMMISSION_DIALOG_NAME }),
   ).toBeVisible();
@@ -609,6 +621,107 @@ test.describe("TC-FINOO-AFF-017..018: affiliate commission persistence and UI", 
         commissionBaseAmount: null,
       });
 
+      const fixedSnapshot = await readTransaction(client, fixedDealId);
+      await updateDealStage(
+        request,
+        client,
+        token,
+        fixedDealId,
+        pipelineId,
+        openStageId,
+      );
+      await updateDealStage(
+        request,
+        client,
+        token,
+        fixedDealId,
+        pipelineId,
+        acceptedStageId,
+      );
+      await expect.poll(() => countTransactions(client, fixedDealId)).toBe(1);
+      expect(await readTransaction(client, fixedDealId)).toEqual(fixedSnapshot);
+
+      const portalSession = await portalLogin(request, {
+        email: affiliate.user.email,
+        password: affiliate.user.password,
+        tenantId: scope.tenantId,
+      });
+      const portalLeadsResponse = await request.get(
+        resolveUrl("/api/finoo_affiliates/portal/leads?page=1&pageSize=100"),
+        { headers: portalCookieHeaders(portalSession) },
+      );
+      expect(portalLeadsResponse.status()).toBe(200);
+      const portalLeads = await readJsonSafe<{
+        items?: Array<Record<string, unknown> & {
+          dealId?: string;
+          affiliateTransactionAmount?: number | null;
+        }>;
+      }>(portalLeadsResponse);
+      const percentagePortalLead = portalLeads?.items?.find(
+        (item) => item.dealId === percentageDealId,
+      );
+      expect(percentagePortalLead).toMatchObject({
+        affiliateTransactionAmount: 125,
+      });
+      expect(percentagePortalLead).not.toHaveProperty("commissionMode");
+      expect(percentagePortalLead).not.toHaveProperty("commissionRateBps");
+      expect(percentagePortalLead).not.toHaveProperty("commissionFixedAmount");
+      expect(percentagePortalLead).not.toHaveProperty("commissionBaseAmount");
+
+      const hiddenAffiliateId = randomUUID();
+      const hiddenOrganizationId = randomUUID();
+      const hiddenCode = randomUUID().replaceAll("-", "").slice(0, 24).toUpperCase();
+      await client.query(
+        `insert into finoo_affiliates
+           (id, organization_id, tenant_id, email, email_hash, code, is_active, created_at, updated_at)
+         select $1, $2, tenant_id, email, email_hash || '-other', $3, true, now(), now()
+           from finoo_affiliates where id = $4`,
+        [hiddenAffiliateId, hiddenOrganizationId, hiddenCode, affiliate.id],
+      );
+      try {
+        const isolatedList = await apiRequest(
+          request,
+          "GET",
+          `/api/finoo_affiliates/affiliates?search=${hiddenCode}`,
+          { token },
+        );
+        expect(isolatedList.status()).toBe(200);
+        expect(await readJsonSafe<{ total?: number }>(isolatedList)).toMatchObject({
+          total: 0,
+        });
+        const crossScopePatch = await request.patch(
+          resolveUrl("/api/finoo_affiliates/affiliates"),
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+              [LOCK_HEADER]: new Date().toISOString(),
+            },
+            data: {
+              id: hiddenAffiliateId,
+              updatedAt: new Date().toISOString(),
+              commissionMode: "fixed",
+              commissionRateBps: null,
+              commissionFixedAmount: 999,
+            },
+          },
+        );
+        expect(crossScopePatch.status()).toBe(404);
+        const hiddenRule = await client.query<{
+          commission_mode: string | null;
+          commission_fixed_amount: number | null;
+        }>(
+          "select commission_mode, commission_fixed_amount from finoo_affiliates where id = $1",
+          [hiddenAffiliateId],
+        );
+        expect(hiddenRule.rows[0]).toEqual({
+          commission_mode: null,
+          commission_fixed_amount: null,
+        });
+      } finally {
+        await client.query("delete from finoo_affiliates where id = $1", [hiddenAffiliateId]);
+      }
+
       const transactionsResponse = await apiRequest(
         request,
         "GET",
@@ -773,6 +886,7 @@ test.describe("TC-FINOO-AFF-017..018: affiliate commission persistence and UI", 
     page,
     request,
   }) => {
+    test.setTimeout(30_000);
     const token = await getAuthToken(request, "admin");
     const tokenContext = getTokenContext(token);
     const scope = {

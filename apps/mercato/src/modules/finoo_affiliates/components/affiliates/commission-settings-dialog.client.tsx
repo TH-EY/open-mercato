@@ -164,7 +164,7 @@ export default function CommissionSettingsDialog({
             {t('finooAffiliates.affiliates.commissionDescription', 'The new rule applies only to future accepted transactions.')}
           </DialogDescription>
         </DialogHeader>
-        <form className="space-y-4" onSubmit={(event) => { void submit(event) }} onKeyDown={handleKeyDown}>
+        <form noValidate className="space-y-4" onSubmit={(event) => { void submit(event) }} onKeyDown={handleKeyDown}>
           <div className="space-y-2">
             <Label htmlFor="affiliate-commission-mode">{t('finooAffiliates.affiliates.commissionMode', 'Commission type')}</Label>
             <Select value={mode} onValueChange={(value) => setMode(value as 'percentage' | 'fixed')} disabled={saving}>

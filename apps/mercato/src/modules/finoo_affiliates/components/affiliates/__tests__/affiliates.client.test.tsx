@@ -23,8 +23,12 @@ jest.mock('@open-mercato/ui/backend/DataTable', () => ({
     data: Array<{ email: string }>
     rowActions?: (row: { email: string }) => React.ReactNode
     pagination?: { onPageChange: (page: number) => void }
+    isLoading?: boolean
+    error?: string | null
   }) => (
     <div>
+      {props.isLoading ? <div>Loading table</div> : null}
+      {props.error ? <div>{props.error}</div> : null}
       {props.actions}
       {props.data.map((row) => <div key={row.email}><span>{row.email}</span>{props.rowActions?.(row)}</div>)}
       <button type="button" onClick={() => props.pagination?.onPageChange(2)}>Next page</button>
@@ -150,5 +154,23 @@ describe('AffiliatesClient', () => {
     await waitFor(() => expect(mockReadApiResult).toHaveBeenCalledWith(
       expect.stringContaining('page=2'),
     ))
+  })
+
+  it('exposes localized loading and generic list error states', async () => {
+    mockApiCall.mockResolvedValue({
+      ok: true,
+      status: 200,
+      result: { ok: false, granted: [] },
+    } as never)
+    let rejectList: ((reason?: unknown) => void) | undefined
+    mockReadApiResult.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      rejectList = reject
+    }))
+
+    render(<AffiliatesClient />)
+
+    expect(screen.getByText('Loading table')).toBeVisible()
+    rejectList?.(new Error('load failed'))
+    expect(await screen.findByText('Unable to load affiliates.')).toBeVisible()
   })
 })

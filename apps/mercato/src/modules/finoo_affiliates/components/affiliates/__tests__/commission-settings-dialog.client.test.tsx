@@ -53,6 +53,23 @@ function renderDialog(rateBps: number) {
   )
 }
 
+function renderFixedDialog(fixedAmount: number) {
+  render(
+    <CommissionSettingsDialog
+      affiliate={{
+        id: 'affiliate-1',
+        email: 'affiliate@example.test',
+        commissionMode: 'fixed',
+        commissionRateBps: null,
+        commissionFixedAmount: fixedAmount,
+        updatedAt: '2026-08-13T00:00:00.000Z',
+      }}
+      onOpenChange={jest.fn()}
+      onSaved={jest.fn()}
+    />,
+  )
+}
+
 describe('CommissionSettingsDialog', () => {
   beforeEach(() => {
     mockRunMutation.mockClear()
@@ -83,5 +100,38 @@ describe('CommissionSettingsDialog', () => {
       commissionRateBps: expectedRateBps,
       commissionFixedAmount: null,
     }))
+  })
+
+  it.each([
+    ['percentage', '0', 'Enter a percentage greater than 0 and at most 100 with up to two decimals.'],
+    ['percentage', '100.001', 'Enter a percentage greater than 0 and at most 100 with up to two decimals.'],
+  ])('rejects invalid %s value %s without sending a mutation', async (_mode, value, message) => {
+    renderDialog(7)
+
+    fireEvent.change(screen.getByLabelText('Percentage'), { target: { value } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText(message)).toBeVisible()
+    expect(mockReadApiResult).not.toHaveBeenCalled()
+  })
+
+  it('shows a localized generic save error and keeps the dialog open', async () => {
+    mockReadApiResult.mockRejectedValueOnce(new Error('save failed'))
+    renderDialog(7)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('Unable to save the affiliate commission rule.')).toBeVisible()
+    expect(screen.getByRole('dialog')).toBeVisible()
+  })
+
+  it.each(['-1', '1.5', '2147483648'])('rejects invalid fixed value %s without sending a mutation', async (value) => {
+    renderFixedDialog(90)
+
+    fireEvent.change(screen.getByLabelText('Fixed commission'), { target: { value } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('Enter a non-negative whole PLN amount.')).toBeVisible()
+    expect(mockReadApiResult).not.toHaveBeenCalled()
   })
 })
