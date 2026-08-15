@@ -77,8 +77,15 @@ export default function AffiliatesClient() {
           setInviteOptions(null)
           return
         }
-        const options = await readApiResultOrThrow<InviteOptions>('/api/finoo_affiliates/invite-options')
-        if (!cancelled) setInviteOptions(options)
+        try {
+          const options = await readApiResultOrThrow<InviteOptions>('/api/finoo_affiliates/invite-options')
+          if (!cancelled) setInviteOptions(options)
+        } catch {
+          if (!cancelled) {
+            setCanInvite(false)
+            setInviteOptions(null)
+          }
+        }
       } catch {
         if (!cancelled) {
           setCanInvite(false)

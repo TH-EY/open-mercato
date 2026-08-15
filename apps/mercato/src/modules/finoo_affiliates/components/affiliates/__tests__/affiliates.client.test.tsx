@@ -140,6 +140,24 @@ describe('AffiliatesClient', () => {
     expect(screen.queryByRole('button', { name: 'Invite affiliate' })).not.toBeInTheDocument()
   })
 
+  it('keeps commission editing available when affiliate invitation setup is unavailable', async () => {
+    mockApiCall.mockResolvedValue({
+      ok: true,
+      status: 200,
+      result: { ok: true, granted: ['finoo_affiliates.manage', 'customer_accounts.invite'] },
+    } as never)
+    mockReadApiResult.mockImplementation(async (url) => {
+      if (url === '/api/finoo_affiliates/invite-options') throw new Error('Affiliate role is not configured')
+      return affiliateList() as never
+    })
+
+    render(<AffiliatesClient />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit commission' }))
+    expect(screen.getByText('Commission dialog for affiliate@example.test')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Invite affiliate' })).not.toBeInTheDocument()
+  })
+
   it('forwards pagination to the scoped list endpoint', async () => {
     mockApiCall.mockResolvedValue({
       ok: true,
