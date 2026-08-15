@@ -344,12 +344,14 @@ async function openCommissionDialog(page: Parameters<typeof login>[0], code: str
   ).toBeVisible();
   const row = page.getByRole("row", { name: new RegExp(code) });
   const actions = row.getByRole("button", { name: /Open actions|Otwórz akcje/ });
-  await actions.click({ force: true });
   const editCommission = page
     .locator('[role="menuitem"]:visible')
     .filter({ hasText: /Edit commission|Edytuj prowizję/ })
     .last();
-  await expect(editCommission).toBeVisible();
+  await expect(async () => {
+    if (!(await editCommission.isVisible())) await actions.click({ force: true });
+    await expect(editCommission).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 5_000 });
   await editCommission.click({ force: true });
   await expect(
     page.getByRole("heading", { name: COMMISSION_DIALOG_NAME }),
