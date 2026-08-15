@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - fork/finoo
-  workflow_dispatch:
 
 concurrency:
   group: om-dokploy-host-deploy
@@ -19,8 +18,36 @@ env:
   FINOO_EMPLOYEE_PASSWORD_SECRET_ID: openmercato-upstream-baseline-dokploy/finoo-demo/employee-password
 
 jobs:
+  first-provision-admission:
+    if: >-
+      github.ref == 'refs/heads/fork/finoo' &&
+      github.event_name == 'push' &&
+      github.event.deleted == false
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      allowed: ${{ steps.admission.outputs.allowed }}
+    steps:
+      - name: Require exact first-provision marker
+        id: admission
+        shell: bash
+        env:
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          allowed=false
+          if [[ "$HEAD_COMMIT_MESSAGE" == *'[finoo:first-provision]'* ]]; then
+            allowed=true
+          fi
+          echo "allowed=${allowed}" >> "$GITHUB_OUTPUT"
+
   deploy-demo:
-    if: github.ref == 'refs/heads/fork/finoo' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.event.deleted == false))
+    needs: first-provision-admission
+    if: >-
+      github.ref == 'refs/heads/fork/finoo' &&
+      github.event_name == 'push' &&
+      github.event.deleted == false &&
+      needs.first-provision-admission.outputs.allowed == 'true'
     runs-on: ubuntu-latest
     environment: production
     permissions:

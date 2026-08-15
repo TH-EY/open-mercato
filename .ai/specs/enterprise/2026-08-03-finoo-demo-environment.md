@@ -12,7 +12,7 @@
 
 **Concerns:**
 - Provisioning touches production-scoped AWS credentials, Secrets Manager, a host-role IAM policy, and shared ALB/EC2 infrastructure. These writes require a fresh identity/target read-back and explicit operator approval.
-- This specification does not provide lifecycle redeployment. A second run fails closed if any Finoo runtime, target group, listener rule, image tag, worktree, or volume already exists.
+- This specification does not provide lifecycle redeployment. A second explicitly marked first-provision attempt fails closed if any Finoo runtime, target group, listener rule, image tag, worktree, or volume already exists; an ordinary baseline push runs only the unprivileged admission job and skips deployment.
 
 ## Overview
 
@@ -26,7 +26,7 @@ There is no Finoo AWS/Docker/ALB/Secrets Manager state. A normal preview is insu
 
 ## Proposed Solution
 
-Create `fork/finoo` from a freshly fetched `upstream/develop` commit and add a branch-bound, first-provision-only workflow with an optional manual dispatch entry point. The workflow builds a `linux/amd64` image, pushes a SHA-tagged immutable image to the existing ECR repository, and supplies only secret identifiers plus commit/image provenance to an SSM script.
+Create `fork/finoo` from a freshly fetched `upstream/develop` commit and add a branch-bound, first-provision-only workflow requiring the literal, case-sensitive `[finoo:first-provision]` marker in the pushed head commit message. An unprivileged admission job converts that exact match to a boolean before the production environment and OIDC-enabled deployment job can start. The deployment job builds a `linux/amd64` image, pushes a SHA-tagged immutable image to the existing ECR repository, and supplies only secret identifiers plus commit/image provenance to an SSM script.
 
 The host reads three independent passwords directly from Secrets Manager, validates a bounded single-line alphabet, and passes them only as transient bootstrap environment variables. The application initialization output is redacted. After all three authenticated role checks pass, the app container is force-recreated without bootstrap passwords and all checks run again. Only then does the workflow create and verify the Finoo ALB target group and listener rule.
 
@@ -34,7 +34,7 @@ The host reads three independent passwords directly from Secrets Manager, valida
 
 | Decision | Rationale |
 |----------|-----------|
-| Branch-bound first-provision-only workflow | Makes the initial branch publication executable while exact absence preflights prevent later pushes or manual dispatches from mutating persistent customer data or credentials. |
+| Branch-bound first-provision-only workflow | Makes an explicitly marked initial branch publication executable while an unprivileged exact-case gate keeps ordinary pushes outside the production environment/OIDC job and exact absence preflights protect intentionally marked retries. |
 | Exact Finoo resource names and port | Makes collision checks and rollback literal and auditable on the shared host. |
 | Secrets Manager values read only on the host | Secret values never enter GitHub expressions, workflow outputs, SSM command parameters, or source control. |
 | Temporary bootstrap container configuration | The initializer requires credentials once; recreating the app removes them from running container configuration and removes the bootstrap container/log artifact. |
@@ -45,7 +45,7 @@ The host reads three independent passwords directly from Secrets Manager, valida
 | Alternative | Why Rejected |
 |-------------|--------------|
 | Reuse the Manoj lifecycle updater | It requires an existing stack and exact existing accounts, which Finoo does not have. |
-| Perform lifecycle deployment on every `fork/finoo` push | It would silently turn a creation task into ongoing mutation of persistent customer state; this workflow instead reruns only fail-closed first-provision admission. |
+| Perform lifecycle deployment on every `fork/finoo` push | It would silently turn a creation task into ongoing mutation of persistent customer state; this workflow skips ordinary pushes and admits only an explicitly marked first-provision push. |
 | Store passwords in GitHub environment secrets or `.env` | It broadens secret exposure and leaves bootstrap credentials in persistent runtime state. |
 | Create dedicated DNS/TLS resources | The live wildcard DNS and issued `*.om.they.dev` certificate already cover the hostname; no DNS or certificate change is needed. |
 
@@ -59,7 +59,7 @@ The host reads three independent passwords directly from Secrets Manager, valida
 
 ```text
 fork/finoo exact commit
-  -> branch push or manual GitHub Actions job (production environment + OIDC)
+  -> explicit `[finoo:first-provision]` branch push (production environment + OIDC)
   -> SHA-tagged linux/amd64 ECR image + digest
   -> SSM on openmercato-upstream-baseline-dokploy
        -> /opt/openmercato-demos/finoo
@@ -123,9 +123,9 @@ The private branch contains a minimal initializer-output redaction guard require
 3. Prove there is no existing Finoo state and that host/port/wildcard DNS/TLS capacity is available.
 
 ### Phase 2: Secure first-provision automation
-1. Add the branch-bound pinned-action workflow with manual dispatch, first-provision script, Compose provisioning overlay, initializer redaction, authenticated smoke, and focused tests.
+1. Add the branch-bound pinned-action workflow with explicit `[finoo:first-provision]` push opt-in, first-provision script, Compose provisioning overlay, initializer redaction, authenticated smoke, and focused tests.
 2. Obtain explicit approval for three Secrets Manager writes, one exact-ARN `GetSecretValue` host-role policy, deployment resources, and exact failed-provision rollback.
-3. Generate independent passwords locally, create the secrets, read back metadata/policy, commit and push `fork/finoo`, and let that branch push start the first-provision workflow.
+3. Generate independent passwords locally, create the secrets, read back metadata/policy, commit with `[finoo:first-provision]` in the message, and push `fork/finoo` to start the first-provision workflow.
 
 ### Phase 3: Verification and handoff
 1. Read back GitHub run, ECR digest, remote commit/image, container health/restart policy, empty bootstrap credential configuration, target health, HTTPS, and three role smokes.
@@ -136,7 +136,7 @@ The private branch contains a minimal initializer-output redaction guard require
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `.github/workflows/fork-finoo-demo-provision.yml` | Create | Branch-bound immutable image build and first provision with manual dispatch restricted to the same ref. |
+| `.github/workflows/fork-finoo-demo-provision.yml` | Create | Branch-bound immutable image build and first provision restricted to explicitly marked head commits. |
 | `infra/aws-upstream-baseline/finoo-demo-provision.sh` | Create | Collision checks, host provisioning, role proof, ALB routing, and exact rollback. |
 | `infra/aws-upstream-baseline/docker-compose.finoo-provision.yml` | Create | Restart policy and transient bootstrap credential mapping. |
 | `scripts/smoke-auth-dashboard.mjs` | Create | Auth/profile/role/backend verifier. |
@@ -168,7 +168,7 @@ Finoo uses a dedicated PostgreSQL volume and standard first initialization, so a
 
 ### Migration & Deployment Risks
 
-The exact Git commit and ECR digest are checked before routing. The target group and public rule are created only after two complete sets of authenticated role smokes, including one after removing bootstrap credentials from the app container. A future update is intentionally out of scope: later branch pushes or manual dispatches reach the workflow but fail closed during exact first-provision admission before image mutation.
+The exact Git commit and ECR digest are checked before routing. The target group and public rule are created only after two complete sets of authenticated role smokes, including one after removing bootstrap credentials from the app container. A future update is intentionally out of scope: ordinary branch pushes run only the unprivileged admission job and skip the credential-bearing first-provision job, while an explicit, case-sensitive `[finoo:first-provision]` push still fails closed during exact first-provision admission before image mutation.
 
 ### Operational Risks
 
@@ -244,6 +244,9 @@ None.
 - **Fully compliant**: Approved — ready for implementation after the explicit IAM/secrets/deployment approval gate.
 
 ## Changelog
+
+### 2026-08-15
+- Required an unprivileged, exact-case `[finoo:first-provision]` push gate so ordinary private baseline updates skip the production/OIDC first-provision job instead of reporting the expected existing-resource denial as a failed build.
 
 ### 2026-08-03
 - Initial specification based on THOM-83, fresh `upstream/develop`, live read-only infrastructure inventory, Manoj/EPC deployment patterns, deep review, and security review.

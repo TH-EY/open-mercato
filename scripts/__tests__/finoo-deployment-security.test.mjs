@@ -12,20 +12,52 @@ const provision = fs.readFileSync(path.resolve('infra/aws-upstream-baseline/dock
 
 test('branch-bound workflow binds the exact private Finoo lane and immutable image', () => {
   const eventConfig = workflow.slice(workflow.indexOf('on:\n'), workflow.indexOf('\nconcurrency:'))
-  assert.equal(eventConfig, 'on:\n  push:\n    branches:\n      - fork/finoo\n  workflow_dispatch:\n')
-  assert.match(
-    workflow,
-    /deploy-demo:\n\s{4}if: github\.ref == 'refs\/heads\/fork\/finoo' && \(github\.event_name == 'workflow_dispatch' \|\| \(github\.event_name == 'push' && github\.event\.deleted == false\)\)/,
+  assert.equal(eventConfig, 'on:\n  push:\n    branches:\n      - fork/finoo\n')
+  const normalizeCondition = (jobName) => {
+    const conditionBlock = workflow.match(new RegExp(`${jobName}:\\n(?:\\s{4}needs: .+\\n)?\\s{4}if: >-\\n(?<condition>(?:\\s{6}.+\\n)+)\\s{4}runs-on:`))
+    assert.ok(conditionBlock?.groups?.condition)
+    return conditionBlock.groups.condition
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .join(' ')
+  }
+  assert.equal(
+    normalizeCondition('first-provision-admission'),
+    "github.ref == 'refs/heads/fork/finoo' && github.event_name == 'push' && github.event.deleted == false",
   )
+  assert.equal(
+    normalizeCondition('deploy-demo'),
+    "github.ref == 'refs/heads/fork/finoo' && github.event_name == 'push' && github.event.deleted == false && needs.first-provision-admission.outputs.allowed == 'true'",
+  )
+  assert.doesNotMatch(workflow, /workflow_dispatch/)
+  const shouldProvision = ({ ref, eventName, deleted, message }) =>
+    ref === 'refs/heads/fork/finoo'
+    && eventName === 'push'
+    && deleted === false
+    && message.includes('[finoo:first-provision]')
+  assert.equal(shouldProvision({ ref: 'refs/heads/fork/finoo', eventName: 'push', deleted: false, message: 'baseline update' }), false)
+  assert.equal(shouldProvision({ ref: 'refs/heads/fork/finoo', eventName: 'push', deleted: false, message: 'Provision [finoo:first-provision]' }), true)
+  assert.equal(shouldProvision({ ref: 'refs/heads/fork/finoo', eventName: 'push', deleted: false, message: 'Provision [FINOO:FIRST-PROVISION]' }), false)
+  assert.equal(shouldProvision({ ref: 'refs/heads/fork/finoo', eventName: 'push', deleted: true, message: 'Provision [finoo:first-provision]' }), false)
+  assert.equal(shouldProvision({ ref: 'refs/heads/other', eventName: 'push', deleted: false, message: 'Provision [finoo:first-provision]' }), false)
+  assert.match(workflow, /first-provision-admission:\n(?:.|\n)*?permissions: \{\}\n(?:.|\n)*?\[\[ "\$HEAD_COMMIT_MESSAGE" == \*'\[finoo:first-provision\]'\* \]\]/)
+  assert.doesNotMatch(workflow, /contains\(github\.event\.head_commit\.message/)
+  assert.match(workflow, /permissions:\n\s{6}id-token: write\n\s{6}contents: read\n/)
   assert.match(workflow, /https:\/\/finoo\.om\.they\.dev/)
   assert.match(workflow, /finoo-\$\{GITHUB_SHA\}/)
   assert.match(workflow, /DEPLOY_APP_DIGEST: \$\{\{ steps\.build\.outputs\.digest \}\}/)
   assert.match(workflow, /group: om-dokploy-host-deploy/)
   assert.match(workflow, /FINOO_PREFLIGHT_ONLY: 'true'/)
   assert.doesNotMatch(workflow, /:finoo-latest/)
-  const actionRefs = [...workflow.matchAll(/uses:\s+[^@\s]+@([^\s]+)/g)].map((match) => match[1])
-  assert.ok(actionRefs.length > 0)
-  assert.ok(actionRefs.every((reference) => /^[0-9a-f]{40}$/.test(reference)))
+  const actionRefs = [...workflow.matchAll(/uses:\s+([^\s]+)/g)].map((match) => match[1])
+  assert.deepEqual(actionRefs, [
+    'actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0',
+    'aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7',
+    'aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076',
+    'docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd',
+    'docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294',
+  ])
 })
 
 test('workflow and SSM payload contain secret identifiers, never secret values', () => {
