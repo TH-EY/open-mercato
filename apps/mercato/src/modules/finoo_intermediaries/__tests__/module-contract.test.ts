@@ -4,6 +4,7 @@ import { commandRegistry } from '@open-mercato/shared/lib/commands/registry'
 import type { CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import '../commands/intermediaries'
+import '../commands/directory'
 
 describe('finoo_intermediaries module contract', () => {
   it('declares the frozen staff and portal feature ids with minimal defaults', () => {
@@ -37,6 +38,24 @@ describe('finoo_intermediaries module contract', () => {
       expect(command).toBeDefined()
       expect(command?.isUndoable).toBe(true)
       expect(command?.undo).toEqual(expect.any(Function))
+    }
+  })
+
+  it('registers directory lifecycle mutations as non-undoable commands', () => {
+    const ids = [
+      'finoo_intermediaries.intermediary.invite',
+      'finoo_intermediaries.intermediary.update',
+      'finoo_intermediaries.invitation.resend',
+      'finoo_intermediaries.invitation.cancel',
+      'finoo_intermediaries.intermediary.activate_from_invitation',
+      'finoo_intermediaries.intermediary.deactivate',
+      'finoo_intermediaries.intermediary.reactivate',
+    ]
+    for (const id of ids) {
+      const command = commandRegistry.get(id)
+      expect(command).toBeDefined()
+      expect(command?.isUndoable).toBe(false)
+      expect(command?.undo).toBeUndefined()
     }
   })
 

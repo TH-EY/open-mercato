@@ -38,12 +38,14 @@ export async function createStaffRequestContext(req: Request): Promise<RequestCo
   const container = await createRequestContainer()
   const auth = await getAuthFromRequest(req)
   if (!auth?.tenantId || !auth.sub) return null
+  const actorUserId = auth.userId ?? (auth.isApiKey ? null : auth.sub)
+  if (!actorUserId || !z.string().uuid().safeParse(actorUserId).success) return null
   const scope = await resolveOrganizationScopeForRequest({ container, auth, request: req })
   const organizationId = scope?.selectedId ?? auth.orgId ?? null
   if (!organizationId) return null
   const ctx: CommandRuntimeContext = {
     container,
-    auth,
+    auth: { ...auth, userId: actorUserId },
     organizationScope: scope,
     selectedOrganizationId: organizationId,
     organizationIds: scope?.filterIds ?? [organizationId],
@@ -55,7 +57,7 @@ export async function createStaffRequestContext(req: Request): Promise<RequestCo
     ctx,
     tenantId: auth.tenantId,
     organizationId,
-    actorId: auth.sub,
+    actorId: actorUserId,
   }
 }
 
