@@ -277,6 +277,7 @@ export async function updateIntermediary(
   item: DirectoryItem,
   input: { firstName: string; lastName: string; email?: string },
 ): Promise<{ response: APIResponse; body: DirectoryMutation }> {
+  if (input.email) scenario.capturedRecipients.add(input.email.toLowerCase())
   const response = await scopedApiRequest(request, scenario, 'PUT', `${DIRECTORY_PATH}/${item.id}`, {
     ...input,
     expectedUpdatedAt: item.updatedAt,

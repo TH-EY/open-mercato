@@ -19,6 +19,22 @@ export type TokenStrategyConfig = {
   defaultLimit?: number
 }
 
+const DENY_ALL_TOKEN_FIELDS: SearchFieldPolicy = { searchable: [] }
+
+export function resolveTokenIndexFieldPolicy(
+  entityId: EntityId,
+  resolver?: (entityId: EntityId) => SearchFieldPolicy | null | undefined,
+): SearchFieldPolicy | undefined {
+  if (!resolver) return DENY_ALL_TOKEN_FIELDS
+  try {
+    const resolved = resolver(entityId)
+    if (resolved === null) return undefined
+    return resolved ?? DENY_ALL_TOKEN_FIELDS
+  } catch {
+    return DENY_ALL_TOKEN_FIELDS
+  }
+}
+
 function normalizeOrganizationIds(options: SearchOptions): string[] | null {
   const single = typeof options.organizationId === 'string' ? options.organizationId.trim() : ''
   if (single) return [single]
@@ -48,7 +64,7 @@ export class TokenSearchStrategy implements SearchStrategy {
   constructor(
     private readonly db: Kysely<any>,
     config?: TokenStrategyConfig,
-    private readonly fieldPolicyResolver?: (entityId: EntityId) => SearchFieldPolicy | undefined,
+    private readonly fieldPolicyResolver?: (entityId: EntityId) => SearchFieldPolicy | null | undefined,
   ) {
     this.minMatchRatio = config?.minMatchRatio ?? 0.5
     this.defaultLimit = config?.defaultLimit ?? 50
@@ -138,7 +154,7 @@ export class TokenSearchStrategy implements SearchStrategy {
       tenantId: record.tenantId,
       organizationId: record.organizationId,
       doc: record.fields,
-      fieldPolicy: this.fieldPolicyResolver?.(record.entityId),
+      fieldPolicy: resolveTokenIndexFieldPolicy(record.entityId, this.fieldPolicyResolver),
     })
   }
 
@@ -168,7 +184,7 @@ export class TokenSearchStrategy implements SearchStrategy {
       tenantId: record.tenantId,
       organizationId: record.organizationId,
       doc: record.fields as Record<string, unknown>,
-      fieldPolicy: this.fieldPolicyResolver?.(record.entityId),
+      fieldPolicy: resolveTokenIndexFieldPolicy(record.entityId, this.fieldPolicyResolver),
     }))
 
     await replaceSearchTokensForBatch(this.db, payloads)

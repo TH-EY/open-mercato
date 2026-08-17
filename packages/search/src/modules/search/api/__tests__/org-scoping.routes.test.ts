@@ -62,6 +62,7 @@ describe('Search API organizationId scoping', () => {
     const container = {
       resolve: jest.fn((name: string) => {
         if (name === 'searchService') return searchService
+        if (name === 'rbacService') return { userHasAllFeatures: jest.fn().mockResolvedValue(true) }
         if (name === 'searchIndexer') return {
           getEntityConfig: () => ({ entityId: 'x:y', aclFeatures: ['demo.view'] }),
           getAllEntityConfigs: () => [{ entityId: 'x:y', aclFeatures: ['demo.view'] }],
@@ -109,6 +110,7 @@ describe('Search API organizationId scoping', () => {
     const container = {
       resolve: jest.fn((name: string) => {
         if (name === 'searchService') return searchService
+        if (name === 'rbacService') return { userHasAllFeatures: jest.fn().mockResolvedValue(false) }
         if (name === 'searchIndexer') return {
           getEntityConfig: () => finooConfig,
           getAllEntityConfigs: () => [finooConfig],
@@ -144,6 +146,7 @@ describe('Search API organizationId scoping', () => {
     const container = {
       resolve: jest.fn((name: string) => {
         if (name === 'searchService') return searchService
+        if (name === 'rbacService') return { userHasAllFeatures: jest.fn().mockResolvedValue(true) }
         if (name === 'searchIndexer') return {
           getEntityConfig: () => ({ entityId: 'x:y', aclFeatures: ['demo.view'] }),
           getAllEntityConfigs: () => [{ entityId: 'x:y', aclFeatures: ['demo.view'] }],
@@ -177,6 +180,7 @@ describe('Search API organizationId scoping', () => {
     const container = {
       resolve: jest.fn((name: string) => {
         if (name === 'searchService') return searchService
+        if (name === 'rbacService') return { userHasAllFeatures: jest.fn().mockResolvedValue(true) }
         if (name === 'searchIndexer') return {
           getEntityConfig: () => ({ entityId: 'x:y', aclFeatures: ['demo.view'] }),
           getAllEntityConfigs: () => [{ entityId: 'x:y', aclFeatures: ['demo.view'] }],

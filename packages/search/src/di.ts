@@ -148,7 +148,11 @@ export function registerSearchModule(
       strategies.push(new TokenSearchStrategy(
         db,
         undefined,
-        (entityId) => entityConfigMap.get(entityId)?.fieldPolicy,
+        (entityId) => {
+          const entityConfig = entityConfigMap.get(entityId)
+          if (!entityConfig) return undefined
+          return entityConfig.fieldPolicy ?? null
+        },
       ))
     } catch {
       // Kysely not available via em, skipping TokenSearchStrategy

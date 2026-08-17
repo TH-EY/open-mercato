@@ -1,5 +1,6 @@
 import { recordIndexerError } from '@open-mercato/shared/lib/indexers/error-log'
 import { isReadProjectionAlwaysConsistent } from '@open-mercato/shared/lib/data/consistency'
+import type { SearchFieldPolicy } from '@open-mercato/shared/modules/search'
 import { upsertIndexRow, reindexSearchTokensForRecord, type UpsertIndexResult } from '../lib/indexer'
 import { applyCoverageAdjustments, createCoverageAdjustments } from '../lib/coverage'
 import {
@@ -9,6 +10,8 @@ import {
 } from '../lib/subscriber-scope'
 
 export const metadata = { event: 'query_index.upsert_one', persistent: false }
+
+const DENY_ALL_TOKEN_FIELDS: SearchFieldPolicy = { searchable: [] }
 
 export default async function handle(payload: any, ctx: { resolve: <T=any>(name: string) => T }) {
   // Run index maintenance on a FORKED EntityManager (fresh identity map + UnitOfWork)
@@ -28,11 +31,13 @@ export default async function handle(payload: any, ctx: { resolve: <T=any>(name:
   const suppressCoverage = payload?.suppressCoverage === true
   const coverageDelayMs = typeof payload?.coverageDelayMs === 'number' ? payload.coverageDelayMs : undefined
   const alwaysConsistent = isReadProjectionAlwaysConsistent()
-  let searchFieldPolicy
+  let searchFieldPolicy: SearchFieldPolicy | undefined
   try {
-    searchFieldPolicy = ctx.resolve<any>('searchIndexer')?.getEntityConfig?.(entityType)?.fieldPolicy
+    const searchIndexer = ctx.resolve<any>('searchIndexer')
+    const entityConfig = searchIndexer?.getEntityConfig?.(entityType)
+    searchFieldPolicy = entityConfig ? entityConfig.fieldPolicy : DENY_ALL_TOKEN_FIELDS
   } catch {
-    searchFieldPolicy = undefined
+    searchFieldPolicy = DENY_ALL_TOKEN_FIELDS
   }
   try {
     const hasPayloadOrganizationId = Object.prototype.hasOwnProperty.call(payload ?? {}, 'organizationId')

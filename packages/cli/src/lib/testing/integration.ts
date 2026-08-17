@@ -848,20 +848,48 @@ function getProcessExitPromise(command: ChildProcess): Promise<number | null> {
   })
 }
 
-export async function terminateChildProcess(command: ChildProcess): Promise<void> {
+function waitForChildProcessExit(command: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (command.exitCode != null || command.signalCode != null) return Promise.resolve(true)
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer)
+      command.off('exit', onExit)
+      command.off('error', onError)
+    }
+    const onExit = () => {
+      cleanup()
+      resolve(true)
+    }
+    const onError = (error: Error) => {
+      cleanup()
+      reject(error)
+    }
+    const timer = setTimeout(() => {
+      cleanup()
+      resolve(false)
+    }, timeoutMs)
+    command.once('exit', onExit)
+    command.once('error', onError)
+  })
+}
+
+export async function terminateChildProcess(
+  command: ChildProcess,
+  options: { terminateTimeoutMs?: number; killTimeoutMs?: number } = {},
+): Promise<void> {
   if (command.exitCode != null || command.signalCode != null) return
-  const exitPromise = getProcessExitPromise(command).catch(() => null)
-  command.kill('SIGTERM')
-  const exited = await Promise.race([
-    exitPromise.then(() => true),
-    delay(5_000).then(() => false),
-  ])
+  const terminateTimeoutMs = options.terminateTimeoutMs ?? 5_000
+  const killTimeoutMs = options.killTimeoutMs ?? 2_000
+  if (!command.kill('SIGTERM') && command.exitCode == null && command.signalCode == null) {
+    throw new Error('Unable to signal the ephemeral application process with SIGTERM.')
+  }
+  const exited = await waitForChildProcessExit(command, terminateTimeoutMs)
   if (exited || command.exitCode != null || command.signalCode != null) return
-  command.kill('SIGKILL')
-  await Promise.race([
-    exitPromise,
-    delay(2_000),
-  ])
+  if (!command.kill('SIGKILL') && command.exitCode == null && command.signalCode == null) {
+    throw new Error('Unable to signal the ephemeral application process with SIGKILL.')
+  }
+  if (await waitForChildProcessExit(command, killTimeoutMs)) return
+  throw new Error('Ephemeral application process did not exit after SIGKILL.')
 }
 
 function delay(milliseconds: number): Promise<void> {
@@ -3438,16 +3466,22 @@ export async function startEphemeralEnvironment(options: EphemeralRuntimeOptions
     const stop = async (): Promise<void> => {
       if (isStopped) return
       isStopped = true
+      let terminationConfirmed = true
       try {
         if (applicationProcess) {
-          await terminateChildProcess(applicationProcess)
+          try {
+            await terminateChildProcess(applicationProcess)
+          } catch (error) {
+            terminationConfirmed = false
+            throw error
+          }
         }
         await databaseContainer.stop()
         await clearEphemeralEnvironmentState()
         await rm(EPHEMERAL_EMAIL_CAPTURE_PATH, { force: true }).catch(() => undefined)
         await rm(EPHEMERAL_CHANNEL_EMAIL_CAPTURE_PATH, { force: true }).catch(() => undefined)
       } finally {
-        await runtimeLock.release()
+        if (terminationConfirmed) await runtimeLock.release()
       }
     }
 

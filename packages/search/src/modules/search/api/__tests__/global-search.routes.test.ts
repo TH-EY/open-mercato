@@ -146,6 +146,7 @@ describe('GET /api/search/search/global presenter localization', () => {
     const container = {
       resolve: jest.fn((name: string) => {
         if (name === 'searchService') return searchService
+        if (name === 'rbacService') return { userHasAllFeatures: jest.fn().mockResolvedValue(true) }
         if (name === 'searchIndexer') {
           return {
             getEntityConfig: (entityId: string) => configMap.get(entityId as EntityId),

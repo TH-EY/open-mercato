@@ -664,6 +664,43 @@ describe('ephemeral application shutdown', () => {
 
     expect(processHandle.kill).toHaveBeenCalledTimes(1)
   })
+
+  it('escalates to SIGKILL and requires the process exit event', async () => {
+    const processHandle = new EventEmitter() as ChildProcess
+    Object.assign(processHandle, {
+      exitCode: null,
+      signalCode: null,
+      kill: jest.fn((signal: NodeJS.Signals) => {
+        if (signal === 'SIGKILL') {
+          queueMicrotask(() => {
+            Object.assign(processHandle, { signalCode: 'SIGKILL' })
+            processHandle.emit('exit', null, 'SIGKILL')
+          })
+        }
+        return true
+      }),
+    })
+
+    await terminateChildProcess(processHandle, { terminateTimeoutMs: 1, killTimeoutMs: 20 })
+
+    expect(processHandle.kill).toHaveBeenNthCalledWith(1, 'SIGTERM')
+    expect(processHandle.kill).toHaveBeenNthCalledWith(2, 'SIGKILL')
+  })
+
+  it('fails teardown when the process survives SIGKILL', async () => {
+    const processHandle = new EventEmitter() as ChildProcess
+    Object.assign(processHandle, {
+      exitCode: null,
+      signalCode: null,
+      kill: jest.fn(() => true),
+    })
+
+    await expect(terminateChildProcess(processHandle, {
+      terminateTimeoutMs: 1,
+      killTimeoutMs: 1,
+    })).rejects.toThrow('did not exit after SIGKILL')
+    expect(processHandle.kill).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('waitForApplicationReadiness', () => {

@@ -95,7 +95,12 @@ export async function GET(req: Request) {
     const scopeFilter = resolveOrganizationScopeFilter(scope, auth)
     const organizationId =
       typeof scope.selectedId === 'string' && scope.selectedId.trim().length > 0 ? scope.selectedId.trim() : undefined
-    const authorizedEntityTypes = resolveAuthorizedSearchEntityTypes(container, auth, entityTypes)
+    const authorizedEntityTypes = await resolveAuthorizedSearchEntityTypes(
+      container,
+      auth,
+      entityTypes,
+      organizationId ?? null,
+    )
     if (authorizedEntityTypes.length === 0) {
       return NextResponse.json({
         results: [],

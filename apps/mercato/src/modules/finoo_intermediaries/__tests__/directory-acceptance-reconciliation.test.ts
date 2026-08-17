@@ -1,9 +1,14 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+const mockContinuationEnqueue = jest.fn().mockResolvedValue(undefined)
+
+jest.mock('@open-mercato/queue', () => ({
+  createModuleQueue: () => ({ enqueue: mockContinuationEnqueue }),
+}))
+
 import setup from '../setup'
 import {
   reconcileAcceptedIntermediaryInvitations,
 } from '../lib/directoryAcceptanceReconciliation'
+import handleReconciliation from '../workers/acceptance-reconciliation'
 
 describe('intermediary invitation acceptance reconciliation', () => {
   it('selects accepted pending rows by exact scope and activates a bounded page', async () => {
@@ -70,7 +75,7 @@ describe('intermediary invitation acceptance reconciliation', () => {
     expect(result).toMatchObject({ selected: 2, succeeded: 1, failed: 1 })
   })
 
-  it('registers an idempotent organization schedule and paginates the worker queue', async () => {
+  it('registers an idempotent organization schedule', async () => {
     const register = jest.fn().mockResolvedValue(undefined)
     await setup.seedDefaults?.({
       em: {} as never,
@@ -91,11 +96,45 @@ describe('intermediary invitation acceptance reconciliation', () => {
         organizationId: '22222222-2222-4222-8222-222222222222',
       },
     }))
-    const worker = readFileSync(
-      resolve(process.cwd(), 'src/modules/finoo_intermediaries/workers/acceptance-reconciliation.ts'),
-      'utf8',
+  })
+
+  it('executes the real worker handler and enqueues a bounded continuation', async () => {
+    mockContinuationEnqueue.mockClear()
+    const rows = Array.from({ length: 100 }, (_, index) => ({
+      invitation_id: `invite-${index}`,
+      user_id: `user-${index}`,
+      accepted_at: new Date(Date.UTC(2026, 7, 17, 10, index)),
+    }))
+    const execute = jest.fn().mockResolvedValue(rows)
+    const commandExecute = jest.fn().mockResolvedValue({ result: { status: 'active' } })
+    const em = {
+      fork: () => ({ getConnection: () => ({ execute }) }),
+    }
+    const resolveDependency = (name: string) => {
+      if (name === 'em') return em
+      if (name === 'commandBus') return { execute: commandExecute }
+      throw new Error(`Unexpected dependency: ${name}`)
+    }
+
+    await handleReconciliation({
+      payload: {
+        tenantId: '11111111-1111-4111-8111-111111111111',
+        organizationId: '22222222-2222-4222-8222-222222222222',
+      },
+    } as never, { resolve: resolveDependency } as never)
+
+    expect(commandExecute).toHaveBeenCalledTimes(100)
+    expect(commandExecute).toHaveBeenCalledWith(
+      'finoo_intermediaries.intermediary.activate_from_invitation',
+      expect.objectContaining({
+        input: { invitationId: 'invite-0', userId: 'user-0', tenantId: '11111111-1111-4111-8111-111111111111' },
+      }),
     )
-    expect(worker).toContain('afterAcceptedAt: result.continuation.acceptedAt')
-    expect(worker).toContain("'finoo_intermediaries.intermediary.activate_from_invitation'")
+    expect(mockContinuationEnqueue).toHaveBeenCalledWith({
+      tenantId: '11111111-1111-4111-8111-111111111111',
+      organizationId: '22222222-2222-4222-8222-222222222222',
+      afterAcceptedAt: rows[99]!.accepted_at.toISOString(),
+      afterInvitationId: 'invite-99',
+    }, { delayMs: 1_000 })
   })
 })

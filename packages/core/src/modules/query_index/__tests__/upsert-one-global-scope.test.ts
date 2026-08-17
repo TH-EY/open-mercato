@@ -68,6 +68,7 @@ describe('query_index upsert_one global scope', () => {
       recordId: 'toggle-1',
       organizationId: null,
       tenantId: null,
+      searchFieldPolicy: { searchable: [] },
     }))
     expect(mockRecordIndexerError).not.toHaveBeenCalled()
   })
