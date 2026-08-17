@@ -82,7 +82,7 @@ export function PortalMetricWidget({ metric }: { metric: Metric }) {
         error={error}
         showArea
         showLegend={false}
-        valueFormatter={(value) => Math.round(value).toLocaleString()}
+        valueFormatter={(value) => Number.isInteger(value) ? value.toLocaleString() : ''}
         emptyMessage={t('finooAffiliates.portal.dashboard.empty', 'No data in this range.')}
         className="border-0 bg-transparent p-0"
       />
