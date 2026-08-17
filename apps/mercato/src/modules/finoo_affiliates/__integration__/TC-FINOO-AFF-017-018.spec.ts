@@ -65,6 +65,21 @@ type TransactionSnapshot = {
   commissionFixedAmount: number | null;
   commissionBaseAmount: string | null;
 };
+type DealEditorProjection = {
+  attribution: null | {
+    commissionAmount: number;
+    affiliateTransactionId: string | null;
+    affiliateTransactionAmount: number | null;
+    affiliateTransactionCurrency: string | null;
+    affiliateTransactionStatus: "processing" | "approved" | "rejected" | "paid_out" | null;
+    affiliateTransactionCommissionMode: TransactionSnapshot["commissionMode"] | null;
+  };
+  affiliates: Array<{
+    id: string;
+    commissionMode: "percentage" | "fixed" | null;
+  }>;
+  statuses: Array<{ id: string; value: string }>;
+};
 
 function resolveUrl(path: string): string {
   const baseUrl = process.env.BASE_URL?.trim();
@@ -267,7 +282,7 @@ async function assignDeal(
   token: string,
   dealId: string,
   affiliateUserId: string,
-  legacyAmount: number,
+  legacyAmount?: number,
 ): Promise<void> {
   const editorResponse = await apiRequest(
     request,
@@ -292,11 +307,26 @@ async function assignDeal(
         dealId,
         affiliateUserId,
         commissionStatusEntryId: waitingStatusId,
-        commissionAmount: legacyAmount,
+        ...(legacyAmount === undefined ? {} : { commissionAmount: legacyAmount }),
       },
     },
   );
   expect(response.status()).toBe(200);
+}
+
+async function readDealEditor(
+  request: APIRequestContext,
+  token: string,
+  dealId: string,
+): Promise<DealEditorProjection> {
+  const response = await apiRequest(
+    request,
+    "GET",
+    `/api/finoo_affiliates/deal-attributions?dealId=${dealId}`,
+    { token },
+  );
+  expect(response.status()).toBe(200);
+  return (await readJsonSafe<DealEditorProjection>(response))!;
 }
 
 async function readTransaction(
@@ -427,6 +457,33 @@ test.describe("TC-FINOO-AFF-017..018: affiliate commission persistence and UI", 
         valueCurrency: "PLN",
       });
       dealIds.push(legacyDealId);
+      const legacyEditor = await readDealEditor(request, token, legacyDealId);
+      const waitingStatusId = legacyEditor.statuses.find(
+        (status) => status.value === "waiting",
+      )?.id;
+      expect(legacyEditor.affiliates).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: affiliate.user.id,
+          commissionMode: null,
+        }),
+      ]));
+      const missingLegacyAmount = await apiRequest(
+        request,
+        "PUT",
+        "/api/finoo_affiliates/deal-attributions",
+        {
+          token,
+          data: {
+            dealId: legacyDealId,
+            affiliateUserId: affiliate.user.id,
+            commissionStatusEntryId: waitingStatusId,
+          },
+        },
+      );
+      expect(missingLegacyAmount.status()).toBe(422);
+      expect(await readJsonSafe<{ code?: string }>(missingLegacyAmount)).toMatchObject({
+        code: "legacy_commission_amount_required",
+      });
       await assignDeal(request, token, legacyDealId, affiliate.user.id, 77);
       await updateDealStage(
         request,
@@ -443,6 +500,12 @@ test.describe("TC-FINOO-AFF-017..018: affiliate commission persistence and UI", 
         commissionRateBps: null,
         commissionFixedAmount: null,
         commissionBaseAmount: null,
+      });
+      expect((await readDealEditor(request, token, legacyDealId)).attribution).toMatchObject({
+        affiliateTransactionAmount: 77,
+        affiliateTransactionCurrency: "PLN",
+        affiliateTransactionStatus: "processing",
+        affiliateTransactionCommissionMode: "legacy_deal_amount",
       });
 
       const percentageResponse = await patchCommission(request, token, {
@@ -484,7 +547,21 @@ test.describe("TC-FINOO-AFF-017..018: affiliate commission persistence and UI", 
         valueCurrency: "PLN",
       });
       dealIds.push(percentageDealId);
-      await assignDeal(request, token, percentageDealId, affiliate.user.id, 77);
+      await assignDeal(request, token, percentageDealId, affiliate.user.id);
+      const pendingPercentageEditor = await readDealEditor(request, token, percentageDealId);
+      expect(pendingPercentageEditor.affiliates).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: affiliate.user.id,
+          commissionMode: "percentage",
+        }),
+      ]));
+      expect(pendingPercentageEditor.attribution).toMatchObject({
+        affiliateTransactionId: null,
+        affiliateTransactionAmount: null,
+        affiliateTransactionCurrency: null,
+        affiliateTransactionStatus: null,
+        affiliateTransactionCommissionMode: null,
+      });
       await updateDealStage(
         request,
         client,
@@ -506,6 +583,13 @@ test.describe("TC-FINOO-AFF-017..018: affiliate commission persistence and UI", 
         commissionRateBps: 1250,
         commissionFixedAmount: null,
         commissionBaseAmount: "1000.00",
+      });
+      expect((await readDealEditor(request, token, percentageDealId)).attribution).toMatchObject({
+        affiliateTransactionId: percentageTransaction!.id,
+        affiliateTransactionAmount: 125,
+        affiliateTransactionCurrency: "PLN",
+        affiliateTransactionStatus: "processing",
+        affiliateTransactionCommissionMode: "percentage",
       });
 
       const delayedDealId = await createDealFixture(request, token, {
@@ -604,7 +688,7 @@ test.describe("TC-FINOO-AFF-017..018: affiliate commission persistence and UI", 
         valueCurrency: "PLN",
       });
       dealIds.push(fixedDealId);
-      await assignDeal(request, token, fixedDealId, affiliate.user.id, 33);
+      await assignDeal(request, token, fixedDealId, affiliate.user.id);
       await updateDealStage(
         request,
         client,
@@ -620,6 +704,12 @@ test.describe("TC-FINOO-AFF-017..018: affiliate commission persistence and UI", 
         commissionRateBps: null,
         commissionFixedAmount: 90,
         commissionBaseAmount: null,
+      });
+      expect((await readDealEditor(request, token, fixedDealId)).attribution).toMatchObject({
+        affiliateTransactionAmount: 90,
+        affiliateTransactionCurrency: "PLN",
+        affiliateTransactionStatus: "processing",
+        affiliateTransactionCommissionMode: "fixed",
       });
 
       const fixedSnapshot = await readTransaction(client, fixedDealId);
