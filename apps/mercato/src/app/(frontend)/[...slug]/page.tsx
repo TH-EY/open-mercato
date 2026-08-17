@@ -70,6 +70,9 @@ export default async function SiteCatchAll({ params }: FrontendParams) {
       redirect(`/${orgSlug}/portal/login`)
     }
     await ensureServerBootstrap()
+    registerFrontendRouteManifests(frontendRoutes)
+    const resolvedMatch = findRouteManifestMatch(getFrontendRouteManifests(), pathname)
+    if (!resolvedMatch) return notFound()
     const portalContainer = await createRequestContainer()
     const em = portalContainer.resolve('em') as EntityManager
     const org = orgSlug
@@ -82,7 +85,7 @@ export default async function SiteCatchAll({ params }: FrontendParams) {
     const organizationId = org ? String(org.id) : null
     if (!organizationId || organizationId !== customerAuth.orgId) return renderAccessDenied()
 
-    const customerFeatures = match.route.requireCustomerFeatures
+    const customerFeatures = resolvedMatch.route.requireCustomerFeatures
     if (customerFeatures && customerFeatures.length) {
       const customerRbac = portalContainer.resolve('customerRbacService') as CustomerRbacService
       const ok = await customerRbac.userHasAllFeatures(
@@ -92,8 +95,8 @@ export default async function SiteCatchAll({ params }: FrontendParams) {
       )
       if (!ok) return renderAccessDenied()
     }
-    const Component = await match.route.load()
-    return <Component params={match.params} />
+    const Component = await resolvedMatch.route.load()
+    return <Component params={resolvedMatch.params} />
   }
 
   // Staff auth gate

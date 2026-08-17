@@ -128,7 +128,29 @@ export const enabledModules: ModuleEntry[] = [
   { id: 'webhooks', from: '@open-mercato/webhooks' },
   { id: 'customer_accounts', from: '@open-mercato/core' },
   { id: 'portal', from: '@open-mercato/core' },
-  { id: 'finoo_intermediaries', from: '@app' },
+  {
+    id: 'finoo_intermediaries',
+    from: '@app',
+    overrides: {
+      routes: {
+        api: {
+          'GET /api/customer_accounts/portal/nav': {
+            handler: async (request) => {
+              const { GET } = await import('./modules/finoo_intermediaries/overrides/portalNav')
+              return GET(request)
+            },
+          },
+        },
+        pages: {
+          '/frontend/[orgSlug]/portal/dashboard': {
+            load: async () => (
+              await import('./modules/finoo_intermediaries/overrides/portalDashboard')
+            ).default,
+          },
+        },
+      },
+    },
+  },
   {
     id: 'finoo_affiliates',
     from: '@app',

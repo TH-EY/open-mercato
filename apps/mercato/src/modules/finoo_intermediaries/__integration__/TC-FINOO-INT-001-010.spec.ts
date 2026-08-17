@@ -948,29 +948,53 @@ test.describe.serial('THOM-90 FINOO intermediary portal', () => {
     await deleteAssignment(request, assignment)
   })
 
-  test('TC-FINOO-INT-010 renders the portal list/detail flow at desktop and narrow widths', async ({ page, request }) => {
+  test('TC-FINOO-INT-010 redirects intermediary Dashboard and renders the portal flow at desktop and narrow widths', async ({ page, request }) => {
     const bundle = await createDealBundle(request, { suffix: '010' })
     const assignment = await createAssignment(request, bundle.dealId)
     const baseUrl = process.env.BASE_URL ?? 'http://127.0.0.1:5001'
     const cookieDomain = new URL(baseUrl).hostname
-    await page.context().addCookies([
-      {
-        name: 'customer_auth_token',
-        value: state.firstSession.authToken,
-        domain: cookieDomain,
-        path: '/',
-        httpOnly: true,
-        secure: false,
-      },
-      {
-        name: 'customer_session_token',
-        value: state.firstSession.sessionToken,
-        domain: cookieDomain,
-        path: '/',
-        httpOnly: true,
-        secure: false,
-      },
-    ])
+    const usePortalSession = async (session: PortalSession) => {
+      await page.context().clearCookies()
+      await page.context().addCookies([
+        {
+          name: 'customer_auth_token',
+          value: session.authToken,
+          domain: cookieDomain,
+          path: '/',
+          httpOnly: true,
+          secure: false,
+        },
+        {
+          name: 'customer_session_token',
+          value: session.sessionToken,
+          domain: cookieDomain,
+          path: '/',
+          httpOnly: true,
+          secure: false,
+        },
+      ])
+    }
+
+    await page.goto(`/${state.organizationSlug}/portal/login`)
+    await page.getByLabel('Email').fill(state.firstUser.email)
+    await page.getByLabel('Password').fill(state.firstUser.password)
+    await page.getByRole('button', { name: 'Sign In', exact: true }).click()
+    await expect(page).toHaveURL(new RegExp(`/${state.organizationSlug}/portal/intermediary/deals$`))
+
+    await page.goto(`/${state.organizationSlug}/portal`)
+    await expect(page).toHaveURL(new RegExp(`/${state.organizationSlug}/portal/intermediary/deals$`))
+
+    await page.goto(`/${state.organizationSlug}/portal/dashboard`)
+    await expect(page).toHaveURL(new RegExp(`/${state.organizationSlug}/portal/intermediary/deals$`))
+    await expect(page.getByRole('link', { name: 'Dashboard', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'Assigned deals', exact: true })).toBeVisible()
+
+    await usePortalSession(state.wildcardSession)
+    await page.goto(`/${state.organizationSlug}/portal/dashboard`)
+    await expect(page).toHaveURL(new RegExp(`/${state.organizationSlug}/portal/dashboard$`))
+    await expect(page.getByRole('link', { name: 'Dashboard', exact: true })).toBeVisible()
+
+    await usePortalSession(state.firstSession)
     await page.goto(`/${state.organizationSlug}/portal/intermediary/deals`)
     await expect(page.getByText('Intermediary Company 010')).toBeVisible()
     await page.setViewportSize({ width: 390, height: 844 })

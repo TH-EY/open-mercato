@@ -413,7 +413,8 @@ Inject one tab into `detail:customers.deal:tabs` with a stable widget/group ID o
 
 Route: `/:orgSlug/portal/intermediary/deals`.
 
-- Navigation item injected through `menu:portal:sidebar:main` and feature-gated.
+- Page metadata adds the Assigned deals navigation item and feature-gates the route.
+- For an active scoped `intermediary` role membership, the shared Dashboard navigation item is removed and direct Dashboard, portal-root, and post-login navigation resolve to Assigned deals. Other portal roles retain the shared Dashboard unchanged.
 - `DataTable` uses stable `entityId`/`extensionTableId`, page size 50, and the exact eight requested columns.
 - Empty state uses `EmptyState`; loading/errors use shared detail/loading primitives.
 - A row navigates to the scoped detail route.
@@ -528,7 +529,7 @@ All tests create tenant, organization, stage, role, portal users, Deal relations
 | `TC-FINOO-INT-007` | Note create/read/update/delete round-trip, encrypted-at-rest assertion, author isolation, stale conflict, cross-org denial, staff all-note read, reassignment isolation, and XSS-safe rendering. |
 | `TC-FINOO-INT-008` | Activities expose only explicitly public type/time/direction/summary rows, exclude team/private/email/body/recipient/attachment/author/custom data, paginate deterministically, and provide no write route. |
 | `TC-FINOO-INT-009` | Forged Deal/assignment/note IDs, portal-admin feature wildcard without assignment, direct feature grant without captured role membership, cross-intermediary, cross-organization, and cross-tenant requests all fail closed with indistinguishable not-found responses. |
-| `TC-FINOO-INT-010` | Headed staff Deal tab and portal list/detail/status/notes flow work in desktop and narrow viewport; keyboard contracts, navigation visibility, loading/error/empty states, and stale retry are observable. |
+| `TC-FINOO-INT-010` | Headed intermediary Dashboard navigation redirects to Assigned deals without a Dashboard sidebar item, then the portal list/detail/status/notes flow works in desktop and narrow viewport; keyboard contracts, navigation visibility, loading/error/empty states, and stale retry are observable. |
 
 ## Verification Commands
 
@@ -563,6 +564,7 @@ The integration skill's environment mode must be selected before the first Playw
 | `apps/mercato/src/modules/finoo_intermediaries/api/portal/**` | Create | Portal list/detail/status/note/activity APIs |
 | `apps/mercato/src/modules/finoo_intermediaries/widgets/**` | Create | Staff Deal tab and portal menu injection |
 | `apps/mercato/src/modules/finoo_intermediaries/frontend/[orgSlug]/portal/intermediary/deals/**` | Create | Portal list/detail pages |
+| `apps/mercato/src/modules/finoo_intermediaries/overrides/**` | Create | Exact-role portal Dashboard redirect and navigation filtering |
 | `apps/mercato/src/modules/finoo_intermediaries/i18n/en.json` | Create | English strings |
 | `apps/mercato/src/modules/finoo_intermediaries/i18n/pl.json` | Create | Polish strings |
 | `apps/mercato/src/modules/finoo_intermediaries/migrations/*` | Generate | Additive schema only |
@@ -718,6 +720,12 @@ None identified in the authored specification. Implementation readiness remains 
 **Fully compliant: Approved for pre-implementation readiness analysis.** This is not yet authorization to deploy or create an upstream contribution.
 
 ## Changelog
+
+### 2026-08-17 — THOM-96
+
+- Made Assigned deals the landing page for active scoped intermediary portal users.
+- Removed the shared Dashboard navigation item only for the exact intermediary role while preserving Dashboard for affiliate and other portal roles.
+- Added focused role-policy, page-redirect, navigation-response, and override-wiring coverage; extended `TC-FINOO-INT-010` with the direct Dashboard path.
 
 ### 2026-08-13
 

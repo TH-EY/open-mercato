@@ -17,17 +17,22 @@ jest.mock('@/bootstrap', () => ({
 const routeLoad = jest.fn(async () => (props: any) => (
   <div data-testid="portal-page">{props.params.orgSlug}</div>
 ))
+const overriddenRouteLoad = jest.fn(async () => (props: any) => (
+  <div data-testid="overridden-portal-page">{props.params.orgSlug}</div>
+))
+const coreRouteMatch = {
+  route: {
+    requireCustomerAuth: true,
+    requireCustomerFeatures: ['portal.dashboard.view'],
+    title: 'Dashboard',
+    load: routeLoad,
+  },
+  params: { orgSlug: 'org-b' },
+}
+const mockFindRouteManifestMatch = jest.fn(() => coreRouteMatch)
 
 jest.mock('@open-mercato/shared/modules/registry', () => ({
-  findRouteManifestMatch: jest.fn(() => ({
-    route: {
-      requireCustomerAuth: true,
-      requireCustomerFeatures: ['portal.dashboard.view'],
-      title: 'Dashboard',
-      load: routeLoad,
-    },
-    params: { orgSlug: 'org-b' },
-  })),
+  findRouteManifestMatch: (...args: unknown[]) => mockFindRouteManifestMatch(...args),
   getFrontendRouteManifests: jest.fn(() => []),
   registerFrontendRouteManifests: jest.fn(),
 }))
@@ -148,6 +153,7 @@ const customerAuth = {
 describe('frontend customer portal org binding', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockFindRouteManifestMatch.mockReturnValue(coreRouteMatch)
     headerStore.get.mockReturnValue('/org-b/portal/dashboard')
     mockGetCustomerAuthFromCookies.mockResolvedValue(customerAuth)
   })
@@ -182,6 +188,38 @@ describe('frontend customer portal org binding', () => {
       slug: 'org-a',
       deletedAt: null,
     })
+  })
+
+  it('resolves the authenticated portal page again after bootstrap applies route overrides', async () => {
+    mockFindRouteManifestMatch
+      .mockReturnValueOnce(coreRouteMatch)
+      .mockReturnValue({
+        route: {
+          ...coreRouteMatch.route,
+          load: overriddenRouteLoad,
+        },
+        params: { orgSlug: 'org-a' },
+      })
+
+    await SiteCatchAll({
+      params: Promise.resolve({ slug: ['org-a', 'portal', 'dashboard'] }),
+    })
+
+    expect(overriddenRouteLoad).toHaveBeenCalled()
+    expect(routeLoad).not.toHaveBeenCalled()
+  })
+
+  it('returns not found when bootstrap disables the authenticated portal page', async () => {
+    mockFindRouteManifestMatch
+      .mockReturnValueOnce(coreRouteMatch)
+      .mockReturnValue(undefined)
+
+    await expect(SiteCatchAll({
+      params: Promise.resolve({ slug: ['org-a', 'portal', 'dashboard'] }),
+    })).rejects.toThrow('NOT_FOUND')
+
+    expect(notFound).toHaveBeenCalled()
+    expect(routeLoad).not.toHaveBeenCalled()
   })
 
   it('renders authenticated organization chrome when URL org matches the customer JWT org', async () => {
