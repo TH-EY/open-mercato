@@ -721,6 +721,12 @@ None identified in the authored specification. Implementation readiness remains 
 
 ## Changelog
 
+### 2026-08-17 — THOM-98
+
+- Prevented legacy non-UUID `industry` values from reaching the dictionary-entry UUID query and crashing Assigned deals with PostgreSQL `22P02`.
+- Invalid legacy dictionary references now fail closed as `industry: null`; the portal projection allowlist and assignment authorization remain unchanged.
+- Added focused UUID-normalization coverage and a portal-list integration regression for the malformed legacy value.
+
 ### 2026-08-17 — THOM-96
 
 - Made Assigned deals the landing page for active scoped intermediary portal users.

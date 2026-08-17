@@ -1,4 +1,5 @@
 import {
+  readDictionaryEntryId,
   portalActivityWhere,
   readLoadedCustomFieldValue,
   sanitizeActivitySummary,
@@ -35,6 +36,13 @@ describe('finoo_intermediaries safe projection rules', () => {
   it('reads the prefixed contract returned by loadCustomFieldValues', () => {
     expect(readLoadedCustomFieldValue({ record: { cf_turnover: 125000 } }, 'record', 'turnover'))
       .toBe(125000)
+  })
+
+  it('accepts only UUID dictionary entry identifiers from legacy custom values', () => {
+    expect(readDictionaryEntryId('11111111-1111-4111-8111-111111111111'))
+      .toBe('11111111-1111-4111-8111-111111111111')
+    expect(readDictionaryEntryId('legacy-industry-value')).toBeNull()
+    expect(readDictionaryEntryId(null)).toBeNull()
   })
 
   it('includes only explicitly public non-email activities from non-internal sources', () => {
