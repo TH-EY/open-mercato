@@ -69,6 +69,80 @@
       "missingDeal": "Kontekst sprawy jest niedostępny.",
       "notesTitle": "Notatki partnera",
       "notesEmpty": "Brak notatek partnera."
+    },
+    "directory": {
+      "title": "Pośrednicy",
+      "description": "Zapraszaj pośredników i zarządzaj ich dostępem do Portalu Klienta.",
+      "loading": "Ładowanie pośredników…",
+      "loadingMore": "Ładowanie kolejnych…",
+      "columns": {
+        "firstName": "Imię",
+        "lastName": "Nazwisko",
+        "email": "E-mail",
+        "status": "Status",
+        "relatedDeals": "Powiązane sprawy"
+      },
+      "fields": {
+        "firstName": "Imię",
+        "lastName": "Nazwisko",
+        "email": "E-mail"
+      },
+      "status": {
+        "delivery_failed": "Błąd dostarczenia",
+        "invited": "Zaproszony",
+        "expired": "Wygasło",
+        "active": "Aktywny",
+        "inactive": "Nieaktywny",
+        "emailWarning": "Wiadomość niedostarczona"
+      },
+      "filters": { "status": "Status" },
+      "search": { "placeholder": "Szukaj po nazwie lub dokładnym adresie e-mail" },
+      "empty": {
+        "title": "Brak pośredników",
+        "description": "Zaproszeni i aktywni pośrednicy pojawią się tutaj."
+      },
+      "dialog": {
+        "inviteTitle": "Zaproś pośrednika",
+        "editTitle": "Edytuj pośrednika"
+      },
+      "actions": {
+        "invite": "Zaproś pośrednika",
+        "save": "Zapisz",
+        "edit": "Edytuj",
+        "resend": "Wyślij ponownie",
+        "retry": "Ponów próbę",
+        "cancelInvitation": "Anuluj zaproszenie",
+        "deactivate": "Dezaktywuj",
+        "reactivate": "Reaktywuj",
+        "loadMore": "Załaduj więcej",
+        "retryLoad": "Spróbuj ponownie"
+      },
+      "confirm": {
+        "cancelTitle": "Anulować to zaproszenie?",
+        "cancelText": "Bieżący link zaproszenia przestanie działać. Rekord pośrednika zostanie zachowany jako nieaktywny.",
+        "deactivateTitle": "Dezaktywować tego pośrednika?",
+        "deactivateText": "Ten pośrednik ma {count} powiązanych spraw. Całe konto Portalu Klienta zostanie wyłączone, wszystkie sesje unieważnione, a dostęp wynikający ze wszystkich zachowanych ról zatrzymany. Przypisania pozostaną bez zmian.",
+        "reactivateTitle": "Reaktywować tego pośrednika?",
+        "reactivateLinkedText": "Całe konto Portalu Klienta i rola pośrednika zostaną przywrócone. Dostęp ze wszystkich zachowanych ról zostanie wznowiony, ale stare sesje pozostaną unieważnione.",
+        "reactivateUnlinkedText": "Zostanie utworzone i wysłane nowe zaproszenie ważne przez 72 godziny. Poprzednie linki pozostaną nieważne."
+      },
+      "flash": {
+        "invited": "Zaproszenie pośrednika zostało przetworzone.",
+        "updated": "Dane pośrednika zostały zaktualizowane.",
+        "resend": "Zaproszenie zostało wysłane ponownie.",
+        "cancelled": "Zaproszenie zostało anulowane.",
+        "deactivate": "Pośrednik został dezaktywowany.",
+        "reactivate": "Pośrednik został reaktywowany.",
+        "deliveryFailed": "Rekord zapisano, ale zaproszenia nie udało się dostarczyć. Użyj akcji Ponów próbę.",
+        "accessNoticeFailed": "Dostęp jest aktywny, ale wiadomości informacyjnej nie udało się dostarczyć.",
+        "requiresReactivation": "Istniejące konto portalowe jest nieaktywne. Użyj akcji Reaktywuj, aby przywrócić dostęp."
+      },
+      "errors": {
+        "load": "Nie udało się pobrać pośredników.",
+        "save": "Nie udało się zapisać pośrednika.",
+        "action": "Nie udało się wykonać akcji pośrednika.",
+        "blocked": "Zmiana pośrednika została zablokowana przez walidację."
+      }
     }
   }
 }

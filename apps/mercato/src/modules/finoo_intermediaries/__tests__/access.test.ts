@@ -85,20 +85,65 @@ describe('finoo_intermediaries access invariants', () => {
   it('requires an active scoped intermediary role membership', async () => {
     const role = { id: '55555555-5555-4555-8555-555555555555', slug: 'intermediary' }
     const user = { id: customerUserId, isActive: true }
-    const em = mockEntityManager([user, { id: '66666666-6666-4666-8666-666666666666' }], [[role]])
+    const directoryRow = { customerUserId, lifecycleState: 'active' }
+    const membership = { id: '66666666-6666-4666-8666-666666666666', user }
+    const em = mockEntityManager([], [[role], [directoryRow], [user], [membership]])
 
     await expect(loadAssignableIntermediary(em, {
       tenantId,
       organizationId,
       customerUserId,
     })).resolves.toEqual({ role, user })
+
+    expect((em.find as jest.Mock).mock.calls[1]?.[1]).toEqual({
+      tenantId,
+      organizationId,
+      lifecycleState: 'active',
+      customerUserId: { $in: [customerUserId] },
+      deletedAt: null,
+    })
+    expect((em.find as jest.Mock).mock.calls[2]?.[1]).toEqual({
+      id: { $in: [customerUserId] },
+      tenantId,
+      organizationId,
+      isActive: true,
+      deletedAt: null,
+    })
+    expect((em.find as jest.Mock).mock.calls[3]?.[1]).toEqual({
+      user: { $in: [customerUserId] },
+      role: role.id,
+      deletedAt: null,
+    })
   })
 
-  it('masks a missing intermediary membership as not found', async () => {
-    const em = mockEntityManager([
-      { id: customerUserId, isActive: true },
-      null,
-    ], [[{ id: '55555555-5555-4555-8555-555555555555', slug: 'intermediary' }]])
+  it.each([
+    ['missing', []],
+    ['inactive', []],
+    ['foreign scoped', []],
+    ['soft-deleted', []],
+  ])('masks a %s directory record as not found', async (_case, directoryRows) => {
+    const em = mockEntityManager([], [
+      [{ id: '55555555-5555-4555-8555-555555555555', slug: 'intermediary' }],
+      directoryRows,
+    ])
+
+    await expect(loadAssignableIntermediary(em, {
+      tenantId,
+      organizationId,
+      customerUserId,
+    })).rejects.toMatchObject<Partial<CrudHttpError>>({ status: 404 })
+
+    expect(em.find).toHaveBeenCalledTimes(2)
+  })
+
+  it('masks a missing active role membership as not found', async () => {
+    const user = { id: customerUserId, isActive: true }
+    const em = mockEntityManager([], [
+      [{ id: '55555555-5555-4555-8555-555555555555', slug: 'intermediary' }],
+      [{ customerUserId, lifecycleState: 'active' }],
+      [user],
+      [],
+    ])
 
     await expect(loadAssignableIntermediary(em, {
       tenantId,

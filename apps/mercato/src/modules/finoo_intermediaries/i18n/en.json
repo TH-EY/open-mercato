@@ -69,6 +69,80 @@
       "missingDeal": "Deal context is unavailable.",
       "notesTitle": "Partner notes",
       "notesEmpty": "No partner notes."
+    },
+    "directory": {
+      "title": "Intermediaries",
+      "description": "Invite and manage customer portal access for intermediaries.",
+      "loading": "Loading intermediaries…",
+      "loadingMore": "Loading more…",
+      "columns": {
+        "firstName": "First name",
+        "lastName": "Last name",
+        "email": "Email",
+        "status": "Status",
+        "relatedDeals": "Related Deals"
+      },
+      "fields": {
+        "firstName": "First name",
+        "lastName": "Last name",
+        "email": "Email"
+      },
+      "status": {
+        "delivery_failed": "Delivery failed",
+        "invited": "Invited",
+        "expired": "Expired",
+        "active": "Active",
+        "inactive": "Inactive",
+        "emailWarning": "Email not delivered"
+      },
+      "filters": { "status": "Status" },
+      "search": { "placeholder": "Search by name or exact email" },
+      "empty": {
+        "title": "No intermediaries yet",
+        "description": "Invited and active intermediaries will appear here."
+      },
+      "dialog": {
+        "inviteTitle": "Invite intermediary",
+        "editTitle": "Edit intermediary"
+      },
+      "actions": {
+        "invite": "Invite intermediary",
+        "save": "Save",
+        "edit": "Edit",
+        "resend": "Resend",
+        "retry": "Retry",
+        "cancelInvitation": "Cancel invitation",
+        "deactivate": "Deactivate",
+        "reactivate": "Reactivate",
+        "loadMore": "Load more",
+        "retryLoad": "Try again"
+      },
+      "confirm": {
+        "cancelTitle": "Cancel this invitation?",
+        "cancelText": "The current invitation link will stop working. The intermediary record will be preserved as inactive.",
+        "deactivateTitle": "Deactivate this intermediary?",
+        "deactivateText": "This intermediary has {count} related Deals. The entire Customer Portal account will be disabled, all sessions revoked, and access from every preserved role will stop. Assignments remain unchanged.",
+        "reactivateTitle": "Reactivate this intermediary?",
+        "reactivateLinkedText": "The entire Customer Portal account and intermediary membership will be restored. Access from all preserved roles will resume, but old sessions will remain revoked.",
+        "reactivateUnlinkedText": "A new 72-hour invitation will be created and sent. Any previous invitation link will remain invalid."
+      },
+      "flash": {
+        "invited": "Intermediary invitation processed.",
+        "updated": "Intermediary updated.",
+        "resend": "Invitation resent.",
+        "cancelled": "Invitation cancelled.",
+        "deactivate": "Intermediary deactivated.",
+        "reactivate": "Intermediary reactivated.",
+        "deliveryFailed": "The record was saved, but the invitation could not be delivered. Use Retry.",
+        "accessNoticeFailed": "Access is active, but the informational email could not be delivered.",
+        "requiresReactivation": "The existing portal account is inactive. Use Reactivate to restore access."
+      },
+      "errors": {
+        "load": "Unable to load intermediaries.",
+        "save": "Unable to save intermediary.",
+        "action": "Unable to complete the intermediary action.",
+        "blocked": "Intermediary change blocked by validation."
+      }
     }
   }
 }

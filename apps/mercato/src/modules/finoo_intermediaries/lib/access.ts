@@ -11,7 +11,8 @@ import {
   CustomerPipelineStage,
 } from '@open-mercato/core/modules/customers/data/entities'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
-import type { FinooIntermediaryAssignment } from '../data/entities'
+import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { FinooIntermediary, type FinooIntermediaryAssignment } from '../data/entities'
 import {
   isExactEligiblePipelineName,
   isExactEligibleStageLabel,
@@ -30,8 +31,83 @@ export type ScopedCustomerUserInput = {
   customerUserId: string
 }
 
+type ScopedIntermediaryEligibilityInput = {
+  tenantId: string
+  organizationId: string
+  customerUserIds?: string[]
+}
+
 function inaccessible(): CrudHttpError {
   return new CrudHttpError(404, { error: 'Resource not found' })
+}
+
+async function loadExactIntermediaryRole(
+  em: EntityManager,
+  input: Pick<ScopedIntermediaryEligibilityInput, 'tenantId' | 'organizationId'>,
+) {
+  const roles = await em.find(CustomerRole, {
+    tenantId: input.tenantId,
+    organizationId: input.organizationId,
+    slug: 'intermediary',
+    deletedAt: null,
+  } as FilterQuery<CustomerRole>)
+  if (roles.length !== 1) {
+    throw new CrudHttpError(422, {
+      error: 'Intermediary role configuration is ambiguous or missing',
+      code: 'intermediary_role_configuration',
+    })
+  }
+  return roles[0]
+}
+
+export async function loadEligibleIntermediaryUsers(
+  em: EntityManager,
+  input: ScopedIntermediaryEligibilityInput,
+) {
+  const role = await loadExactIntermediaryRole(em, input)
+  const candidateIds = input.customerUserIds
+    ? [...new Set(input.customerUserIds)]
+    : null
+  if (candidateIds?.length === 0) return { role, users: [] }
+
+  const directoryRows = await findWithDecryption(
+    em,
+    FinooIntermediary,
+    {
+      tenantId: input.tenantId,
+      organizationId: input.organizationId,
+      lifecycleState: 'active',
+      customerUserId: candidateIds ? { $in: candidateIds } : { $ne: null },
+      deletedAt: null,
+    } as FilterQuery<FinooIntermediary>,
+    undefined,
+    { tenantId: input.tenantId, organizationId: input.organizationId },
+  )
+  const directoryUserIds = directoryRows.flatMap((row) => row.customerUserId ? [row.customerUserId] : [])
+  if (directoryUserIds.length === 0) return { role, users: [] }
+
+  const users = await findWithDecryption(
+    em,
+    CustomerUser,
+    {
+      id: { $in: directoryUserIds },
+      tenantId: input.tenantId,
+      organizationId: input.organizationId,
+      isActive: true,
+      deletedAt: null,
+    } as FilterQuery<CustomerUser>,
+    undefined,
+    { tenantId: input.tenantId, organizationId: input.organizationId },
+  )
+  if (users.length === 0) return { role, users: [] }
+
+  const memberships = await em.find(CustomerUserRole, {
+    user: { $in: users.map((user) => user.id) },
+    role: role.id,
+    deletedAt: null,
+  } as FilterQuery<CustomerUserRole>, { populate: ['user'] })
+  const memberUserIds = new Set(memberships.map((membership) => membership.user.id))
+  return { role, users: users.filter((user) => memberUserIds.has(user.id)) }
 }
 
 async function loadScopedDeal(
@@ -104,35 +180,13 @@ export async function loadAssignableIntermediary(
   em: EntityManager,
   input: ScopedCustomerUserInput,
 ) {
-  const roles = await em.find(CustomerRole, {
+  const { role, users } = await loadEligibleIntermediaryUsers(em, {
     tenantId: input.tenantId,
     organizationId: input.organizationId,
-    slug: 'intermediary',
-    deletedAt: null,
-  } as FilterQuery<CustomerRole>)
-  if (roles.length !== 1) {
-    throw new CrudHttpError(422, {
-      error: 'Intermediary role configuration is ambiguous or missing',
-      code: 'intermediary_role_configuration',
-    })
-  }
-  const role = roles[0]
-
-  const user = await em.findOne(CustomerUser, {
-    id: input.customerUserId,
-    tenantId: input.tenantId,
-    organizationId: input.organizationId,
-    isActive: true,
-    deletedAt: null,
-  } as FilterQuery<CustomerUser>)
+    customerUserIds: [input.customerUserId],
+  })
+  const user = users[0]
   if (!user) throw inaccessible()
-
-  const membership = await em.findOne(CustomerUserRole, {
-    user: user.id,
-    role: role.id,
-    deletedAt: null,
-  } as FilterQuery<CustomerUserRole>)
-  if (!membership) throw inaccessible()
   return { role, user }
 }
 
