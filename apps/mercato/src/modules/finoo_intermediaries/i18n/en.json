@@ -67,6 +67,7 @@
       "blocked": "Assignment change blocked.",
       "loadError": "Unable to load intermediary assignment.",
       "missingDeal": "Deal context is unavailable.",
+      "ineligibleStage": "Move the deal to Sent To Partners to manage its intermediary assignment.",
       "notesTitle": "Partner notes",
       "notesEmpty": "No partner notes."
     },

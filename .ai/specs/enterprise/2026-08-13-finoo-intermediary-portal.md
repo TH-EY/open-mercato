@@ -270,7 +270,9 @@ Every route exports `openApi` and per-method `metadata`. Inputs use zod. Error m
 `GET /api/finoo_intermediaries/admin/assignments?dealId=<uuid>`
 
 - Guard: staff auth + `finoo_intermediaries.view`.
-- Response: `{ assignment: AssignmentView | null, notes: StaffNoteView[] }`.
+- Response: `{ assignment: AssignmentView | null, eligibility: { canManage: boolean, reason: 'ineligible_stage' | null }, notes: StaffNoteView[] }`.
+- Eligibility uses the exact configured stage for a new assignment and the captured stage UUID for an existing assignment.
+- A scoped Deal without a stage is a normal ineligible result; inaccessible Deals return 404 and ambiguous/missing eligible-stage configuration returns 422.
 - Staff notes are capped/paginated and available only to the authorized Deal scope.
 
 ### Staff intermediary picker
@@ -403,6 +405,7 @@ Inject one tab into `detail:customers.deal:tabs` with a stable widget/group ID o
 - Read-only summary: assignment identity, captured stage, partner status, timestamps.
 - Manage controls appear only with `finoo_intermediaries.manage`.
 - Intermediary picker queries only active scoped role members.
+- Outside the eligible stage, the picker and assignment mutation actions are disabled and an inline localized message tells staff to move the Deal to `Sent To Partners`; existing assignment data remains readable.
 - Assign/reassign/unassign use `apiCallOrThrow` and `useGuardedMutation`; no raw `fetch`.
 - Reassign/unassign confirmations use `useConfirmDialog()`.
 - Dialogs support `Cmd/Ctrl+Enter` and `Escape`.
@@ -521,7 +524,7 @@ All tests create tenant, organization, stage, role, portal users, Deal relations
 | ID | Scenario |
 |----|----------|
 | `TC-FINOO-INT-001` | Staff creates assignment for an active scoped intermediary while Deal is in exact `Sent To Partners`; read-back returns captured stage/role and leaves all Deal fields/custom values unchanged. |
-| `TC-FINOO-INT-002` | Assignment rejects `Sent To Intermediaries`, partial/case-unrelated labels, wrong role, inactive user, missing role, cross-organization user, duplicate active assignment, and inaccessible Deal. |
+| `TC-FINOO-INT-002` | Assignment read-back reports disabled eligibility outside `Sent To Partners` and enabled eligibility in the exact stage; direct creation outside the stage returns `ineligible_stage` and persists nothing; assignment also rejects partial/case-unrelated labels, wrong role, inactive user, missing role, cross-organization user, duplicate active assignment, and inaccessible Deal. |
 | `TC-FINOO-INT-003` | Reassign/unassign requires `expectedUpdatedAt`; stale writes return 409; old user loses access immediately; new user gets Deal access but not the old user's notes; undo restores only when safe. |
 | `TC-FINOO-INT-004` | Portal list/detail returns the eight canonical fields with correct types and dictionary label, including null primary-link behavior and selection of the oldest active scoped Company when an older link targets a soft-deleted Company, without extra CRM/PII fields. |
 | `TC-FINOO-INT-005` | Moving Deal away from captured stage hides it; returning to the same UUID restores it; renaming the same stage does not break reads or reassignment; a different similarly named stage never qualifies. |
@@ -720,6 +723,12 @@ None identified in the authored specification. Implementation readiness remains 
 **Fully compliant: Approved for pre-implementation readiness analysis.** This is not yet authorization to deploy or create an upstream contribution.
 
 ## Changelog
+
+### 2026-08-17 — THOM-97
+
+- Added server-derived assignment eligibility to the staff Deal tab read model.
+- Disabled intermediary selection, save, unassign, and retry outside the eligible stage, with a localized inline instruction to move the Deal to `Sent To Partners`.
+- Preserved captured-stage UUID behavior for existing assignments and the direct API no-persistence guard; added focused access, widget, and integration coverage.
 
 ### 2026-08-17 — THOM-98
 

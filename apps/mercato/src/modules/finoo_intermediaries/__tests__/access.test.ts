@@ -1,7 +1,12 @@
 import { LockMode } from '@mikro-orm/core'
 import type { EntityManager } from '@mikro-orm/postgresql'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
-import { assertAssignmentStillEligible, loadAssignableIntermediary, loadEligibleDeal } from '../lib/access'
+import {
+  assertAssignmentStillEligible,
+  loadAssignableIntermediary,
+  loadEligibleDeal,
+  resolveAssignmentEligibility,
+} from '../lib/access'
 import type { FinooIntermediaryAssignment } from '../data/entities'
 
 const tenantId = '11111111-1111-4111-8111-111111111111'
@@ -80,6 +85,78 @@ describe('finoo_intermediaries access invariants', () => {
       lockMode: LockMode.PESSIMISTIC_WRITE,
     })
     expect(em.find).not.toHaveBeenCalled()
+  })
+
+  it('reports that a new assignment is unavailable outside the exact eligible stage', async () => {
+    const em = mockEntityManager([
+      {
+        id: dealId,
+        pipelineId: '77777777-7777-4777-8777-777777777777',
+        pipelineStageId: '66666666-6666-4666-8666-666666666666',
+      },
+    ], [
+      [{ id: '77777777-7777-4777-8777-777777777777', name: 'Web Form Sales Pipeline' }],
+      [{
+        id: '55555555-5555-4555-8555-555555555555',
+        pipelineId: '77777777-7777-4777-8777-777777777777',
+        label: 'Sent To Partners',
+      }],
+    ])
+
+    await expect(resolveAssignmentEligibility(em, { tenantId, organizationId, dealId }))
+      .resolves.toEqual({ canManage: false, reason: 'ineligible_stage' })
+  })
+
+  it('reports a stage-less Deal as unavailable instead of inaccessible', async () => {
+    const em = mockEntityManager([{
+      id: dealId,
+      pipelineId: '77777777-7777-4777-8777-777777777777',
+      pipelineStageId: null,
+    }])
+
+    await expect(resolveAssignmentEligibility(em, { tenantId, organizationId, dealId }))
+      .resolves.toEqual({ canManage: false, reason: 'ineligible_stage' })
+    expect(em.find).not.toHaveBeenCalled()
+  })
+
+  it('rejects assignment of a stage-less Deal with clear validation', async () => {
+    const em = mockEntityManager([{
+      id: dealId,
+      pipelineId: '77777777-7777-4777-8777-777777777777',
+      pipelineStageId: null,
+    }])
+
+    await expect(loadEligibleDeal(em, { tenantId, organizationId, dealId }))
+      .rejects.toMatchObject<Partial<CrudHttpError>>({ status: 422 })
+    expect(em.find).not.toHaveBeenCalled()
+  })
+
+  it('reports that a captured assignment remains manageable while the Deal stays in its captured stage', async () => {
+    const eligibleStageId = '55555555-5555-4555-8555-555555555555'
+    const em = mockEntityManager([{ id: dealId, pipelineStageId: eligibleStageId }])
+
+    await expect(resolveAssignmentEligibility(em, {
+      tenantId,
+      organizationId,
+      dealId,
+      eligibleStageId,
+    })).resolves.toEqual({ canManage: true, reason: null })
+
+    expect(em.find).not.toHaveBeenCalled()
+  })
+
+  it('reports that a captured assignment is read-only after the Deal leaves its captured stage', async () => {
+    const em = mockEntityManager([{
+      id: dealId,
+      pipelineStageId: '66666666-6666-4666-8666-666666666666',
+    }])
+
+    await expect(resolveAssignmentEligibility(em, {
+      tenantId,
+      organizationId,
+      dealId,
+      eligibleStageId: '55555555-5555-4555-8555-555555555555',
+    })).resolves.toEqual({ canManage: false, reason: 'ineligible_stage' })
   })
 
   it('requires an active scoped intermediary role membership', async () => {

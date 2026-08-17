@@ -15,6 +15,7 @@ import {
 } from '../../../lib/http'
 import { encodeCursor } from '../../../lib/pagination'
 import { loadStaffNotes } from '../../../lib/staff-notes'
+import { resolveAssignmentEligibility } from '../../../lib/access'
 
 export const metadata = {
   GET: { requireAuth: true, requireFeatures: ['finoo_intermediaries.view'] },
@@ -56,8 +57,15 @@ export async function GET(req: Request) {
           pageSize: 50,
         })
       : { items: [], nextCursor: null }
+    const eligibility = await resolveAssignmentEligibility(requestContext.em, {
+      tenantId: requestContext.tenantId,
+      organizationId: requestContext.organizationId,
+      dealId: query.dealId,
+      eligibleStageId: assignment?.eligibleStageId,
+    })
     return NextResponse.json({
       assignment: assignment ? serializeAssignment(assignment) : null,
+      eligibility,
       notes: notes.items,
       notesNextCursor: notes.nextCursor ? encodeCursor(notes.nextCursor) : null,
     })
@@ -100,6 +108,10 @@ const assignmentViewSchema = z.object({
 })
 const assignmentResponseSchema = z.object({ assignment: assignmentViewSchema.nullable() })
 const assignmentReadResponseSchema = assignmentResponseSchema.extend({
+  eligibility: z.object({
+    canManage: z.boolean(),
+    reason: z.literal('ineligible_stage').nullable(),
+  }),
   notes: z.array(z.object({
     id: z.string().uuid(),
     authorCustomerUserId: z.string().uuid(),
@@ -109,7 +121,7 @@ const assignmentReadResponseSchema = assignmentResponseSchema.extend({
   })),
   notesNextCursor: z.string().nullable(),
 })
-const errorSchema = z.object({ error: z.string() })
+const errorSchema = z.object({ error: z.string(), code: z.string().optional() })
 
 export const openApi: OpenApiRouteDoc = {
   tag: 'FINOO Intermediaries',
@@ -119,13 +131,20 @@ export const openApi: OpenApiRouteDoc = {
       summary: 'Read the active intermediary assignment for a Deal',
       query: assignmentQuerySchema,
       responses: [{ status: 200, description: 'Assignment result with the first staff-note page', schema: assignmentReadResponseSchema }],
-      errors: [{ status: 401, description: 'Unauthorized', schema: errorSchema }],
+      errors: [
+        { status: 401, description: 'Unauthorized', schema: errorSchema },
+        { status: 404, description: 'Deal not found in the current scope', schema: errorSchema },
+        { status: 422, description: 'Eligible pipeline or stage configuration is ambiguous or missing', schema: errorSchema },
+      ],
     },
     POST: {
       summary: 'Assign an eligible Deal to an intermediary',
       requestBody: { contentType: 'application/json', schema: assignmentCreateSchema },
       responses: [{ status: 201, description: 'Assignment created', schema: assignmentResponseSchema }],
-      errors: [{ status: 409, description: 'Assignment or stage conflict', schema: errorSchema }],
+      errors: [
+        { status: 409, description: 'Assignment conflict', schema: errorSchema },
+        { status: 422, description: 'Deal or intermediary is not eligible for assignment', schema: errorSchema },
+      ],
     },
   },
 }
