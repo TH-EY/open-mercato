@@ -93,7 +93,7 @@ export const finooDealAttributionUpsertSchema = z.object({
   dealId: z.string().uuid(),
   affiliateUserId: z.string().uuid(),
   commissionStatusEntryId: z.string().uuid(),
-  commissionAmount: z.coerce.number().int().min(0).max(2_147_483_647),
+  commissionAmount: z.coerce.number().int().min(0).max(2_147_483_647).optional(),
 })
 
 export const finooDashboardRangeSchema = z.object({

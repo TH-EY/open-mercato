@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { finooAffiliateCommissionUpdateSchema } from '../validators'
+import { finooAffiliateCommissionUpdateSchema, finooDealAttributionUpsertSchema } from '../validators'
 
 const id = '11111111-1111-4111-8111-111111111111'
 const updatedAt = '2026-08-14T10:00:00.000Z'
@@ -49,5 +49,20 @@ describe('Finoo affiliate commission contracts', () => {
     expect(migration).toContain('create or replace function finoo_capture_first_deal_acceptance()')
     expect(migration).toContain('override down(): void {}')
     expect(migration).not.toContain('drop column')
+  })
+
+  it('accepts Deal attribution updates without a legacy amount', () => {
+    expect(finooDealAttributionUpsertSchema.parse({
+      dealId: id,
+      affiliateUserId: '22222222-2222-4222-8222-222222222222',
+      commissionStatusEntryId: '33333333-3333-4333-8333-333333333333',
+    })).not.toHaveProperty('commissionAmount')
+
+    expect(finooDealAttributionUpsertSchema.parse({
+      dealId: id,
+      affiliateUserId: '22222222-2222-4222-8222-222222222222',
+      commissionStatusEntryId: '33333333-3333-4333-8333-333333333333',
+      commissionAmount: 275,
+    })).toMatchObject({ commissionAmount: 275 })
   })
 })

@@ -9,10 +9,10 @@ import { runRouteMutationGuards } from '@open-mercato/shared/lib/crud/route-muta
 import { isCrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { readJsonSafe } from '@open-mercato/shared/lib/http/readJsonSafe'
 import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
-import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/directory/utils/organizationScope'
 import { CustomerDeal } from '@open-mercato/core/modules/customers/data/entities'
-import { FinooAffiliateTransaction, FinooDealAttribution } from '../../data/entities'
+import { FinooAffiliate, FinooAffiliateTransaction, FinooDealAttribution } from '../../data/entities'
 import { finooDealAttributionUpsertSchema } from '../../data/validators'
 import type { FinooAffiliateService } from '../../lib/service'
 
@@ -51,7 +51,7 @@ export async function GET(request: Request): Promise<Response> {
   const em = resolved.container.resolve('em') as EntityManager
   if (!await requireDeal(em, parsed.data.dealId, resolved.scope)) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   const service = resolved.container.resolve('finooAffiliateService') as FinooAffiliateService
-  const [attribution, transaction, affiliates, statuses] = await Promise.all([
+  const [attribution, transaction, affiliates, affiliateMemberships, statuses] = await Promise.all([
     findOneWithDecryption(
       em,
       FinooDealAttribution,
@@ -67,9 +67,31 @@ export async function GET(request: Request): Promise<Response> {
       resolved.scope,
     ),
     service.listAffiliateUsers(resolved.scope),
+    findWithDecryption(
+      em,
+      FinooAffiliate,
+      { ...resolved.scope, deletedAt: null },
+      undefined,
+      resolved.scope,
+    ),
     service.listCommissionStatuses(resolved.scope),
   ])
+  const membershipByUserId = new Map(
+    affiliateMemberships.flatMap((affiliate) => (
+      affiliate.customerUserId ? [[affiliate.customerUserId, affiliate] as const] : []
+    )),
+  )
+  const transactionProjection = transaction ? {
+    id: transaction.id,
+    affiliateUserId: transaction.affiliateUserId,
+    amount: transaction.commissionAmount,
+    currency: transaction.currency,
+    status: transaction.commissionStatus,
+    commissionMode: transaction.commissionMode,
+    acceptedAt: transaction.acceptedAt.toISOString(),
+  } : null
   return NextResponse.json({
+    transaction: transactionProjection,
     attribution: attribution ? {
       id: attribution.id,
       dealId: attribution.dealId,
@@ -86,10 +108,22 @@ export async function GET(request: Request): Promise<Response> {
       affiliateProgramStatus: transaction?.commissionStatus ?? 'processing',
       affiliateTransactionId: transaction?.id ?? null,
       affiliateTransactionAmount: transaction?.commissionAmount ?? null,
+      affiliateTransactionCurrency: transaction?.currency ?? null,
+      affiliateTransactionStatus: transaction?.commissionStatus ?? null,
+      affiliateTransactionCommissionMode: transaction?.commissionMode ?? null,
       affiliateTransactionAcceptedAt: transaction?.acceptedAt.toISOString() ?? null,
       updatedAt: attribution.updatedAt.toISOString(),
     } : null,
-    affiliates: affiliates.map((user) => ({ id: user.id, displayName: user.displayName, email: user.email })),
+    affiliates: affiliates.flatMap((user) => {
+      const membership = membershipByUserId.get(user.id)
+      if (membership && !membership.isActive) return []
+      return [{
+        id: user.id,
+        displayName: user.displayName,
+        email: user.email,
+        commissionMode: membership?.commissionMode ?? null,
+      }]
+    }),
     statuses: statuses.map((entry) => ({ id: entry.id, value: entry.normalizedValue, label: entry.label })),
   })
 }
@@ -177,8 +211,21 @@ const attributionSchema = z.object({
   affiliateProgramStatus: z.enum(['processing', 'approved', 'rejected', 'paid_out']),
   affiliateTransactionId: z.string().uuid().nullable(),
   affiliateTransactionAmount: z.number().int().nullable(),
+  affiliateTransactionCurrency: z.string().nullable(),
+  affiliateTransactionStatus: z.enum(['processing', 'approved', 'rejected', 'paid_out']).nullable(),
+  affiliateTransactionCommissionMode: z.enum(['legacy_deal_amount', 'percentage', 'fixed']).nullable(),
   affiliateTransactionAcceptedAt: z.string().datetime().nullable(),
   updatedAt: z.string().datetime(),
+})
+
+const transactionSchema = z.object({
+  id: z.string().uuid(),
+  affiliateUserId: z.string().uuid(),
+  amount: z.number().int(),
+  currency: z.string(),
+  status: z.enum(['processing', 'approved', 'rejected', 'paid_out']),
+  commissionMode: z.enum(['legacy_deal_amount', 'percentage', 'fixed']),
+  acceptedAt: z.string().datetime(),
 })
 
 export const openApi: OpenApiRouteDoc = {
@@ -187,7 +234,7 @@ export const openApi: OpenApiRouteDoc = {
     GET: {
       summary: 'Get Finoo affiliate and commission fields for a Deal',
       query: dealQuerySchema,
-      responses: [{ status: 200, description: 'Deal attribution editor data', schema: z.object({ attribution: attributionSchema.nullable(), affiliates: z.array(z.object({ id: z.string().uuid(), displayName: z.string(), email: z.string().email() })), statuses: z.array(z.object({ id: z.string().uuid(), value: z.string(), label: z.string() })) }) }],
+      responses: [{ status: 200, description: 'Deal attribution editor data', schema: z.object({ transaction: transactionSchema.nullable(), attribution: attributionSchema.nullable(), affiliates: z.array(z.object({ id: z.string().uuid(), displayName: z.string(), email: z.string().email(), commissionMode: z.enum(['percentage', 'fixed']).nullable() })), statuses: z.array(z.object({ id: z.string().uuid(), value: z.string(), label: z.string() })) }) }],
     },
     PUT: {
       summary: 'Create or update Finoo affiliate and commission fields for a Deal',
