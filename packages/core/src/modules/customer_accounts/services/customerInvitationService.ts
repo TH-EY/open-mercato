@@ -1,3 +1,4 @@
+import { LockMode } from '@mikro-orm/core'
 import { EntityManager } from '@mikro-orm/postgresql'
 import { hash } from 'bcryptjs'
 import {
@@ -39,12 +40,14 @@ export class CustomerInvitationService {
       invitedByCustomerUserId?: string | null
       displayName?: string | null
     },
+    operationEm?: EntityManager,
   ): Promise<{
     invitation: CustomerUserInvitation
     rawToken: string
     reused: boolean
     rollbackState: CustomerInvitationRollbackState | null
   }> {
+    const em = operationEm ?? this.em
     const token = generateSecureToken()
     const emailHash = hashForLookup(email)
     const normalizedEmail = email.toLowerCase().trim()
@@ -56,7 +59,7 @@ export class CustomerInvitationService {
     // row/token growth and keeps a single live token per concurrently-pending
     // (tenant, organization, email) tuple.
     const existing = await findOneWithDecryption(
-      this.em,
+      em,
       CustomerUserInvitation,
       {
         tenantId: scope.tenantId,
@@ -91,11 +94,11 @@ export class CustomerInvitationService {
       existing.invitedByCustomerUserId = options.invitedByCustomerUserId || null
       existing.displayName = options.displayName || null
       existing.expiresAt = expiresAt
-      await this.em.flush()
+      await em.flush()
       return { invitation: existing, rawToken: token, reused: true, rollbackState }
     }
 
-    const invitation = this.em.create(CustomerUserInvitation, {
+    const invitation = em.create(CustomerUserInvitation, {
       tenantId: scope.tenantId,
       organizationId: scope.organizationId,
       email: normalizedEmail,
@@ -110,7 +113,7 @@ export class CustomerInvitationService {
       expiresAt,
       createdAt: new Date(),
     } as any) as CustomerUserInvitation
-    await this.em.persist(invitation).flush()
+    await em.persist(invitation).flush()
     return { invitation, rawToken: token, reused: false, rollbackState: null }
   }
 
@@ -154,58 +157,68 @@ export class CustomerInvitationService {
     password: string,
     displayName: string,
   ): Promise<{ user: CustomerUser; invitation: CustomerUserInvitation } | null> {
-    const invitation = await this.findByToken(token)
-    if (!invitation) return null
+    const candidate = await this.findByToken(token)
+    if (!candidate) return null
 
     const passwordHash = await hash(password, BCRYPT_COST)
-    const emailHash = hashForLookup(invitation.email)
+    const tokenHashed = hashToken(token)
 
-    // Create user
-    const user = this.em.create(CustomerUser, {
-      email: invitation.email,
-      emailHash,
-      passwordHash,
-      displayName: displayName || invitation.displayName || invitation.email,
-      tenantId: invitation.tenantId,
-      organizationId: invitation.organizationId,
-      customerEntityId: invitation.customerEntityId || null,
-      personEntityId: invitation.personEntityId || null,
-      isActive: true,
-      emailVerifiedAt: new Date(), // Invitation implicitly verifies email
-      failedLoginAttempts: 0,
-      createdAt: new Date(),
-    } as any) as CustomerUser
-    this.em.persist(user)
+    return await this.em.transactional(async (em) => {
+      const invitation = await findOneWithDecryption(
+        em,
+        CustomerUserInvitation,
+        { id: candidate.id, token: tokenHashed } as any,
+        { lockMode: LockMode.PESSIMISTIC_WRITE },
+      )
+      if (!invitation) return null
+      if (invitation.acceptedAt || invitation.cancelledAt || invitation.expiresAt.getTime() <= Date.now()) {
+        return null
+      }
 
-    // Assign roles
-    const roleIds = Array.isArray(invitation.roleIdsJson) ? invitation.roleIdsJson : []
-    const roles = roleIds.length > 0
-      ? await findWithDecryption(
-          this.em,
-          CustomerRole,
-          {
-            id: { $in: roleIds } as any,
-            tenantId: invitation.tenantId,
-            organizationId: invitation.organizationId,
-            deletedAt: null,
-          } as any,
-          undefined,
-          { tenantId: invitation.tenantId, organizationId: invitation.organizationId },
-        )
-      : []
-    for (const role of roles) {
-      const userRole = this.em.create(CustomerUserRole, {
-        user,
-        role,
+      const emailHash = hashForLookup(invitation.email)
+      const user = em.create(CustomerUser, {
+        email: invitation.email,
+        emailHash,
+        passwordHash,
+        displayName: displayName || invitation.displayName || invitation.email,
+        tenantId: invitation.tenantId,
+        organizationId: invitation.organizationId,
+        customerEntityId: invitation.customerEntityId || null,
+        personEntityId: invitation.personEntityId || null,
+        isActive: true,
+        emailVerifiedAt: new Date(),
+        failedLoginAttempts: 0,
         createdAt: new Date(),
-      } as any)
-      this.em.persist(userRole)
-    }
+      } as any) as CustomerUser
+      em.persist(user)
 
-    // Mark invitation as accepted
-    invitation.acceptedAt = new Date()
+      const roleIds = Array.isArray(invitation.roleIdsJson) ? invitation.roleIdsJson : []
+      const roles = roleIds.length > 0
+        ? await findWithDecryption(
+            em,
+            CustomerRole,
+            {
+              id: { $in: roleIds } as any,
+              tenantId: invitation.tenantId,
+              organizationId: invitation.organizationId,
+              deletedAt: null,
+            } as any,
+            undefined,
+            { tenantId: invitation.tenantId, organizationId: invitation.organizationId },
+          )
+        : []
+      for (const role of roles) {
+        const userRole = em.create(CustomerUserRole, {
+          user,
+          role,
+          createdAt: new Date(),
+        } as any)
+        em.persist(userRole)
+      }
 
-    await this.em.flush()
-    return { user, invitation }
+      invitation.acceptedAt = new Date()
+      await em.flush()
+      return { user, invitation }
+    })
   }
 }

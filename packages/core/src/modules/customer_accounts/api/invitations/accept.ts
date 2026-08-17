@@ -56,11 +56,11 @@ export async function POST(req: Request) {
     invitationId: invitation.id,
   }).catch(() => undefined)
 
-  void emitCustomerAccountsEvent('customer_accounts.invitation.accepted', {
+  await emitCustomerAccountsEvent('customer_accounts.invitation.accepted', {
     invitationId: invitation.id,
     userId: user.id,
     tenantId: user.tenantId,
-  }).catch(() => undefined)
+  }, { persistent: true }).catch(() => undefined)
 
   const res = NextResponse.json({
     ok: true,

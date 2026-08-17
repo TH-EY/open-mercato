@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { LockMode } from '@mikro-orm/core'
 import type { EntityManager } from '@mikro-orm/postgresql'
 import { CustomerInvitationService } from '@open-mercato/core/modules/customer_accounts/services/customerInvitationService'
 import {
@@ -36,7 +37,7 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
   const tenantId = '11111111-1111-4111-8111-111111111111'
   const organizationId = '22222222-2222-4222-8222-222222222222'
 
-  let mockEm: jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush'>>
+  let mockEm: jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush' | 'transactional'>>
   let service: CustomerInvitationService
 
   beforeEach(() => {
@@ -47,7 +48,10 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
       create: jest.fn((_: unknown, data: unknown) => data as any),
       persist: jest.fn(),
       flush: jest.fn(async () => undefined),
-    } as unknown as jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush'>>
+      transactional: jest.fn(async (callback: (em: EntityManager) => Promise<unknown>) => (
+        callback(mockEm as unknown as EntityManager)
+      )),
+    } as unknown as jest.Mocked<Pick<EntityManager, 'find' | 'findOne' | 'create' | 'persist' | 'flush' | 'transactional'>>
     service = new CustomerInvitationService(mockEm as unknown as EntityManager)
   })
 
@@ -77,6 +81,12 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
 
     const result = await service.acceptInvitation('raw-token', 'Secret123!', 'New User')
     expect(result).not.toBeNull()
+    expect(mockEm.transactional).toHaveBeenCalledTimes(1)
+    expect(mockEm.findOne).toHaveBeenCalledWith(
+      CustomerUserInvitation,
+      { id: 'inv-1', token: 'hashed-token' },
+      { lockMode: LockMode.PESSIMISTIC_WRITE },
+    )
 
     const roleFinds = (mockEm.find as jest.Mock).mock.calls.filter((call) => call[0] === CustomerRole)
     expect(roleFinds).toHaveLength(1)
@@ -192,6 +202,33 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
     await service.acceptInvitation('raw-token', 'Secret123!', 'New User')
     const roleFinds = (mockEm.find as jest.Mock).mock.calls.filter((call) => call[0] === CustomerRole)
     expect(roleFinds).toHaveLength(0)
+  })
+
+  it('fails closed when cancellation wins before the locked acceptance claim', async () => {
+    const pendingInvitation = {
+      id: 'inv-cancelled',
+      email: 'new@example.com',
+      tenantId,
+      organizationId,
+      roleIdsJson: [],
+      expiresAt: new Date(Date.now() + 60_000),
+      acceptedAt: null,
+      cancelledAt: null,
+    } as unknown as CustomerUserInvitation
+    const cancelledInvitation = {
+      ...pendingInvitation,
+      cancelledAt: new Date(),
+    } as unknown as CustomerUserInvitation
+
+    ;(mockEm.findOne as jest.Mock)
+      .mockResolvedValueOnce(pendingInvitation)
+      .mockResolvedValueOnce(cancelledInvitation)
+
+    const result = await service.acceptInvitation('raw-token', 'Secret123!', 'New User')
+
+    expect(result).toBeNull()
+    expect(mockEm.create).not.toHaveBeenCalledWith(CustomerUser, expect.anything())
+    expect(mockEm.flush).not.toHaveBeenCalled()
   })
 })
 
@@ -309,6 +346,33 @@ describe('CustomerInvitationService.createInvitation — pending-invitation dedu
     expect(result.rawToken).toBe('raw-token')
     expect(result.reused).toBe(false)
     expect(result.rollbackState).toBeNull()
+  })
+
+  it('uses a caller-supplied EntityManager without touching the constructor EntityManager', async () => {
+    const operationEm = {
+      findOne: jest.fn(async () => null),
+      create: jest.fn((_: unknown, data: unknown) => data),
+      persist: jest.fn(),
+      flush: jest.fn(async () => undefined),
+    }
+    operationEm.persist.mockReturnValue(operationEm)
+
+    await service.createInvitation(
+      'fresh@example.com',
+      { tenantId, organizationId },
+      { roleIds },
+      operationEm as unknown as EntityManager,
+    )
+
+    expect(operationEm.findOne).toHaveBeenCalled()
+    expect(operationEm.create).toHaveBeenCalledWith(
+      CustomerUserInvitation,
+      expect.objectContaining({ tenantId, organizationId }),
+    )
+    expect(operationEm.flush).toHaveBeenCalledTimes(1)
+    expect(mockEm.findOne).not.toHaveBeenCalled()
+    expect(mockEm.create).not.toHaveBeenCalled()
+    expect(mockEm.flush).not.toHaveBeenCalled()
   })
 })
 
