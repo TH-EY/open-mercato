@@ -14,7 +14,14 @@ import { Input } from '@open-mercato/ui/primitives/input'
 import { Label } from '@open-mercato/ui/primitives/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@open-mercato/ui/primitives/select'
 
-type Option = { id: string; displayName?: string; email?: string; value?: string; label?: string }
+type Option = {
+  id: string
+  displayName?: string
+  email?: string
+  value?: string
+  label?: string
+  commissionMode?: 'percentage' | 'fixed' | null
+}
 type Attribution = {
   id: string
   affiliateUserId: string
@@ -26,9 +33,21 @@ type Attribution = {
   affiliateProgramStatus: 'processing' | 'approved' | 'rejected' | 'paid_out'
   affiliateTransactionId: string | null
   affiliateTransactionAmount: number | null
+  affiliateTransactionCurrency: string | null
+  affiliateTransactionStatus: 'processing' | 'approved' | 'rejected' | 'paid_out' | null
+  affiliateTransactionCommissionMode: 'legacy_deal_amount' | 'percentage' | 'fixed' | null
   updatedAt: string
 }
-type EditorPayload = { attribution: Attribution | null; affiliates: Option[]; statuses: Option[] }
+type Transaction = {
+  id: string
+  affiliateUserId: string
+  amount: number
+  currency: string
+  status: 'processing' | 'approved' | 'rejected' | 'paid_out'
+  commissionMode: 'legacy_deal_amount' | 'percentage' | 'fixed'
+  acceptedAt: string
+}
+type EditorPayload = { transaction: Transaction | null; attribution: Attribution | null; affiliates: Option[]; statuses: Option[] }
 export type WidgetContext = { dealId?: string | null; resourceId?: string | null }
 
 function readDealId(context: WidgetContext | undefined): string | null {
@@ -45,6 +64,9 @@ export default function DealAttributionWidget({ context, disabled }: InjectionWi
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const selectedAffiliate = data?.affiliates.find((affiliate) => affiliate.id === affiliateUserId)
+  const usesLegacyCommission = selectedAffiliate?.commissionMode === null
+  const canEditLegacyCommission = usesLegacyCommission && !data?.transaction
   const { runMutation, retryLastMutation } = useGuardedMutation<WidgetContext & { retryLastMutation: () => Promise<boolean> }>({
     contextId: `finoo-affiliate-deal:${dealId ?? 'unknown'}`,
   })
@@ -56,7 +78,7 @@ export default function DealAttributionWidget({ context, disabled }: InjectionWi
     try {
       const payload = await readApiResultOrThrow<EditorPayload>(`/api/finoo_affiliates/deal-attributions?dealId=${encodeURIComponent(dealId)}`)
       setData(payload)
-      setAffiliateUserId(payload.attribution?.affiliateUserId ?? '')
+      setAffiliateUserId(payload.attribution?.affiliateUserId ?? payload.transaction?.affiliateUserId ?? '')
       setCommissionStatusEntryId(
         payload.attribution?.commissionStatusEntryId
           ?? payload.statuses.find((status) => status.value === 'waiting')?.id
@@ -81,7 +103,7 @@ export default function DealAttributionWidget({ context, disabled }: InjectionWi
       dealId,
       affiliateUserId,
       commissionStatusEntryId,
-      commissionAmount: Number(commissionAmount),
+      ...(canEditLegacyCommission ? { commissionAmount: Number(commissionAmount) } : {}),
     }
     setSaving(true)
     setError(null)
@@ -141,18 +163,35 @@ export default function DealAttributionWidget({ context, disabled }: InjectionWi
           </div>
         </dl>
       ) : null}
-      {data?.attribution?.affiliateTransactionId ? (
+      {data?.transaction ? (
         <dl className="grid gap-4 border-t border-border pt-4 text-sm sm:grid-cols-2">
           <div>
-            <dt className="text-muted-foreground">{t('finooAffiliates.transactions.status', 'Commission status')}</dt>
-            <dd className="mt-1">{t(`finooAffiliates.transactions.statuses.${data.attribution.affiliateProgramStatus}`, data.attribution.affiliateProgramStatus)}</dd>
+            <dt className="text-muted-foreground">{t('finooAffiliates.deal.transactionStatus', 'Transaction status')}</dt>
+            <dd className="mt-1">{data.transaction.status
+              ? t(
+                `finooAffiliates.transactions.statuses.${data.transaction.status}`,
+                data.transaction.status,
+              )
+              : '—'}</dd>
           </div>
           <div>
             <dt className="text-muted-foreground">{t('finooAffiliates.transactions.amount', 'Commission amount')}</dt>
-            <dd className="mt-1">{data.attribution.affiliateTransactionAmount?.toLocaleString() ?? '—'} PLN</dd>
+            <dd className="mt-1">
+              {data.transaction.amount.toLocaleString()} {data.transaction.currency}
+            </dd>
           </div>
         </dl>
-      ) : null}
+      ) : (
+        <div className="border-t border-border pt-4 text-sm">
+          <p className="font-medium">{t('finooAffiliates.deal.notCalculatedTitle', 'Not calculated yet')}</p>
+          <p className="mt-1 text-muted-foreground">
+            {t(
+              'finooAffiliates.deal.notCalculatedDescription',
+              'Commission is calculated and snapshotted when the Deal first reaches Accepted.',
+            )}
+          </p>
+        </div>
+      )}
       <div className="space-y-1.5">
         <Label htmlFor="finoo-commission-status">{t('finooAffiliates.deal.commissionStatus', 'Commission status')}</Label>
         <Select value={commissionStatusEntryId} onValueChange={setCommissionStatusEntryId} disabled={disabled || saving}>
@@ -164,20 +203,30 @@ export default function DealAttributionWidget({ context, disabled }: InjectionWi
           </SelectContent>
         </Select>
       </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="finoo-commission-amount">{t('finooAffiliates.deal.commissionAmount', 'Commission amount')}</Label>
-        <Input
-          id="finoo-commission-amount"
-          type="number"
-          min={0}
-          step={1}
-          value={commissionAmount}
-          onChange={(event) => setCommissionAmount(event.target.value)}
-          disabled={disabled || saving}
-          required
-        />
-      </div>
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {canEditLegacyCommission ? (
+        <div className="space-y-1.5">
+          <Label htmlFor="finoo-commission-amount">
+            {t('finooAffiliates.deal.legacyCommissionAmount', 'Legacy commission amount')}
+          </Label>
+          <Input
+            id="finoo-commission-amount"
+            type="number"
+            min={0}
+            step={1}
+            value={commissionAmount}
+            onChange={(event) => setCommissionAmount(event.target.value)}
+            disabled={disabled || saving}
+            required
+          />
+          <p className="text-sm text-muted-foreground">
+            {t(
+              'finooAffiliates.deal.legacyCommissionDescription',
+              'This legacy amount remains the commission source until the affiliate uses a Percentage or Fixed rule.',
+            )}
+          </p>
+        </div>
+      ) : null}
+      {error ? <p className="text-sm text-status-error-text">{error}</p> : null}
       <Button type="submit" disabled={disabled || saving || !affiliateUserId || !commissionStatusEntryId}>
         {saving ? t('finooAffiliates.common.saving', 'Saving…') : t('finooAffiliates.common.save', 'Save')}
       </Button>

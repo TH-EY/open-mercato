@@ -354,10 +354,16 @@ const upsertAttributionCommand: CommandHandler<Record<string, unknown>, FinooDea
     const affiliate = await findOneWithDecryption(
       em,
       FinooAffiliate,
-      { customerUserId: input.affiliateUserId, ...scope, isActive: true, deletedAt: null },
+      { customerUserId: input.affiliateUserId, ...scope, deletedAt: null },
       undefined,
       scope,
     )
+    if (affiliate && !affiliate.isActive) {
+      throw new CrudHttpError(422, {
+        error: '[internal] Affiliate membership is inactive',
+        code: 'inactive_affiliate',
+      })
+    }
     let attribution = await findOneWithDecryption(
       em,
       FinooDealAttribution,
@@ -365,6 +371,14 @@ const upsertAttributionCommand: CommandHandler<Record<string, unknown>, FinooDea
       undefined,
       scope,
     )
+    const commissionAmount = input.commissionAmount ?? attribution?.commissionAmount
+    if (commissionAmount === undefined && !affiliate?.commissionMode) {
+      throw new CrudHttpError(422, {
+        error: '[internal] Legacy affiliate commission amount is required',
+        code: 'legacy_commission_amount_required',
+      })
+    }
+    const storedCommissionAmount = commissionAmount ?? 0
     const commandBus = ctx.container.resolve('commandBus') as import('@open-mercato/shared/lib/commands').CommandBus
     if (attribution) {
       await commandBus.execute(
@@ -392,7 +406,7 @@ const upsertAttributionCommand: CommandHandler<Record<string, unknown>, FinooDea
         affiliateCode: '',
         commissionStatusEntryId: commission.entry.id,
         commissionStatus: commission.status,
-        commissionAmount: input.commissionAmount,
+        commissionAmount: storedCommissionAmount,
         leadAt: deal.createdAt,
         transactionAt: completedAt,
         attributionSource: 'staff',
@@ -409,7 +423,7 @@ const upsertAttributionCommand: CommandHandler<Record<string, unknown>, FinooDea
       attribution.affiliateId = affiliate?.id ?? null
       attribution.commissionStatusEntryId = commission.entry.id
       attribution.commissionStatus = commission.status
-      attribution.commissionAmount = input.commissionAmount
+      attribution.commissionAmount = storedCommissionAmount
       attribution.attributionSource = 'staff'
       attribution.deletedAt = null
       attribution.deletionReason = null
