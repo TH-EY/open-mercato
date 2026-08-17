@@ -612,6 +612,36 @@ test.describe.serial('THOM-90 FINOO intermediary portal', () => {
       'turnover',
       'updatedAt',
     ])
+    await queryTestDatabase(
+      `update custom_field_values
+       set value_text = 'legacy-industry-value'
+       where entity_id = 'customers:customer_company_profile'
+         and record_id = $1
+         and field_key = 'industry'
+         and organization_id = $2
+         and tenant_id = $3`,
+      [bundle.companyProfileId, state.organizationId, state.tenantId],
+    )
+    try {
+      const listResponse = await portalRequest(request, state.firstSession, 'GET', PORTAL_DEALS)
+      expect(listResponse.status()).toBe(200)
+      const listBody = await readJsonSafe<{ items?: PortalDeal[] }>(listResponse)
+      expect(listBody?.items?.find((item) => item.id === bundle.dealId)).toMatchObject({
+        id: bundle.dealId,
+        industry: null,
+      })
+    } finally {
+      await queryTestDatabase(
+        `update custom_field_values
+         set value_text = $1
+         where entity_id = 'customers:customer_company_profile'
+           and record_id = $2
+           and field_key = 'industry'
+           and organization_id = $3
+           and tenant_id = $4`,
+        [state.dictionaryEntryId, bundle.companyProfileId, state.organizationId, state.tenantId],
+      )
+    }
     const replacementCompanyResponse = await apiRequest(request, 'POST', '/api/customers/companies', {
       token: state.token,
       data: {

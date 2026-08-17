@@ -18,6 +18,8 @@ import type { FinooIntermediaryAssignment } from '../data/entities'
 type ScopedDefinition = Pick<CustomFieldDef, 'id' | 'tenantId' | 'organizationId'>
 type DatedLink = { id: string; createdAt: Date }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export type PortalDealProjection = {
   id: string
   assignmentId: string
@@ -117,6 +119,11 @@ function recordScope(ids: string[], scopeId: string): Record<string, string> {
 
 function asString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+export function readDictionaryEntryId(value: unknown): string | null {
+  const candidate = asString(value)
+  return candidate && UUID_PATTERN.test(candidate) ? candidate : null
 }
 
 function asNumber(value: unknown): number | null {
@@ -253,7 +260,7 @@ export async function buildPortalDealProjections(
 
   const dictionaryId = readDictionaryId(industryDef)
   const industryEntryIds = companyProfileIds
-    .map((id) => asString(readLoadedCustomFieldValue(companyValues, id, industryDef.key)))
+    .map((id) => readDictionaryEntryId(readLoadedCustomFieldValue(companyValues, id, industryDef.key)))
     .filter((id): id is string => id !== null)
   const industryEntries = industryEntryIds.length
     ? await em.find(DictionaryEntry, {
@@ -276,7 +283,7 @@ export async function buildPortalDealProjections(
     const personProfile = personEntity ? personProfileByEntityId.get(personEntity.id) : null
     const companyProfile = companyEntity ? companyProfileByEntityId.get(companyEntity.id) : null
     const industryEntryId = companyProfile
-      ? asString(readLoadedCustomFieldValue(companyValues, companyProfile.id, industryDef.key))
+      ? readDictionaryEntryId(readLoadedCustomFieldValue(companyValues, companyProfile.id, industryDef.key))
       : null
     return {
       id: assignment.dealId,
