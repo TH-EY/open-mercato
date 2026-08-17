@@ -59,7 +59,7 @@ jest.mock('../lib/directory-lifecycle', () => ({
   lockActiveUserSessions: (...args: unknown[]) => mockLockSessions(...args),
 }))
 
-import '../commands/directory'
+import { emitIntermediaryIndexUpsert } from '../commands/directory'
 
 const tenantId = '11111111-1111-4111-8111-111111111111'
 const organizationId = '22222222-2222-4222-8222-222222222222'
@@ -143,6 +143,7 @@ function createHarness() {
   })
   const userHasAllFeatures = jest.fn(async () => true)
   const invalidateUserCache = jest.fn(async () => undefined)
+  const emitEvent = jest.fn(async () => undefined)
   const createInvitation = jest.fn(async () => {
     const invitation = new CustomerUserInvitation()
     invitation.id = invitationId
@@ -161,6 +162,7 @@ function createHarness() {
       if (token === 'rbacService') return { userHasAllFeatures }
       if (token === 'customerRbacService') return { invalidateUserCache }
       if (token === 'customerInvitationService') return { createInvitation }
+      if (token === 'eventBus') return { emitEvent }
       throw new Error(`Unexpected dependency: ${token}`)
     },
   }
@@ -176,7 +178,7 @@ function createHarness() {
     selectedOrganizationId: organizationId,
     organizationIds: [organizationId],
   } as unknown as CommandRuntimeContext
-  return { em, ctx, userHasAllFeatures, invalidateUserCache, createInvitation }
+  return { em, ctx, userHasAllFeatures, invalidateUserCache, createInvitation, emitEvent }
 }
 
 describe('finoo_intermediaries directory commands', () => {
@@ -232,6 +234,30 @@ describe('finoo_intermediaries directory commands', () => {
     expect(JSON.stringify(metadata)).not.toContain('raw-secret-token')
   })
 
+  it('emits one canonical scoped query-index upsert without intermediary identity data', async () => {
+    const harness = createHarness()
+    const intermediary = makeIntermediary('active')
+
+    await emitIntermediaryIndexUpsert(harness.ctx, intermediary)
+
+    expect(harness.emitEvent).toHaveBeenCalledTimes(1)
+    expect(harness.emitEvent).toHaveBeenCalledWith(
+      'query_index.upsert_one',
+      {
+        entityType: 'finoo_intermediaries:finoo_intermediary',
+        recordId: intermediaryId,
+        tenantId,
+        organizationId,
+        crudAction: 'updated',
+      },
+      { tenantId, organizationId },
+    )
+    const serializedCall = JSON.stringify(harness.emitEvent.mock.calls[0])
+    expect(serializedCall).not.toContain(intermediary.email)
+    expect(serializedCall).not.toContain(intermediary.firstName)
+    expect(serializedCall).not.toContain(intermediary.lastName)
+  })
+
   it('fails closed when the command context has no real staff user UUID', async () => {
     const harness = createHarness()
     const command = commandRegistry.get('finoo_intermediaries.intermediary.invite')
@@ -281,6 +307,7 @@ describe('finoo_intermediaries directory commands', () => {
       { persistent: true },
     )
     expect(result).toMatchObject({ intermediary: { lifecycleState: 'inactive' } })
+    expect(harness.emitEvent).toHaveBeenCalledTimes(1)
   })
 
   it('deactivates the whole account, exact membership, and every active session before post-commit RBAC invalidation', async () => {
@@ -314,6 +341,7 @@ describe('finoo_intermediaries directory commands', () => {
     expect(harness.em.flush.mock.invocationCallOrder[0]).toBeLessThan(
       harness.invalidateUserCache.mock.invocationCallOrder[0],
     )
+    expect(harness.emitEvent).toHaveBeenCalledTimes(1)
   })
 
   it('links a pending email edit to an existing active account without creating an invitation', async () => {
@@ -375,6 +403,7 @@ describe('finoo_intermediaries directory commands', () => {
       expect.anything(),
       expect.anything(),
     )
+    expect(harness.emitEvent).toHaveBeenCalledTimes(1)
   })
 
   it('links a pending email edit to an existing inactive account without role or mail changes', async () => {
@@ -430,6 +459,7 @@ describe('finoo_intermediaries directory commands', () => {
       }),
       { persistent: true },
     )
+    expect(harness.emitEvent).toHaveBeenCalledTimes(1)
   })
 
   it('does not let a failed stale delivery result overwrite a later lifecycle lineage', async () => {
@@ -458,6 +488,10 @@ describe('finoo_intermediaries directory commands', () => {
       'finoo_intermediaries.intermediary.invitation_delivery_failed',
       expect.anything(),
       expect.anything(),
+    )
+    expect(harness.emitEvent).toHaveBeenCalledTimes(1)
+    expect(mockLoadDirectoryById.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.emitEvent.mock.invocationCallOrder[0],
     )
   })
 })

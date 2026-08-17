@@ -19,6 +19,7 @@ import { enforceCommandOptimisticLockWithGuards } from '@open-mercato/shared/lib
 import { lookupHashCandidates } from '@open-mercato/shared/lib/encryption/aes'
 import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import type { AppContainer } from '@open-mercato/shared/lib/di/container'
+import { createLogger } from '@open-mercato/shared/lib/logger'
 import {
   intermediaryInviteSchema,
   intermediaryLifecycleActionSchema,
@@ -56,6 +57,13 @@ const activateFromInvitationSchema = z.object({
   userId: z.string().uuid(),
   tenantId: z.string().uuid(),
 }).strict()
+
+const logger = createLogger('finoo_intermediaries').child({ component: 'commands.directory' })
+const INTERMEDIARY_ENTITY_TYPE = 'finoo_intermediaries:finoo_intermediary'
+
+type EventBus = {
+  emitEvent(event: string, payload: unknown, options?: unknown): Promise<void>
+}
 
 type StaffDirectoryScope = IntermediaryDirectoryScope & { actorUserId: string }
 type EmailDeliveryKind = 'invitation' | 'access_notice'
@@ -301,6 +309,46 @@ async function emitDirectoryEvent(
   }, { persistent: true })
 }
 
+export async function emitIntermediaryIndexUpsert(
+  ctx: CommandRuntimeContext,
+  intermediary: Pick<FinooIntermediary, 'id' | 'tenantId' | 'organizationId'>,
+): Promise<void> {
+  let eventBus: EventBus | null = null
+  try {
+    eventBus = ctx.container.resolve('eventBus') as EventBus
+  } catch (error) {
+    logger.warn('eventBus resolve failed; skipping intermediary query index upsert', {
+      intermediaryId: intermediary.id,
+      tenantId: intermediary.tenantId,
+      organizationId: intermediary.organizationId,
+      error,
+    })
+    return
+  }
+
+  await eventBus.emitEvent(
+    'query_index.upsert_one',
+    {
+      entityType: INTERMEDIARY_ENTITY_TYPE,
+      recordId: intermediary.id,
+      tenantId: intermediary.tenantId,
+      organizationId: intermediary.organizationId,
+      crudAction: 'updated',
+    },
+    {
+      tenantId: intermediary.tenantId,
+      organizationId: intermediary.organizationId,
+    },
+  ).catch((error: unknown) => {
+    logger.warn('Intermediary query index upsert failed', {
+      intermediaryId: intermediary.id,
+      tenantId: intermediary.tenantId,
+      organizationId: intermediary.organizationId,
+      error,
+    })
+  })
+}
+
 async function completeOutcome(
   ctx: CommandRuntimeContext,
   scope: StaffDirectoryScope,
@@ -336,6 +384,7 @@ async function completeOutcome(
       scope.actorUserId,
     )
   }
+  await emitIntermediaryIndexUpsert(ctx, intermediary)
 
   return {
     intermediary,
@@ -733,6 +782,7 @@ export const activateIntermediaryFromInvitationCommand: CommandHandler<unknown, 
       await customerRbacService.invalidateUserCache(outcome.invalidateCustomerUserId)
     }
     if (outcome.eventId) await emitDirectoryEvent(outcome.eventId, outcome.intermediary, null)
+    await emitIntermediaryIndexUpsert(ctx, outcome.intermediary)
     return { intermediary: outcome.intermediary }
   },
   buildLog({ input, result }) {
