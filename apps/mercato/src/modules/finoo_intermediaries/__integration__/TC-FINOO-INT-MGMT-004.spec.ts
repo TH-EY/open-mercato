@@ -1,5 +1,4 @@
 import { expect, test } from '@playwright/test'
-import { seedSystemEmailChannel } from '@open-mercato/core/helpers/integration/communicationChannelsFixtures'
 import {
   acceptInvitation,
   cleanupScenario,
@@ -16,11 +15,10 @@ test('TC-FINOO-INT-MGMT-004 real synchronous failure, Retry rotation, and stale 
   let scenario: Scenario | null = null
   try {
     scenario = await createScenario(request, 'TC-FINOO-INT-MGMT-004')
-    const channelId = await seedSystemEmailChannel(request, scenario.token, {
-      displayName: 'TC-004 intentionally unavailable system channel',
-      externalIdentifier: `system-${scenario.recipient}`,
-    })
-    await queryDatabase("update communication_channels set status='error', is_active=false where id=$1", [channelId])
+    await queryDatabase(
+      "update communication_channels set status='error', is_active=false where id=$1",
+      [scenario.systemEmailChannelId],
+    )
     const failed = await inviteIntermediary(request, scenario)
     expect(failed.response.status()).toBe(502)
     expect(failed.body).toMatchObject({
@@ -29,7 +27,10 @@ test('TC-FINOO-INT-MGMT-004 real synchronous failure, Retry rotation, and stale 
     })
     const failedToken = invitationToken(await waitForCapturedEmail(scenario.recipient))
     const failedVersion = failed.body.item.updatedAt
-    await queryDatabase('update communication_channels set deleted_at=now() where id=$1', [channelId])
+    await queryDatabase(
+      'update communication_channels set deleted_at=now() where id=$1',
+      [scenario.systemEmailChannelId],
+    )
     const retried = await runLifecycleAction(request, scenario, failed.body.item, 'resend')
     expect(retried.response.status()).toBe(200)
     expect(retried.body.item.status).toBe('invited')

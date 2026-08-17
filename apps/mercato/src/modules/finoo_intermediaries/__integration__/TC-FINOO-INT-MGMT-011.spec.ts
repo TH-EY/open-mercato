@@ -48,8 +48,11 @@ test('TC-FINOO-INT-MGMT-011 forged, cross-scope, ambiguous, duplicate, and stale
       ],
       organizations: [owner.organizationId, siblingOrganizationId],
     })
-    const sibling = { ...owner, organizationId: siblingOrganizationId }
-    await createCustomerUser(request, sibling, { email: `foreign-${owner.recipient}` })
+    const crossOrganizationUser = await createCustomerUser(request, owner, { email: `foreign-${owner.recipient}` })
+    await queryDatabase(
+      'update customer_users set organization_id=$2 where id=$1 and tenant_id=$3',
+      [crossOrganizationUser.id, siblingOrganizationId, owner.tenantId],
+    )
     expect((await inviteIntermediary(request, owner, { email: `foreign-${owner.recipient}` })).response.status()).toBe(409)
 
     await queryDatabase('update customer_roles set deleted_at=now() where id=$1', [owner.intermediaryRoleId])

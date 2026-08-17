@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { expect, type APIRequestContext, type APIResponse } from '@playwright/test'
 import { apiRequest, getAuthToken } from '@open-mercato/core/helpers/integration/api'
+import { seedSystemEmailChannel } from '@open-mercato/core/helpers/integration/communicationChannelsFixtures'
 import {
   createOrganizationFixture,
   createRoleFixture,
@@ -50,6 +53,7 @@ export type Scenario = {
   staffEmail: string
   staffPassword: string
   intermediaryRoleId: string
+  systemEmailChannelId: string
   recipient: string
 }
 
@@ -59,6 +63,25 @@ type CapturedEmail = {
   links?: string[]
   text?: string
   capturedAt?: string
+}
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..', '..')
+const cliBin = join(repoRoot, 'packages', 'cli', 'dist', 'bin.js')
+const appDir = join(repoRoot, 'apps', 'mercato')
+
+function activateEncryptionMaps(tenantId: string, organizationId: string): void {
+  const output = execFileSync(
+    process.execPath,
+    [cliBin, 'entities', 'seed-encryption', '--tenant', tenantId, '--org', organizationId],
+    {
+      cwd: appDir,
+      encoding: 'utf8',
+      env: { ...process.env, FORCE_COLOR: '0', NODE_NO_WARNINGS: '1' },
+    },
+  )
+  expect(output, 'tenant data encryption must be enabled').not.toContain('TENANT_DATA_ENCRYPTION is disabled')
+  expect(output, 'encryption maps should be seeded for the scenario scope').toContain('Encryption maps seeded')
+  expect(output, 'the intermediary encryption map must be active').toContain('finoo_intermediaries:finoo_intermediary')
 }
 
 export async function queryDatabase<T extends Record<string, unknown>>(
@@ -105,6 +128,10 @@ export async function createScenario(
     'communication_channels.connect_user_channel',
     'customers.deals.view',
     'customers.deals.manage',
+    'customers.pipelines.manage',
+    'customers.companies.manage',
+    'customers.people.manage',
+    'entities.definitions.manage',
   ],
 ): Promise<Scenario> {
   const suffix = randomUUID().replace(/-/g, '').slice(0, 12)
@@ -164,6 +191,11 @@ export async function createScenario(
     },
   )
   expect(roleAclResponse.status(), 'intermediary portal ACL should be configured').toBe(200)
+  const systemEmailChannelId = await seedSystemEmailChannel(request, token, {
+    displayName: `${testId} system email`,
+    externalIdentifier: `system-${suffix}@test-seed.local`,
+  })
+  activateEncryptionMaps(tenantId, organizationId)
   return {
     superToken,
     token,
@@ -174,8 +206,37 @@ export async function createScenario(
     staffEmail,
     staffPassword,
     intermediaryRoleId: intermediaryRoleId!,
+    systemEmailChannelId,
     recipient: `${testId.toLowerCase()}-${suffix}@test.local`,
   }
+}
+
+export async function createFieldDefinition(
+  request: APIRequestContext,
+  scenario: Scenario,
+  input: { entityId: string; key: string; kind: string; configJson?: Record<string, unknown> },
+): Promise<void> {
+  const response = await scopedApiRequest(request, scenario, 'POST', '/api/entities/definitions', {
+    ...input,
+    configJson: input.configJson ?? { label: input.key },
+  })
+  expect(response.status(), `field definition ${input.entityId}.${input.key} should be created`).toBe(200)
+}
+
+export async function deleteFieldDefinition(
+  request: APIRequestContext,
+  scenario: Scenario,
+  entityId: string,
+  key: string,
+): Promise<void> {
+  const response = await scopedApiRequest(
+    request,
+    scenario,
+    'DELETE',
+    '/api/entities/definitions',
+    { entityId, key },
+  )
+  expect(response.status(), `field definition ${entityId}.${key} should be deleted`).toBe(200)
 }
 
 export async function inviteIntermediary(

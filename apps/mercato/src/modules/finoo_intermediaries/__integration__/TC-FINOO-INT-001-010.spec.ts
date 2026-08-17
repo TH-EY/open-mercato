@@ -244,6 +244,19 @@ async function createAssignment(
   return body?.assignment as Assignment
 }
 
+async function registerActiveIntermediary(
+  request: APIRequestContext,
+  user: CustomerUserFixture,
+  firstName: string,
+  lastName: string,
+) {
+  const response = await apiRequest(request, 'POST', '/api/finoo_intermediaries/admin/directory/invite', {
+    token: state.token,
+    data: { email: user.email, firstName, lastName },
+  })
+  expect(response.status(), `active intermediary directory response: ${await response.text()}`).toBe(200)
+}
+
 async function portalRequest(
   request: APIRequestContext,
   session: PortalSession,
@@ -408,6 +421,8 @@ test.describe.serial('THOM-90 FINOO intermediary portal', () => {
       dictionaryId,
       dictionaryEntryId,
     }
+    await registerActiveIntermediary(request, firstUser, 'First', 'Intermediary')
+    await registerActiveIntermediary(request, secondUser, 'Second', 'Intermediary')
   })
 
   test.afterAll(async ({ request }) => {
@@ -442,6 +457,10 @@ test.describe.serial('THOM-90 FINOO intermediary portal', () => {
     await deleteEntityByBody(request, state.token, '/api/customers/pipeline-stages', state.eligibleStageId)
     await deleteEntityByBody(request, state.token, '/api/customers/pipelines', state.pipelineId)
     await deleteEntityIfExists(request, state.token, '/api/dictionaries', state.dictionaryId)
+    await queryTestDatabase(
+      'delete from finoo_intermediaries where tenant_id = $1 and organization_id = $2',
+      [state.tenantId, state.organizationId],
+    )
     await deleteCustomerUserFixture(request, state.token, state.wildcardUser.id)
     await deleteCustomerUserFixture(request, state.token, state.noFeatureUser.id)
     await deleteCustomerUserFixture(request, state.token, state.secondUser.id)
@@ -1007,8 +1026,8 @@ test.describe.serial('THOM-90 FINOO intermediary portal', () => {
 
     await page.goto(`/${state.organizationSlug}/portal/login`)
     await page.getByLabel('Email').fill(state.firstUser.email)
-    await page.getByLabel('Password').fill(state.firstUser.password)
-    await page.getByRole('button', { name: 'Sign In', exact: true }).click()
+    await page.getByLabel('Password', { exact: true }).fill(state.firstUser.password)
+    await page.getByRole('button', { name: 'Log In', exact: true }).click()
     await expect(page).toHaveURL(new RegExp(`/${state.organizationSlug}/portal/intermediary/deals$`))
 
     await page.goto(`/${state.organizationSlug}/portal`)

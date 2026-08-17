@@ -36,7 +36,7 @@ test('TC-FINOO-INT-MGMT-006 pre-activation email edit invalidates token and post
       lastName: 'Admin Owned',
       email: `forbidden-${replacementEmail}`,
     })
-    expect(rejected.response.status()).toBe(409)
+    expect(rejected.response.status(), JSON.stringify(rejected.body)).toBe(409)
   } finally {
     await cleanupScenario(request, scenario)
   }

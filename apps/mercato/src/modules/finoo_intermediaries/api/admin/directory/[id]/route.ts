@@ -4,6 +4,7 @@ import { readJsonSafe } from '@open-mercato/shared/lib/http/readJsonSafe'
 import { rateLimitErrorSchema } from '@open-mercato/shared/lib/ratelimit/helpers'
 import { intermediaryUpdateSchema } from '../../../../data/validators'
 import { directoryItemSchema } from '../../../../lib/directory-api'
+import { loadDirectoryById } from '../../../../lib/directory-lifecycle'
 import { executeDirectoryRouteCommand } from '../../../../lib/directory-route'
 import { checkDirectoryEmailRateLimit } from '../../../../lib/directory-rate-limit'
 import {
@@ -26,12 +27,13 @@ export async function PUT(req: Request, context: { params: Promise<{ id: string 
     const requestContext = await createStaffRequestContext(req)
     if (!requestContext) return unauthorizedResponse()
     const { id } = paramsSchema.parse(await context.params)
+    await loadDirectoryById(requestContext.em, id, requestContext)
     const body = intermediaryUpdateSchema.parse(await readJsonSafe<Record<string, unknown>>(req, {}))
     if (body.email) {
       const rateLimitResponse = await checkDirectoryEmailRateLimit(req, body.email)
       if (rateLimitResponse) return rateLimitResponse
     }
-    return executeDirectoryRouteCommand({
+    return await executeDirectoryRouteCommand({
       request: req,
       requestContext,
       commandId: 'finoo_intermediaries.intermediary.update',

@@ -20,12 +20,12 @@ export async function executeDirectoryActionRoute(input: {
     const intermediaryId = z.string().uuid().parse(input.intermediaryId)
     const requestContext = await createStaffRequestContext(input.request)
     if (!requestContext) return unauthorizedResponse()
+    const intermediary = await loadDirectoryById(
+      requestContext.em,
+      intermediaryId,
+      requestContext,
+    )
     if (input.rateLimitOutboundEmail) {
-      const intermediary = await loadDirectoryById(
-        requestContext.em,
-        intermediaryId,
-        requestContext,
-      )
       const rateLimitResponse = await checkDirectoryEmailRateLimit(
         input.request,
         intermediary.email,
@@ -35,7 +35,7 @@ export async function executeDirectoryActionRoute(input: {
     const body = intermediaryLifecycleActionSchema.parse(
       await readJsonSafe<Record<string, unknown>>(input.request, {}),
     )
-    return executeDirectoryRouteCommand({
+    return await executeDirectoryRouteCommand({
       request: input.request,
       requestContext,
       commandId: input.commandId,

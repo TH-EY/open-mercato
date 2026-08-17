@@ -8,13 +8,19 @@ import {
   type Scenario,
 } from './helpers'
 
+function rowForEmail(page: import('@playwright/test').Page, email: string) {
+  return page.getByRole('row').filter({
+    has: page.getByRole('cell', { name: email, exact: true }),
+  })
+}
+
 async function openRowAction(page: import('@playwright/test').Page, email: string, action: string) {
-  const row = page.getByRole('row').filter({ hasText: email })
-  await row.getByRole('button', { name: /actions/i }).click()
+  await rowForEmail(page, email).getByRole('button', { name: 'Open actions', exact: true }).click()
   await page.getByRole('menuitem', { name: action, exact: true }).click()
 }
 
 test('TC-FINOO-INT-MGMT-013 headed desktop and narrow lifecycle UI evidence', async ({ page, request }) => {
+  test.setTimeout(60_000)
   let scenario: Scenario | null = null
   try {
     scenario = await createScenario(request, 'TC-FINOO-INT-MGMT-013')
@@ -39,45 +45,47 @@ test('TC-FINOO-INT-MGMT-013 headed desktop and narrow lifecycle UI evidence', as
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/backend/finoo-intermediaries/intermediaries')
     await expect(page.getByRole('heading', { name: 'Intermediaries' })).toBeVisible()
-    await expect(page.getByText('Delivery failed', { exact: true })).toBeVisible()
-    await expect(page.getByText('Expired', { exact: true })).toBeVisible()
-    await expect(page.getByText('Active', { exact: true })).toBeVisible()
+    await expect(page.getByText('Delivery failed', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('Expired', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('Active', { exact: true }).first()).toBeVisible()
 
     await page.getByRole('button', { name: 'Invite intermediary' }).click()
-    await page.getByLabel('Email').fill(scenario.recipient)
-    await page.getByLabel('First name').fill('Headed')
-    await page.getByLabel('Last name').fill('Evidence')
-    await page.getByLabel('Last name').press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter')
-    await expect(page.getByRole('cell', { name: scenario.recipient })).toBeVisible()
+    await page.locator('[data-crud-field-id="email"] input').fill(scenario.recipient)
+    await page.locator('[data-crud-field-id="firstName"] input').fill('Headed')
+    await page.locator('[data-crud-field-id="lastName"] input').fill('Evidence')
+    await page.locator('[data-crud-field-id="lastName"] input').press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter')
+    await expect(page.getByRole('cell', { name: scenario.recipient, exact: true })).toBeVisible()
     await page.getByPlaceholder('Search by name or exact email').fill(scenario.recipient)
-    await expect(page.getByRole('cell', { name: scenario.recipient })).toBeVisible()
+    await expect(page.getByRole('cell', { name: scenario.recipient, exact: true })).toBeVisible()
     await page.getByPlaceholder('Search by name or exact email').fill('')
 
     await openRowAction(page, scenario.recipient, 'Edit')
-    await page.getByLabel('First name').fill('Keyboard')
+    await page.locator('[data-crud-field-id="firstName"] input').fill('Keyboard')
     await page.keyboard.press('Escape')
     await expect(page.getByRole('dialog')).toBeHidden()
     await openRowAction(page, scenario.recipient, 'Edit')
-    await page.getByLabel('First name').fill('Keyboard')
-    await page.getByLabel('Last name').press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter')
+    await page.locator('[data-crud-field-id="firstName"] input').fill('Keyboard')
+    await page.locator('[data-crud-field-id="lastName"] input').press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter')
     await expect(page.getByText('Keyboard', { exact: true })).toBeVisible()
 
     await openRowAction(page, scenario.recipient, 'Cancel invitation')
     await expect(page.getByText('The current invitation link will stop working.')).toBeVisible()
     await page.getByRole('button', { name: /confirm|cancel invitation/i }).last().click()
-    await expect(page.getByText('Inactive', { exact: true })).toBeVisible()
+    await expect(rowForEmail(page, scenario.recipient).getByRole('cell', { name: 'Inactive', exact: true })).toBeVisible()
 
     await openRowAction(page, `failed-${scenario.recipient}`, 'Retry')
-    await expect(page.getByText('Invited', { exact: true })).toBeVisible()
+    await expect(rowForEmail(page, `failed-${scenario.recipient}`).getByRole('cell', { name: 'Invited', exact: true })).toBeVisible()
     await openRowAction(page, `expired-${scenario.recipient}`, 'Resend')
-    await expect(page.getByText('Invited', { exact: true })).toBeVisible()
+    await expect(rowForEmail(page, `expired-${scenario.recipient}`).getByRole('cell', { name: 'Invited', exact: true })).toBeVisible()
 
     await openRowAction(page, activeUser.email, 'Deactivate')
     await expect(page.getByText(/entire Customer Portal account will be disabled/i)).toBeVisible()
     await page.getByRole('button', { name: /confirm|deactivate/i }).last().click()
+    await expect(rowForEmail(page, activeUser.email).getByRole('cell', { name: 'Inactive', exact: true })).toBeVisible()
     await openRowAction(page, activeUser.email, 'Reactivate')
     await expect(page.getByText(/all preserved roles will resume/i)).toBeVisible()
     await page.getByRole('button', { name: /confirm|reactivate/i }).last().click()
+    await expect(rowForEmail(page, activeUser.email).getByRole('cell', { name: 'Active', exact: true })).toBeVisible()
 
     await page.setViewportSize({ width: 390, height: 844 })
     await expect(page.getByRole('heading', { name: 'Intermediaries' })).toBeVisible()

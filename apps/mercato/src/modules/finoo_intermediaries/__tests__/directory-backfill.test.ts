@@ -37,7 +37,12 @@ function createPlan(action: 'create' | 'unchanged' = 'create'): IntermediaryBack
 }
 
 function createEm(options: { flushError?: Error } = {}) {
+  const intermediaryClass = class TestFinooIntermediary {}
   const transactionalEm = {
+    getMetadata: jest.fn(() => ({
+      getByClassName: jest.fn(() => ({ class: intermediaryClass })),
+    })),
+    create: jest.fn((_entityClass: typeof intermediaryClass, data: Record<string, unknown>) => data),
     persist: jest.fn(),
     flush: options.flushError
       ? jest.fn().mockRejectedValue(options.flushError)
@@ -226,6 +231,10 @@ describe('finoo intermediary directory backfill', () => {
 
     expect(loadPlan).toHaveBeenCalledWith(harness.transactionalEm, scope, { lock: true })
     expect(harness.transactionalEm.persist).toHaveBeenCalledTimes(1)
+    expect(harness.transactionalEm.create).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ customerUserId: userId, lifecycleState: 'active' }),
+    )
     expect(harness.transactionalEm.flush).toHaveBeenCalledTimes(1)
     expect(eventBus.emitEvent).toHaveBeenCalledWith('query_index.upsert_one', expect.objectContaining({
       entityType: 'finoo_intermediaries:finoo_intermediary',

@@ -41,7 +41,7 @@ export async function POST(req: Request) {
     const requestContext = await createStaffRequestContext(req)
     if (!requestContext) return unauthorizedResponse()
     const body = intermediaryInviteSchema.parse(await readJsonSafe<Record<string, unknown>>(req, {}))
-    return executeDirectoryRouteCommand({
+    return await executeDirectoryRouteCommand({
       request: req,
       requestContext,
       commandId: 'finoo_intermediaries.intermediary.invite',

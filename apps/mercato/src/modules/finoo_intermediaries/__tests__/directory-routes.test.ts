@@ -130,6 +130,42 @@ describe('intermediary directory routes', () => {
   })
 
   it.each([
+    ['invite', async () => {
+      const route = await import('../api/admin/directory/invite/route')
+      return route.POST(request())
+    }],
+    ['edit', async () => {
+      const route = await import('../api/admin/directory/[id]/route')
+      return route.PUT(
+        new Request(`http://localhost/api/finoo_intermediaries/admin/directory/${intermediaryId}`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            firstName: 'First',
+            lastName: 'Last',
+            expectedUpdatedAt: '2026-08-17T12:00:00.000Z',
+          }),
+        }),
+        { params: Promise.resolve({ id: intermediaryId }) },
+      )
+    }],
+    ['lifecycle action', async () => {
+      const route = await import('../api/admin/directory/[id]/cancel-invitation/route')
+      return route.POST(
+        lifecycleRequest(`/api/finoo_intermediaries/admin/directory/${intermediaryId}/cancel-invitation`),
+        { params: Promise.resolve({ id: intermediaryId }) },
+      )
+    }],
+  ])('maps an asynchronous %s command rejection inside the route boundary', async (_label, invoke) => {
+    mockExecuteGuardedCommand.mockRejectedValue(new Error('expected command rejection'))
+
+    const response = await invoke()
+
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toEqual({ error: 'Error: expected command rejection' })
+  })
+
+  it.each([
     ['resend', '../api/admin/directory/[id]/resend/route'],
     ['reactivate', '../api/admin/directory/[id]/reactivate/route'],
   ])('rate-limits %s after a scoped email lookup and before the command', async (_label, modulePath) => {
@@ -150,6 +186,22 @@ describe('intermediary directory routes', () => {
       compoundIdentifier: 'person@example.com',
     }))
     expect(mockExecuteGuardedCommand).not.toHaveBeenCalled()
+  })
+
+  it('loads an action target in the request scope before mutation guards', async () => {
+    const route = await import('../api/admin/directory/[id]/cancel-invitation/route')
+    const response = await route.POST(
+      lifecycleRequest(`/api/finoo_intermediaries/admin/directory/${intermediaryId}/cancel-invitation`),
+      { params: Promise.resolve({ id: intermediaryId }) },
+    )
+
+    expect(response.status).toBe(200)
+    expect(mockLoadDirectoryById).toHaveBeenCalledWith(
+      expect.anything(), intermediaryId, expect.objectContaining({ tenantId, organizationId }),
+    )
+    expect(mockLoadDirectoryById.mock.invocationCallOrder[0]).toBeLessThan(
+      mockExecuteGuardedCommand.mock.invocationCallOrder[0],
+    )
   })
 
   it('rate-limits an email edit before mutation', async () => {

@@ -337,21 +337,23 @@ function createIntermediary(
   entry: IntermediaryBackfillCreate,
   now: Date,
 ): FinooIntermediary {
-  const intermediary = new FinooIntermediary()
-  intermediary.id = randomUUID()
-  intermediary.tenantId = scope.tenantId
-  intermediary.organizationId = scope.organizationId
-  intermediary.firstName = entry.firstName
-  intermediary.lastName = entry.lastName
-  intermediary.email = entry.email
-  intermediary.emailHash = entry.emailHash
-  intermediary.lifecycleState = 'active'
-  intermediary.customerUserId = entry.customerUserId
-  intermediary.activatedAt = now
-  intermediary.createdByUserId = null
-  intermediary.updatedByUserId = null
-  intermediary.createdAt = now
-  intermediary.updatedAt = now
+  const intermediaryClass = em.getMetadata().getByClassName<FinooIntermediary>('FinooIntermediary').class
+  const intermediary = em.create(intermediaryClass, {
+    id: randomUUID(),
+    tenantId: scope.tenantId,
+    organizationId: scope.organizationId,
+    firstName: entry.firstName,
+    lastName: entry.lastName,
+    email: entry.email,
+    emailHash: entry.emailHash,
+    lifecycleState: 'active',
+    customerUserId: entry.customerUserId,
+    activatedAt: now,
+    createdByUserId: null,
+    updatedByUserId: null,
+    createdAt: now,
+    updatedAt: now,
+  })
   em.persist(intermediary)
   return intermediary
 }

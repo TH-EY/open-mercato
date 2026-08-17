@@ -4,7 +4,9 @@ import { portalCookieHeaders, portalLogin } from '@open-mercato/core/helpers/int
 import {
   cleanupScenario,
   createCustomerUser,
+  createFieldDefinition,
   createScenario,
+  deleteFieldDefinition,
   inviteIntermediary,
   listDirectory,
   queryDatabase,
@@ -13,6 +15,19 @@ import {
   seedAssignment,
   type Scenario,
 } from './helpers'
+
+const portalDefinitions = [
+  { entityId: 'customers:customer_deal', key: 'turnover', kind: 'integer' },
+  { entityId: 'customers:customer_deal', key: 'arrears', kind: 'boolean' },
+  { entityId: 'customers:customer_company_profile', key: 'business_start_date', kind: 'date' },
+  {
+    entityId: 'customers:customer_company_profile',
+    key: 'industry',
+    kind: 'dictionary',
+    configJson: { label: 'Industry', dictionaryId: '11111111-1111-4111-8111-111111111111' },
+  },
+  { entityId: 'customers:customer_person_profile', key: 'mobile', kind: 'text' },
+] as const
 
 function responseId(body: unknown): string {
   if (!body || typeof body !== 'object') throw new Error('[internal] Fixture response is not an object')
@@ -34,6 +49,9 @@ test('TC-FINOO-INT-MGMT-010 related counts, shared Active predicate, and portal 
   let scenario: Scenario | null = null
   try {
     scenario = await createScenario(request, 'TC-FINOO-INT-MGMT-010')
+    for (const definition of portalDefinitions) {
+      await createFieldDefinition(request, scenario, definition)
+    }
     const user = await createCustomerUser(request, scenario)
     const linked = await inviteIntermediary(request, scenario)
     await seedAssignment({ scenario, customerUserId: user.id })
@@ -70,8 +88,9 @@ test('TC-FINOO-INT-MGMT-010 related counts, shared Active predicate, and portal 
     const session = await portalLogin(request, { email: user.email, password: user.password, tenantId: scenario.tenantId })
     const portalHeaders = portalCookieHeaders(session, { 'Content-Type': 'application/json' })
     const portalDetail = await request.get(`/api/finoo_intermediaries/portal/deals/${dealId}`, { headers: portalHeaders })
-    expect(portalDetail.status()).toBe(200)
-    expect(await portalDetail.text()).not.toContain('staff-only description must not leak')
+    const portalDetailBody = await portalDetail.text()
+    expect(portalDetail.status(), portalDetailBody).toBe(200)
+    expect(portalDetailBody).not.toContain('staff-only description must not leak')
     const note = await request.post(`/api/finoo_intermediaries/portal/deals/${dealId}/notes`, {
       headers: portalHeaders,
       data: { body: 'portal-private note' },
@@ -94,6 +113,11 @@ test('TC-FINOO-INT-MGMT-010 related counts, shared Active predicate, and portal 
     expect(activeAgain.body.item.status).toBe('active')
     expect((await listDirectory(request, scenario)).items[0]?.relatedDeals).toBe(3)
   } finally {
+    if (scenario) {
+      for (const definition of [...portalDefinitions].reverse()) {
+        await deleteFieldDefinition(request, scenario, definition.entityId, definition.key)
+      }
+    }
     await cleanupScenario(request, scenario)
   }
 })

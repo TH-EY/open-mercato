@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import { expect, test } from '@playwright/test'
-import { seedSystemEmailChannel } from '@open-mercato/core/helpers/integration/communicationChannelsFixtures'
 import { getAuthToken } from '@open-mercato/core/helpers/integration/api'
 import { createRoleFixture, createUserFixture, setRoleAclFeatures } from '@open-mercato/core/helpers/integration/authFixtures'
 import {
@@ -29,13 +28,16 @@ test('TC-FINOO-INT-MGMT-001 all statuses/counts and complete view/manage ACL', a
     const inactiveUser = await createCustomerUser(request, scenario, { email: `inactive-${scenario.recipient}` })
     const inactiveSource = await inviteIntermediary(request, scenario, { email: inactiveUser.email })
     const inactive = await runLifecycleAction(request, scenario, inactiveSource.body.item, 'deactivate')
-    const channelId = await seedSystemEmailChannel(request, scenario.token, {
-      displayName: 'TC-001 unavailable channel', externalIdentifier: `system-${scenario.recipient}`,
-    })
-    await queryDatabase("update communication_channels set status='error',is_active=false where id=$1", [channelId])
+    await queryDatabase(
+      "update communication_channels set status='error',is_active=false where id=$1",
+      [scenario.systemEmailChannelId],
+    )
     const failed = await inviteIntermediary(request, scenario, { email: `failed-${scenario.recipient}` })
     expect(failed.response.status()).toBe(502)
-    await queryDatabase('update communication_channels set deleted_at=now() where id=$1', [channelId])
+    await queryDatabase(
+      'update communication_channels set deleted_at=now() where id=$1',
+      [scenario.systemEmailChannelId],
+    )
     const expired = await inviteIntermediary(request, scenario, { email: `expired-${scenario.recipient}` })
     await queryDatabase('update finoo_intermediaries set invitation_expires_at=now()-interval \'1 minute\' where id=$1', [expired.body.item.id])
 

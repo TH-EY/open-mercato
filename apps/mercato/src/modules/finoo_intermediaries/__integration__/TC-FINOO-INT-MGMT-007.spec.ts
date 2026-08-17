@@ -1,5 +1,4 @@
 import { expect, test } from '@playwright/test'
-import { seedSystemEmailChannel } from '@open-mercato/core/helpers/integration/communicationChannelsFixtures'
 import {
   cleanupScenario,
   createCustomerUser,
@@ -14,11 +13,10 @@ test('TC-FINOO-INT-MGMT-007 active existing account gets one membership and no i
   try {
     scenario = await createScenario(request, 'TC-FINOO-INT-MGMT-007')
     const user = await createCustomerUser(request, scenario)
-    const channelId = await seedSystemEmailChannel(request, scenario.token, {
-      displayName: 'TC-007 unavailable access-notice channel',
-      externalIdentifier: `system-${scenario.recipient}`,
-    })
-    await queryDatabase("update communication_channels set status='error', is_active=false where id=$1", [channelId])
+    await queryDatabase(
+      "update communication_channels set status='error', is_active=false where id=$1",
+      [scenario.systemEmailChannelId],
+    )
     const linked = await inviteIntermediary(request, scenario)
     expect(linked.response.status()).toBe(200)
     expect(linked.body).toMatchObject({

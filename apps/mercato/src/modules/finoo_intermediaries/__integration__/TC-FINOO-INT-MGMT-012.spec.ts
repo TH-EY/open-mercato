@@ -23,6 +23,7 @@ async function runBackfill(scenario: Scenario, mode: '--dry-run' | '--apply') {
 }
 
 test('TC-FINOO-INT-MGMT-012 backfill dry-run, apply, encryption, and second no-op', async ({ request }) => {
+  test.setTimeout(60_000)
   let scenario: Scenario | null = null
   try {
     scenario = await createScenario(request, 'TC-FINOO-INT-MGMT-012')
