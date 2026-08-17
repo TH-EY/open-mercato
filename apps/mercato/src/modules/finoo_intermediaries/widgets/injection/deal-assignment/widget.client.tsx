@@ -12,6 +12,7 @@ import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
 import { buildOptimisticLockHeader } from '@open-mercato/ui/backend/utils/optimisticLock'
 import { Button } from '@open-mercato/ui/primitives/button'
+import { Alert } from '@open-mercato/ui/primitives/alert'
 import { FormField } from '@open-mercato/ui/primitives/form-field'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@open-mercato/ui/primitives/select'
 import { StatusBadge, type StatusMap } from '@open-mercato/ui/primitives/status-badge'
@@ -30,6 +31,7 @@ type Assignment = {
 }
 type Intermediary = { id: string; displayName: string; email: string }
 type StaffNote = { id: string; authorCustomerUserId: string; body: string; createdAt: string; updatedAt: string }
+type AssignmentEligibility = { canManage: boolean; reason: 'ineligible_stage' | null }
 
 const statusMap: StatusMap<Assignment['partnerStatus']> = {
   new: 'neutral',
@@ -44,6 +46,7 @@ export default function DealAssignmentWidget({ context }: InjectionWidgetCompone
   const canManage = isReady && hasFeature(payload?.grantedFeatures ?? [], 'finoo_intermediaries.manage')
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
   const [assignment, setAssignment] = React.useState<Assignment | null>(null)
+  const [eligibility, setEligibility] = React.useState<AssignmentEligibility>({ canManage: false, reason: null })
   const [intermediaries, setIntermediaries] = React.useState<Intermediary[]>([])
   const [notes, setNotes] = React.useState<StaffNote[]>([])
   const [notesCursor, setNotesCursor] = React.useState<string | null>(null)
@@ -62,12 +65,13 @@ export default function DealAssignmentWidget({ context }: InjectionWidgetCompone
     setError(null)
     try {
       const [assignmentResult, intermediariesResult] = await Promise.all([
-        readApiResultOrThrow<{ assignment: Assignment | null; notes: StaffNote[]; notesNextCursor: string | null }>(`/api/finoo_intermediaries/admin/assignments?dealId=${encodeURIComponent(dealId)}`),
+        readApiResultOrThrow<{ assignment: Assignment | null; eligibility: AssignmentEligibility; notes: StaffNote[]; notesNextCursor: string | null }>(`/api/finoo_intermediaries/admin/assignments?dealId=${encodeURIComponent(dealId)}`),
         canManage
           ? readApiResultOrThrow<{ items: Intermediary[] }>('/api/finoo_intermediaries/admin/intermediaries?pageSize=100')
           : Promise.resolve({ items: [] }),
       ])
       setAssignment(assignmentResult.assignment)
+      setEligibility(assignmentResult.eligibility)
       setSelectedUserId(assignmentResult.assignment?.intermediaryCustomerUserId ?? '')
       setIntermediaries(intermediariesResult.items)
       setNotes(assignmentResult.notes)
@@ -141,10 +145,7 @@ export default function DealAssignmentWidget({ context }: InjectionWidgetCompone
             headers: { 'content-type': 'application/json', ...buildOptimisticLockHeader(assignment.updatedAt) },
             body: JSON.stringify({ expectedUpdatedAt: assignment.updatedAt }),
           })
-          setAssignment(null)
-          setSelectedUserId('')
-          setNotes([])
-          setNotesCursor(null)
+          await load()
           flash(t('finoo_intermediaries.staff.unassigned', 'Intermediary assignment removed.'), 'success')
         },
       })
@@ -166,6 +167,8 @@ export default function DealAssignmentWidget({ context }: InjectionWidgetCompone
   if (loading) return <LoadingMessage label={t('common.loading', 'Loading…')} />
   if (error) return <ErrorMessage label={error} />
 
+  const assignmentControlsDisabled = !eligibility.canManage
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
@@ -179,7 +182,18 @@ export default function DealAssignmentWidget({ context }: InjectionWidgetCompone
 
       {canManage ? (
         <div className="space-y-3">
-          <FormField label={t('finoo_intermediaries.staff.intermediary', 'Intermediary')}>
+          {eligibility.reason === 'ineligible_stage' ? (
+            <Alert status="information" style="lighter">
+              {t(
+                'finoo_intermediaries.staff.ineligibleStage',
+                'Move the deal to Sent To Partners to manage its intermediary assignment.',
+              )}
+            </Alert>
+          ) : null}
+          <FormField
+            label={t('finoo_intermediaries.staff.intermediary', 'Intermediary')}
+            disabled={assignmentControlsDisabled}
+          >
             <Select value={selectedUserId} onValueChange={setSelectedUserId}>
               <SelectTrigger><SelectValue placeholder={t('finoo_intermediaries.staff.selectIntermediary', 'Select intermediary')} /></SelectTrigger>
               <SelectContent>
@@ -192,9 +206,9 @@ export default function DealAssignmentWidget({ context }: InjectionWidgetCompone
             </Select>
           </FormField>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" disabled={saving || !selectedUserId || selectedUserId === assignment?.intermediaryCustomerUserId} onClick={() => void saveAssignment()}>{t('common.save', 'Save')}</Button>
-            {assignment ? <Button type="button" variant="destructive-outline" disabled={saving} onClick={() => void unassign()}>{t('finoo_intermediaries.staff.unassign', 'Unassign')}</Button> : null}
-            <Button type="button" variant="outline" disabled={saving} onClick={() => void retryLastMutation()}>{t('common.retry', 'Retry')}</Button>
+            <Button type="button" disabled={assignmentControlsDisabled || saving || !selectedUserId || selectedUserId === assignment?.intermediaryCustomerUserId} onClick={() => void saveAssignment()}>{t('common.save', 'Save')}</Button>
+            {assignment ? <Button type="button" variant="destructive-outline" disabled={assignmentControlsDisabled || saving} onClick={() => void unassign()}>{t('finoo_intermediaries.staff.unassign', 'Unassign')}</Button> : null}
+            <Button type="button" variant="outline" disabled={assignmentControlsDisabled || saving} onClick={() => void retryLastMutation()}>{t('common.retry', 'Retry')}</Button>
           </div>
         </div>
       ) : null}

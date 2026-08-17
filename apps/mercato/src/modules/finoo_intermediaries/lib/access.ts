@@ -30,8 +30,17 @@ export type ScopedCustomerUserInput = {
   customerUserId: string
 }
 
+export type AssignmentEligibility = {
+  canManage: boolean
+  reason: 'ineligible_stage' | null
+}
+
 function inaccessible(): CrudHttpError {
   return new CrudHttpError(404, { error: 'Resource not found' })
+}
+
+function ineligibleStage(): CrudHttpError {
+  return new CrudHttpError(422, { error: 'Deal is not in the eligible stage', code: 'ineligible_stage' })
 }
 
 async function loadScopedDeal(
@@ -49,10 +58,7 @@ async function loadScopedDeal(
   return deal
 }
 
-export async function loadEligibleDeal(em: EntityManager, input: ScopedDealInput, lock = false) {
-  const deal = await loadScopedDeal(em, input, lock)
-  if (!deal.pipelineStageId) throw inaccessible()
-
+async function loadEligibleConfiguration(em: EntityManager, input: ScopedDealInput) {
   const pipelines = await em.find(CustomerPipeline, {
     tenantId: input.tenantId,
     organizationId: input.organizationId,
@@ -78,8 +84,32 @@ export async function loadEligibleDeal(em: EntityManager, input: ScopedDealInput
     })
   }
   const stage = eligibleStages[0]
-  if (deal.pipelineId !== eligiblePipelines[0].id || deal.pipelineStageId !== stage.id) {
-    throw new CrudHttpError(422, { error: 'Deal is not in the eligible stage', code: 'ineligible_stage' })
+  return { stage, pipeline: eligiblePipelines[0] }
+}
+
+export async function resolveAssignmentEligibility(
+  em: EntityManager,
+  input: ScopedDealInput & { eligibleStageId?: string },
+): Promise<AssignmentEligibility> {
+  if (input.eligibleStageId) {
+    const deal = await loadScopedDeal(em, input)
+    const canManage = deal.pipelineStageId === input.eligibleStageId
+    return { canManage, reason: canManage ? null : 'ineligible_stage' }
+  }
+
+  const deal = await loadScopedDeal(em, input)
+  if (!deal.pipelineStageId) return { canManage: false, reason: 'ineligible_stage' }
+  const { stage, pipeline } = await loadEligibleConfiguration(em, input)
+  const canManage = deal.pipelineId === pipeline.id && deal.pipelineStageId === stage.id
+  return { canManage, reason: canManage ? null : 'ineligible_stage' }
+}
+
+export async function loadEligibleDeal(em: EntityManager, input: ScopedDealInput, lock = false) {
+  const deal = await loadScopedDeal(em, input, lock)
+  if (!deal.pipelineStageId) throw ineligibleStage()
+  const { stage, pipeline } = await loadEligibleConfiguration(em, input)
+  if (deal.pipelineId !== pipeline.id || deal.pipelineStageId !== stage.id) {
+    throw ineligibleStage()
   }
   return { deal, stage }
 }
@@ -96,7 +126,7 @@ export async function assertAssignmentStillEligible(
   }, options.lock)
   if (deal.pipelineStageId !== assignment.eligibleStageId) {
     if (options.maskIneligible) throw inaccessible()
-    throw new CrudHttpError(422, { error: 'Deal is not in the eligible stage', code: 'ineligible_stage' })
+    throw ineligibleStage()
   }
 }
 

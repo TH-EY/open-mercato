@@ -150,7 +150,7 @@ async function createDictionaryEntry(
 
 async function createDealBundle(
   request: APIRequestContext,
-  input: { stageId?: string; suffix?: string } = {},
+  input: { stageId?: string | null; suffix?: string } = {},
 ): Promise<DealBundle> {
   const suffix = input.suffix ?? randomUUID().slice(0, 8)
   const companyResponse = await apiRequest(request, 'POST', '/api/customers/companies', {
@@ -187,7 +187,7 @@ async function createDealBundle(
       title: `Intermediary Deal ${suffix}`,
       description: `private staff description ${suffix}`,
       pipelineId: state.pipelineId,
-      pipelineStageId: input.stageId ?? state.eligibleStageId,
+      ...(input.stageId === null ? {} : { pipelineStageId: input.stageId ?? state.eligibleStageId }),
       companyIds: [companyId],
       personIds: [personId],
       primaryPersonEntityId: personId,
@@ -485,13 +485,53 @@ test.describe.serial('THOM-90 FINOO intermediary portal', () => {
     await deleteEntityByBody(request, state.token, '/api/customers/pipeline-stages', ambiguousStageId)
 
     const ineligible = await createDealBundle(request, { stageId: state.ineligibleStageId, suffix: '002a' })
+    const ineligibleRead = await apiRequest(request, 'GET', `${ASSIGNMENTS}?dealId=${ineligible.dealId}`, {
+      token: state.token,
+    })
+    expect(ineligibleRead.status()).toBe(200)
+    expect(await readJsonSafe(ineligibleRead)).toMatchObject({
+      assignment: null,
+      eligibility: { canManage: false, reason: 'ineligible_stage' },
+    })
     const ineligibleResponse = await apiRequest(request, 'POST', ASSIGNMENTS, {
       token: state.token,
       data: { dealId: ineligible.dealId, intermediaryCustomerUserId: state.firstUser.id },
     })
     expect(ineligibleResponse.status()).toBe(422)
+    expect(await readJsonSafe(ineligibleResponse)).toMatchObject({ code: 'ineligible_stage' })
+    const ineligibleReadAfterCreate = await apiRequest(request, 'GET', `${ASSIGNMENTS}?dealId=${ineligible.dealId}`, {
+      token: state.token,
+    })
+    expect(await readJsonSafe(ineligibleReadAfterCreate)).toMatchObject({ assignment: null })
+
+    const stageLess = await createDealBundle(request, { stageId: null, suffix: '002-no-stage' })
+    const stageLessRead = await apiRequest(request, 'GET', `${ASSIGNMENTS}?dealId=${stageLess.dealId}`, {
+      token: state.token,
+    })
+    expect(stageLessRead.status()).toBe(200)
+    expect(await readJsonSafe(stageLessRead)).toMatchObject({
+      assignment: null,
+      eligibility: { canManage: false, reason: 'ineligible_stage' },
+    })
+    const stageLessResponse = await apiRequest(request, 'POST', ASSIGNMENTS, {
+      token: state.token,
+      data: { dealId: stageLess.dealId, intermediaryCustomerUserId: state.firstUser.id },
+    })
+    expect(stageLessResponse.status()).toBe(422)
+    expect(await readJsonSafe(stageLessResponse)).toMatchObject({ code: 'ineligible_stage' })
+    const stageLessReadAfterCreate = await apiRequest(request, 'GET', `${ASSIGNMENTS}?dealId=${stageLess.dealId}`, {
+      token: state.token,
+    })
+    expect(await readJsonSafe(stageLessReadAfterCreate)).toMatchObject({ assignment: null })
 
     const eligible = await createDealBundle(request, { suffix: '002b' })
+    const eligibleRead = await apiRequest(request, 'GET', `${ASSIGNMENTS}?dealId=${eligible.dealId}`, {
+      token: state.token,
+    })
+    expect(await readJsonSafe(eligibleRead)).toMatchObject({
+      assignment: null,
+      eligibility: { canManage: true, reason: null },
+    })
     const wrongRoleResponse = await apiRequest(request, 'POST', ASSIGNMENTS, {
       token: state.token,
       data: { dealId: eligible.dealId, intermediaryCustomerUserId: state.wildcardUser.id },

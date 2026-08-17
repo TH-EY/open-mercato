@@ -67,6 +67,7 @@
       "blocked": "Zmiana przypisania została zablokowana.",
       "loadError": "Nie udało się pobrać przypisania pośrednika.",
       "missingDeal": "Kontekst sprawy jest niedostępny.",
+      "ineligibleStage": "Przenieś sprawę do etapu Sent To Partners, aby zarządzać przypisaniem pośrednika.",
       "notesTitle": "Notatki partnera",
       "notesEmpty": "Brak notatek partnera."
     }
