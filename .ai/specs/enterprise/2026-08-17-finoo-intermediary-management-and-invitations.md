@@ -114,7 +114,7 @@ flowchart LR
 | Route / surface | Server root | Client islands | Data owner | Notes |
 |-----------------|-------------|----------------|------------|-------|
 | `/backend/finoo-intermediaries/intermediaries` | `page.tsx` | `intermediaries.client.tsx` | Directory API | Page root remains server-only. |
-| Invite/edit interaction | Page client | `invite-intermediary-dialog.client.tsx`, `edit-intermediary-dialog.client.tsx` | Lifecycle APIs | Stateful dialog forms and guarded mutations only. |
+| Invite/edit interaction | Page client | `invite-intermediary-dialog.client.tsx`, `edit-intermediary-dialog.client.tsx` | Lifecycle APIs | Embedded `CrudForm` inside the shared dialog host; no raw form implementation. |
 | Row lifecycle actions | Page client | `intermediary-row-actions.client.tsx` or a bounded local component | Lifecycle APIs | Confirmations and retry state only. |
 
 `"use client"` ledger:
@@ -122,8 +122,8 @@ flowchart LR
 | File | Browser-only reason | Imported by | Heavy dependencies | Cleanup / hydration risk | Rejected alternative |
 |------|---------------------|-------------|--------------------|--------------------------|----------------------|
 | `intermediaries.client.tsx` | DataTable search/filter/pagination and dialog state | Server page | None | Abort/ignore stale list requests | A server-only table cannot provide the required interactive lifecycle actions. |
-| `invite-intermediary-dialog.client.tsx` | Controlled fields, keyboard submit, guarded mutation | Page client | None | Reset state on close | Raw form would bypass shared dialog/form behavior. |
-| `edit-intermediary-dialog.client.tsx` | Conditional email editing and optimistic conflict recovery | Page client | None | Refresh row after save | A separate route adds navigation without product value. |
+| `invite-intermediary-dialog.client.tsx` | Embedded `CrudForm`, keyboard submit, create mutation | Page client | None | Reset state on close | Raw form would bypass shared dialog/form behavior. |
+| `edit-intermediary-dialog.client.tsx` | Embedded `CrudForm`, conditional email editing, and optimistic conflict recovery | Page client | None | Refresh row after save | A separate route adds navigation without product value. |
 | Row actions client | Confirmation state and guarded mutations | DataTable row | None | One shared confirmation instance | Inline ad-hoc handlers would make the list client a large blob. |
 
 Budgets:
@@ -182,7 +182,7 @@ Constraints and indexes:
 
 `encryption.ts` adds a `finoo_intermediaries:finoo_intermediary` map for `first_name`, `last_name`, and `email`; `email` declares `email_hash` as its hash sibling. Reads use `findWithDecryption`/`findOneWithDecryption` with both tenant and organization scope. Raw email, names, tokens, provider errors, and email bodies never enter command audit payloads or logs.
 
-Partial search over encrypted identity fields uses the canonical Query Engine/search index, not SQL `LIKE` against ciphertext and not an unbounded decrypt-and-filter scan. The entity search document contains only the required name/email fields and remains protected by the platform's encrypted index storage. Lifecycle writes emit the canonical CRUD/index side effects after commit. Related Deals is batch-enriched from assignments and is not denormalized or indexed.
+`search.ts` declares `first_name` and `last_name` as canonical searchable text and `email` as `hashOnly` through `email_hash`. Partial search is therefore limited to first and last name. Email lookup is exact after normalization and hash-candidate resolution. No name, email, delivery metadata, token, or provider detail enters vector/source text. Search never uses SQL `LIKE` against ciphertext or an unbounded decrypt-and-filter scan. Lifecycle writes emit the canonical CRUD/index side effects after commit. Related Deals is batch-enriched from assignments and is not denormalized or indexed.
 
 ### State machine
 
@@ -208,7 +208,7 @@ Every custom mutation route runs mutation guards before a registered command. Co
 | `finoo_intermediaries.intermediary.update` | Update names; before activation, an email change cancels the current invitation and creates a replacement in fail-closed delivery state | Send replacement invitation when email changed | Undo restores names only when no replacement email was sent; email replacement uses cancellation compensation. |
 | `finoo_intermediaries.invitation.resend` | Invalidate prior token, create/rotate current invitation, extend expiry by 72 hours, set delivery pending | Send invitation; mark delivered or failed | Non-undoable after email; Cancel invitation compensates. |
 | `finoo_intermediaries.invitation.cancel` | Set core `cancelledAt` when row exists; set directory inactive; preserve identity/history | Emit cancellation event | Reactivate creates a fresh invitation; old token is never restored. |
-| `finoo_intermediaries.intermediary.activate_from_invitation` | Persistent subscriber locks invitation/directory/user, links Customer User, verifies exact role membership, sets active | Emit activation/index effects | Deactivate compensates. |
+| `finoo_intermediaries.intermediary.activate_from_invitation` | Persistent subscriber receives the frozen event payload, reloads by trusted `invitationId + tenantId`, then locks and revalidates invitation/directory/user organization scope before linking the Customer User, verifying exact role membership, and setting active | Emit activation/index effects | Deactivate compensates. |
 | `finoo_intermediaries.intermediary.deactivate` | Set Customer User inactive; soft-delete exact intermediary membership; revoke all active sessions; set directory inactive; preserve other memberships and assignments | Invalidate user RBAC cache; emit customer and module events | Reactivate compensates, but revoked sessions are never resurrected. |
 | `finoo_intermediaries.intermediary.reactivate` | With user: activate whole account and restore/create exact intermediary membership. Without user: create a new invitation in delivery-pending state | Invalidate RBAC, send access notice or invitation, emit events | Deactivate or Cancel invitation compensates. |
 | `finoo_intermediaries.intermediary.backfill` | Idempotent scoped upsert from existing active intermediary role memberships | Index side effects and sanitized count report | Dry-run first; inserted rows can be identified by command log, but routine delete/rollback is not exposed. |
@@ -218,6 +218,8 @@ Invitation/account database changes and the module row commit together. Email se
 Deactivation lock order is directory row → Customer User → intermediary membership → active sessions. It preserves all non-intermediary role membership rows but sets the whole Customer User inactive, so none can authorize login until Reactivate. Reactivate restores `isActive` and the intermediary role, leaves other memberships unchanged, invalidates RBAC cache, and requires a new login because revoked sessions remain revoked.
 
 Events are declared with `createModuleEvents` and singular entity naming. Payloads contain IDs, status, tenant, organization, and actor IDs only; no name or email. Required events are `finoo_intermediaries.intermediary.invited`, `.updated`, `.activated`, `.deactivated`, `.reactivated`, `.invitation_cancelled`, and `.invitation_delivery_failed`.
+
+The existing frozen `customer_accounts.invitation.accepted` payload contains only `invitationId`, `userId`, and `tenantId`. The persistent subscriber must not infer or trust an event `organizationId`: it reloads the scoped invitation by `invitationId + tenantId`, verifies the event user, then requires equality between the invitation organization, linked Customer User organization, and directory organization while holding the command locks. A missing, foreign, stale, or already-processed relationship is a fail-closed no-op or recorded internal failure; it never activates another organization's row.
 
 ## Invitation and Existing-Account Resolution
 
@@ -242,7 +244,7 @@ All routes export per-method `metadata` and `openApi`, parse with zod, cap `page
 `GET /api/finoo_intermediaries/admin/directory?search=<text>&status=<status>&cursor=<opaque>&pageSize<=100`
 
 - Guard: staff auth + `finoo_intermediaries.view`.
-- Uses keyset pagination and the encrypted Query Engine index for partial search.
+- Uses keyset pagination. Search matches partial first/last name through canonical text search, or an exact normalized email through `emailHash`; email is never partially searched.
 - Response: `{ items: IntermediaryDirectoryItem[], nextCursor }`.
 - Item: `id`, `firstName`, `lastName`, `email`, effective `status`, `relatedDeals`, `invitationExpiresAt`, `lastEmailStatus`, safe `lastEmailErrorCode`, `updatedAt`.
 - Every status is included when the filter is absent.
@@ -321,7 +323,7 @@ Error classes:
 
 ## UI/UX
 
-Backend route: `/backend/finoo-intermediaries/intermediaries`. Metadata requires auth plus `finoo_intermediaries.view`. The page is one primary `Page`/`PageHeader`/`PageBody` surface with a `DataTable` using stable `entityId` and `extensionTableId`; it does not add nested dashboard cards or a detail route.
+Backend route: `/backend/finoo-intermediaries/intermediaries`. Metadata requires auth plus `finoo_intermediaries.view`. A stable `Intermediaries` navigation item is injected into the main Customers group and is gated by the same view feature. The page is one primary `Page`/`PageHeader`/`PageBody` surface with a `DataTable` using stable `entityId` and `extensionTableId`; it does not add nested dashboard cards or a detail route.
 
 Columns:
 
@@ -334,7 +336,7 @@ Columns:
 
 The table includes basic search and a status filter through DataTable's own FilterBar integration. All statuses appear by default. Filtered/search/no-record/loading/error states use shared DataTable and backend primitives. Related Deals is informational and does not link to a new filtered Deals route in this task.
 
-The top-right `Invite intermediary` action is rendered only when the effective staff features contain every management permission. The dialog contains Email, First Name, and Last Name. All dialogs support Cmd/Ctrl+Enter and Escape, use shared fields/buttons, i18n copy, and no raw form/fetch implementation.
+The top-right `Invite intermediary` action is rendered only when the effective staff features contain every management permission. The dialog contains Email, First Name, and Last Name. Invite and Edit host embedded `CrudForm` instances so canonical validation, submit, conflict, Cmd/Ctrl+Enter, and Escape behavior is preserved; neither dialog implements a raw form or raw fetch.
 
 Row actions:
 
@@ -346,7 +348,7 @@ Row actions:
 | Active | Edit first/last name, Deactivate |
 | Inactive | Edit; Reactivate |
 
-All writes use `useGuardedMutation`, the `apiCall` family, `retryLastMutation`, and `surfaceRecordConflict`. Deactivate uses `useConfirmDialog` and displays Related Deals plus an explicit warning that the entire Customer Portal account and every role-derived access path will stop. Reactivate for a linked account explicitly warns that the entire account and all preserved roles will resume. Informational-email failure on an Active row uses an `Alert`/flash warning and a row indicator without changing its status. Provider error details are never rendered.
+Invite/Edit use embedded `CrudForm` with the canonical CRUD error/conflict path. Resend, Retry, Cancel invitation, Deactivate, and Reactivate use `useGuardedMutation`, the `apiCall` family, `retryLastMutation`, and `surfaceRecordConflict`. Deactivate uses `useConfirmDialog` and displays Related Deals plus an explicit warning that the entire Customer Portal account and every role-derived access path will stop. Reactivate for a linked account explicitly warns that the entire account and all preserved roles will resume. Informational-email failure on an Active row uses an `Alert`/flash warning and a row indicator without changing its status. Provider error details are never rendered.
 
 ## Access Control
 
@@ -389,7 +391,7 @@ All copy is added to the module's existing locale files, at least English and Po
 ## Performance and Cache Strategy
 
 - Directory pagination is keyset/cursor based with `pageSize <= 100`.
-- Partial identity search uses the Query Engine index; no decrypted full-table scan.
+- Partial search is limited to indexed first/last names; normalized email search is exact and hash-only. No decrypted full-table scan or identity vector/source text is allowed.
 - One page performs bounded directory hydration, one grouped Related Deals count query keyed by linked Customer User IDs, and batched account/membership consistency reads. No per-row query is allowed.
 - Related Deals counts use `deleted_at is null` only and intentionally ignore Deal stage.
 - No module application cache is added. Lifecycle/account/role/session changes are authorization-sensitive and the expected FINOO cardinality does not justify another invalidation graph.
@@ -433,8 +435,8 @@ Exit: all API paths pass against a fresh database and old tokens fail after repl
 
 ### Phase 3 — Directory UI and picker integration
 
-1. Add server backend page, DataTable client, status/search/filter, invite/edit dialogs, stable row actions, confirmations, and delivery warnings.
-2. Add Related Deals batch enrichment and narrow the existing picker to effective Active records without changing its response contract.
+1. Add the Customers-group navigation item, server backend page, DataTable client, status/search/filter, embedded-`CrudForm` invite/edit dialogs, stable row actions, confirmations, and delivery warnings.
+2. Add Related Deals batch enrichment and one shared effective-Active eligibility predicate for both the existing picker and direct Deal-assignment authorization, without changing the picker response contract.
 3. Add English/Polish copy, hydration/component tests, and keyboard/narrow-view evidence.
 
 Exit: view-only staff cannot mutate; Admin can complete every approved flow from one list.
@@ -444,7 +446,8 @@ Exit: view-only staff cannot mutate; Admin can complete every approved flow from
 1. Implement scoped dry-run/apply backfill and prove zero-change second run.
 2. Run fresh-DB initialization, focused tests, typecheck, lint, integration suite, client-boundary check, build, and diff checks.
 3. Obtain one fresh primary review and one security review; remediate validated findings and rerun affected gates.
-4. Only after implementation/readiness gates pass, integrate the current authoritative FINOO baseline, build an immutable artifact, deploy privately with backup/rollback, run headed desktop+narrow QA and controlled email tests, attach Jira evidence, and obtain release-evidence review.
+4. Only after implementation/readiness gates pass, integrate the current authoritative FINOO baseline and build an immutable artifact. Make the additive schema available, run the exact tenant/organization backfill dry-run, apply, read back, and zero-change second apply before exposing the stricter picker/direct-assignment predicate at cutover.
+5. Deploy privately with backup/rollback, run headed desktop+narrow QA and controlled email tests, attach Jira evidence, and obtain release-evidence review.
 
 Exit: exact private revision/digest and evidence pass. No upstream contribution or PR is created.
 
@@ -455,6 +458,7 @@ Exit: exact private revision/digest and evidence pass. No upstream contribution 
 | `apps/mercato/src/modules/finoo_intermediaries/data/entities.ts` | Modify | Add durable intermediary entity |
 | `apps/mercato/src/modules/finoo_intermediaries/data/validators.ts` | Modify | Directory/lifecycle zod schemas |
 | `apps/mercato/src/modules/finoo_intermediaries/encryption.ts` | Modify | Encrypt names/email with email hash |
+| `apps/mercato/src/modules/finoo_intermediaries/search.ts` | Create | Searchable names and exact hash-only email policy |
 | `apps/mercato/src/modules/finoo_intermediaries/events.ts` | Create | Lifecycle event definitions |
 | `apps/mercato/src/modules/finoo_intermediaries/commands/*` | Modify/create | Directory, invitation, account lifecycle, backfill commands |
 | `apps/mercato/src/modules/finoo_intermediaries/lib/*` | Modify/create | State resolution, delivery orchestration, scoped account/membership helpers, count enrichment |
@@ -488,7 +492,7 @@ All integration tests create their own tenant, organization, exact intermediary 
 | `TC-FINOO-INT-MGMT-007` | Same-org active Customer User gets one intermediary membership and Active row without invitation; access-notice failure leaves Active with a warning. |
 | `TC-FINOO-INT-MGMT-008` | Same-org inactive Customer User becomes only an Inactive directory row; explicit Reactivate restores the whole account/role and requires a new login; Invite never silently restores it. |
 | `TC-FINOO-INT-MGMT-009` | Multi-role active user Deactivate becomes account-inactive, loses all portal access immediately, has all sessions revoked, keeps non-intermediary membership rows and every assignment/note; Reactivate resumes preserved roles but not old sessions. |
-| `TC-FINOO-INT-MGMT-010` | Related Deals counts all non-soft-deleted assignments regardless stage, excludes soft-deleted assignments, and stays unchanged across deactivate/reactivate. Portal Deal visibility still follows the captured stage and note/activity isolation. |
+| `TC-FINOO-INT-MGMT-010` | Related Deals uses one grouped query per page, counts all non-soft-deleted assignments regardless stage, excludes soft-deleted assignments, and stays unchanged across deactivate/reactivate. Picker and direct assignment share the same effective-Active predicate; portal Deal visibility still follows the captured stage and note/activity isolation. |
 | `TC-FINOO-INT-MGMT-011` | Forged IDs, cross-tenant/org email/record/account/role/invitation requests, ambiguous role config, duplicate races, and stale `updatedAt` fail closed with the specified status classes. |
 | `TC-FINOO-INT-MGMT-012` | Backfill dry-run/apply creates Active encrypted rows from CRM names/display-name fallback, changes no account/role/password/session/assignment data, and the second apply is a no-op. |
 | `TC-FINOO-INT-MGMT-013` | Headed desktop and narrow UI prove list/search/filter, status badges, invite/edit, Retry/Resend/Cancel, whole-account warnings, Deactivate/Reactivate, keyboard behavior, and clean fixture teardown. |
@@ -501,6 +505,7 @@ Choose one runner mode for the gate sequence according to `.ai/docs/agent-instru
 corepack yarn generate
 corepack yarn db:generate
 corepack yarn workspace @open-mercato/app test --runInBand src/modules/finoo_intermediaries
+corepack yarn workspace @open-mercato/search test
 corepack yarn workspace @open-mercato/app typecheck
 corepack yarn workspace @open-mercato/app lint
 corepack yarn test:integration --grep 'TC-FINOO-INT-MGMT'
@@ -509,7 +514,7 @@ corepack yarn build:app
 git diff --check
 ```
 
-`db:migrate` is excluded from local verification without explicit approval. Live email acceptance uses a controlled they.dev test recipient only after the deployed runtime and SES channel are freshly verified.
+Generated-registry verification must assert that the existing FINOO CLI command `ensure-portal-role-feature` and the new backfill command are both present; the new command must not replace the old entry. `db:migrate` is excluded from local verification without explicit approval. Live email acceptance uses a controlled they.dev test recipient only after the deployed runtime and SES channel are freshly verified.
 
 ## Risks & Impact Review
 
@@ -566,7 +571,7 @@ git diff --check
 - **Scenario**: Ciphertext is searched directly, legacy hashes differ, or duplicate rows arise during concurrent invite/backfill.
 - **Severity**: High
 - **Affected area**: Directory correctness and PII handling.
-- **Mitigation**: Encryption map + hash field, lookup hash candidates where required, Query Engine partial search, partial unique indexes, transaction/race tests, no decrypt-all scan.
+- **Mitigation**: Encryption map + hash field, lookup hash candidates where required, partial name search only, exact hash-only email search, no identity vector/source text, partial unique indexes, transaction/race tests, and no decrypt-all scan.
 - **Residual risk**: Search index lag may briefly omit a just-updated row; direct command read-back and eventual index side effects preserve source truth.
 
 ### Backfill assigns incorrect names
@@ -645,17 +650,17 @@ git diff --check
 | API contracts match UI actions | Pass | Five lifecycle actions and status-specific labels map to named endpoints. |
 | Risks cover all writes and external side effects | Pass | Invitation, email, account, role, sessions, backfill, index, and deployment covered. |
 | Commands cover all mutations | Pass | Invite, update, resend, cancel, activation, deactivate, reactivate, and backfill specified. |
-| Cache/search behavior is complete | Pass | No module cache; RBAC invalidation and encrypted Query Engine search defined. |
+| Cache/search behavior is complete | Pass | No module cache; RBAC invalidation, partial name search, and exact hash-only email search defined. |
 | Existing portal/assignment contract remains intact | Pass | No assignment migration; active role/user/stage checks remain authoritative. |
 | Affiliate and THOM-99 boundaries remain intact | Pass | Explicit non-goals and forbidden manifest boundary. |
 
 ### Non-Compliant Items
 
-None identified in the authored design. The fresh-context scope review passed. Implementation readiness remains gated on user review of this written specification, Jira creation/read-back, and implementation-time verification.
+None identified after the readiness corrections. The fresh-context scope review passed, the user approved the written specification, and Jira THOM-100 was created/read back. Implementation remains gated only on the task-bound branch/baseline read-back and implementation-time verification.
 
 ### Verdict
 
-**Fully compliant at design level: ready for user review.** This does not authorize implementation, deployment, upstream contribution, or public PR.
+**Fully compliant at design level: ready for implementation after the task-bound branch/baseline read-back.** This authorizes the approved private implementation workflow, but not deployment before implementation/test/review gates and not any upstream contribution or public PR.
 
 ## Changelog
 
@@ -664,6 +669,7 @@ None identified in the authored design. The fresh-context scope review passed. I
 - Added the initial codebase-backed specification from the approved Intermediaries management decisions.
 - Preserved the existing THOM-90 assignment/portal contract and isolated Affiliate/THOM-99 work.
 - Added durable delivery/expiry/inactive lifecycle, whole-account deactivate/reactivate semantics, idempotent backfill, API/UI contracts, integration coverage, risks, and compliance review.
+- Applied pre-implementation readiness corrections: partial name plus exact hash-only email search, `search.ts`, embedded `CrudForm`, trusted acceptance-subscriber reload, Customers navigation placement, shared assignment eligibility, CLI preservation, and backfill-before-cutover ordering.
 
 ### Review — 2026-08-17
 
