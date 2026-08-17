@@ -839,10 +839,29 @@ function assertNode24Runtime(): void {
 }
 
 function getProcessExitPromise(command: ChildProcess): Promise<number | null> {
+  if (command.exitCode != null || command.signalCode != null) {
+    return Promise.resolve(command.exitCode)
+  }
   return new Promise((resolve, reject) => {
     command.on('error', reject)
     command.on('exit', (code) => resolve(code))
   })
+}
+
+export async function terminateChildProcess(command: ChildProcess): Promise<void> {
+  if (command.exitCode != null || command.signalCode != null) return
+  const exitPromise = getProcessExitPromise(command).catch(() => null)
+  command.kill('SIGTERM')
+  const exited = await Promise.race([
+    exitPromise.then(() => true),
+    delay(5_000).then(() => false),
+  ])
+  if (exited || command.exitCode != null || command.signalCode != null) return
+  command.kill('SIGKILL')
+  await Promise.race([
+    exitPromise,
+    delay(2_000),
+  ])
 }
 
 function delay(milliseconds: number): Promise<void> {
@@ -3308,6 +3327,8 @@ export async function startEphemeralEnvironment(options: EphemeralRuntimeOptions
     await rm(`${EPHEMERAL_CACHE_DB_PATH}-wal`, { force: true }).catch(() => undefined)
     await rm(`${EPHEMERAL_CACHE_DB_PATH}-shm`, { force: true }).catch(() => undefined)
     await rm(EPHEMERAL_QUEUE_BASE_DIR, { recursive: true, force: true }).catch(() => undefined)
+    await rm(EPHEMERAL_EMAIL_CAPTURE_PATH, { force: true }).catch(() => undefined)
+    await rm(EPHEMERAL_CHANNEL_EMAIL_CAPTURE_PATH, { force: true }).catch(() => undefined)
     const enterpriseModulesFlag = process.env.OM_ENABLE_ENTERPRISE_MODULES ?? 'false'
     const commandEnvironment = buildEnvironment({
       DATABASE_URL: databaseUrl,
@@ -3418,11 +3439,13 @@ export async function startEphemeralEnvironment(options: EphemeralRuntimeOptions
       if (isStopped) return
       isStopped = true
       try {
-        if (applicationProcess && !applicationProcess.killed) {
-          applicationProcess.kill('SIGTERM')
+        if (applicationProcess) {
+          await terminateChildProcess(applicationProcess)
         }
         await databaseContainer.stop()
         await clearEphemeralEnvironmentState()
+        await rm(EPHEMERAL_EMAIL_CAPTURE_PATH, { force: true }).catch(() => undefined)
+        await rm(EPHEMERAL_CHANNEL_EMAIL_CAPTURE_PATH, { force: true }).catch(() => undefined)
       } finally {
         await runtimeLock.release()
       }

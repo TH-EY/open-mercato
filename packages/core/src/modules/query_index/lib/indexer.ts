@@ -10,6 +10,7 @@ import {
 } from '@open-mercato/shared/lib/crud/custom-field-definition-index'
 import { type Kysely, type Transaction, sql } from 'kysely'
 import { createLogger } from '@open-mercato/shared/lib/logger'
+import type { SearchFieldPolicy } from '@open-mercato/shared/modules/search'
 import { replaceSearchTokensForRecord, deleteSearchTokensForRecord } from './search-tokens'
 import { attachAggregateSearchField } from './document'
 
@@ -254,7 +255,7 @@ function scopeEntityIndexes<QB extends { where: (...args: any[]) => QB }>(
 
 export async function upsertIndexRow(
   em: EntityManager,
-  args: { entityType: string; recordId: string; organizationId?: string | null; tenantId?: string | null; searchTokenDoc?: Record<string, unknown> | null; deferSearchTokens?: boolean; trx?: QueryIndexExecutor }
+  args: { entityType: string; recordId: string; organizationId?: string | null; tenantId?: string | null; searchTokenDoc?: Record<string, unknown> | null; searchFieldPolicy?: SearchFieldPolicy; deferSearchTokens?: boolean; trx?: QueryIndexExecutor }
 ): Promise<UpsertIndexResult> {
   const db = (em as any).getKysely()
   const executor = args.trx ?? db
@@ -279,6 +280,7 @@ export async function upsertIndexRow(
           organizationId: args.organizationId ?? null,
           tenantId: args.tenantId ?? null,
           doc: null,
+          searchFieldPolicy: args.searchFieldPolicy,
           trx: args.trx,
         })
       } catch (error) {
@@ -352,6 +354,7 @@ export async function upsertIndexRow(
         tenantId: args.tenantId ?? null,
         doc,
         searchTokenDoc: args.searchTokenDoc ?? null,
+        searchFieldPolicy: args.searchFieldPolicy,
         trx: args.trx,
       })
     } catch (error) {
@@ -376,6 +379,7 @@ export async function reindexSearchTokensForRecord(
     tenantId?: string | null
     doc: Record<string, any> | null
     searchTokenDoc?: Record<string, unknown> | null
+    searchFieldPolicy?: SearchFieldPolicy
     trx?: QueryIndexExecutor
   },
 ): Promise<void> {
@@ -406,6 +410,7 @@ export async function reindexSearchTokensForRecord(
     organizationId: args.organizationId ?? null,
     tenantId: args.tenantId ?? null,
     doc: await tokenDoc,
+    fieldPolicy: args.searchFieldPolicy,
   }, { trx: args.trx })
 }
 

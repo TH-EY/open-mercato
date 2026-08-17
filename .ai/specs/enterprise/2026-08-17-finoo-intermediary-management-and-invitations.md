@@ -678,16 +678,16 @@ None identified after the readiness corrections. The fresh-context scope review 
 - Preserved the existing THOM-90 assignment/portal contract and isolated Affiliate/THOM-99 work.
 - Added durable delivery/expiry/inactive lifecycle, whole-account deactivate/reactivate semantics, idempotent backfill, API/UI contracts, integration coverage, risks, and compliance review.
 - Applied pre-implementation readiness corrections: partial name plus exact hash-only email search, `search.ts`, embedded `CrudForm`, trusted acceptance-subscriber reload, Customers navigation placement, shared assignment eligibility, CLI preservation, and backfill-before-cutover ordering.
-- Applied implementation-discovery corrections: durable accepted-event emission, atomic invitation acceptance claim, Inactive-unlinked edit semantics, PII-safe command logs and actor UUIDs, safe linked-account projection, and cursor `Load more` UI.
+- Applied implementation-discovery corrections: durable accepted-event emission with scheduled reconciliation of accepted-but-unlinked rows, atomic invitation acceptance claim, Inactive-unlinked edit semantics, PII-safe command logs and actor UUIDs, safe linked-account projection, per-entity search ACL enforcement, hash-only token exclusion, and cursor `Load more` UI.
 
 ## Implementation Status
 
 | Phase | Status | Date | Notes |
 |-------|--------|------|-------|
 | Phase 1 — Entity, encryption, events, and domain state | Done | 2026-08-17 | Additive entity/search/events, migration/snapshot, 11 suites/54 module tests, 28 suites/262 search tests, app typecheck, targeted lint, generation, and repeat schema diff for FINOO passed. |
-| Phase 2 — Invitation and account lifecycle | In Progress | 2026-08-17 | Code-backed lifecycle/transaction map complete; implementation pending. |
-| Phase 3 — Directory UI and picker integration | Not Started | — | Read-only UI/navigation map complete. |
-| Phase 4 — Backfill, review, and private release | Not Started | — | Read-only backfill/cutover map complete. |
+| Phase 2 — Invitation and account lifecycle | Done | 2026-08-17 | Invite/edit/resend/cancel/deactivate/reactivate commands, scoped APIs, atomic acceptance, persistent subscriber, and durable accepted-row reconciliation implemented. |
+| Phase 3 — Directory UI and picker integration | Done | 2026-08-17 | Directory DataTable, invite/edit/lifecycle UX, active-only picker/direct assignment eligibility, and stage eligibility protections implemented. |
+| Phase 4 — Backfill, review, and private release | In Progress | 2026-08-17 | Idempotent backfill and integration matrix implemented; final merged verification, private deploy, headed QA, release evidence, and Jira closure remain. |
 
 ### Phase 1 — Detailed Progress
 

@@ -7,6 +7,7 @@ import type {
   IndexableRecord,
 } from '../types'
 import type { EntityId } from '@open-mercato/shared/modules/entities'
+import type { SearchFieldPolicy } from '@open-mercato/shared/modules/search'
 
 /**
  * Configuration for TokenSearchStrategy.
@@ -47,6 +48,7 @@ export class TokenSearchStrategy implements SearchStrategy {
   constructor(
     private readonly db: Kysely<any>,
     config?: TokenStrategyConfig,
+    private readonly fieldPolicyResolver?: (entityId: EntityId) => SearchFieldPolicy | undefined,
   ) {
     this.minMatchRatio = config?.minMatchRatio ?? 0.5
     this.defaultLimit = config?.defaultLimit ?? 50
@@ -136,6 +138,7 @@ export class TokenSearchStrategy implements SearchStrategy {
       tenantId: record.tenantId,
       organizationId: record.organizationId,
       doc: record.fields,
+      fieldPolicy: this.fieldPolicyResolver?.(record.entityId),
     })
   }
 
@@ -165,6 +168,7 @@ export class TokenSearchStrategy implements SearchStrategy {
       tenantId: record.tenantId,
       organizationId: record.organizationId,
       doc: record.fields as Record<string, unknown>,
+      fieldPolicy: this.fieldPolicyResolver?.(record.entityId),
     }))
 
     await replaceSearchTokensForBatch(this.db, payloads)

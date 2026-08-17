@@ -1,4 +1,4 @@
-import { rm, writeFile } from 'node:fs/promises'
+import { rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
@@ -232,6 +232,7 @@ describe('test-seed email capture scoping', () => {
       expect.objectContaining({ metadata: expect.objectContaining({ subject: 'other-org' }) }),
       expect.objectContaining({ metadata: expect.objectContaining({ subject: 'other-system' }) }),
     ])
+    expect((await stat(capturePath)).mode & 0o777).toBe(0o600)
   })
 
   it('never authorizes system capture access by recipient alone', async () => {

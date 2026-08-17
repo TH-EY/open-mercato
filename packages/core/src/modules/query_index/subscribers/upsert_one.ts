@@ -28,6 +28,12 @@ export default async function handle(payload: any, ctx: { resolve: <T=any>(name:
   const suppressCoverage = payload?.suppressCoverage === true
   const coverageDelayMs = typeof payload?.coverageDelayMs === 'number' ? payload.coverageDelayMs : undefined
   const alwaysConsistent = isReadProjectionAlwaysConsistent()
+  let searchFieldPolicy
+  try {
+    searchFieldPolicy = ctx.resolve<any>('searchIndexer')?.getEntityConfig?.(entityType)?.fieldPolicy
+  } catch {
+    searchFieldPolicy = undefined
+  }
   try {
     const hasPayloadOrganizationId = Object.prototype.hasOwnProperty.call(payload ?? {}, 'organizationId')
     const hasPayloadTenantId = Object.prototype.hasOwnProperty.call(payload ?? {}, 'tenantId')
@@ -56,6 +62,7 @@ export default async function handle(payload: any, ctx: { resolve: <T=any>(name:
           organizationId,
           tenantId,
           searchTokenDoc,
+          searchFieldPolicy,
           deferSearchTokens: false,
           trx,
         })
@@ -119,6 +126,7 @@ export default async function handle(payload: any, ctx: { resolve: <T=any>(name:
       organizationId,
       tenantId,
       searchTokenDoc,
+      searchFieldPolicy,
       deferSearchTokens: true,
     })
     if (!suppressCoverage) {
@@ -175,7 +183,12 @@ export default async function handle(payload: any, ctx: { resolve: <T=any>(name:
     const resolvedDoc = result.doc
     void (async () => {
       try {
-        await reindexSearchTokensForRecord(em, { ...deferredScope, doc: resolvedDoc, searchTokenDoc })
+        await reindexSearchTokensForRecord(em, {
+          ...deferredScope,
+          doc: resolvedDoc,
+          searchTokenDoc,
+          searchFieldPolicy,
+        })
         const bus = ctx.resolve<any>('eventBus')
         await bus.emitEvent('query_index.vectorize_one', deferredScope)
         await bus.emitEvent('search.index_record', { entityId: entityType, recordId, organizationId, tenantId })

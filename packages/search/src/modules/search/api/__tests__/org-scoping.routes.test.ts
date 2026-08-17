@@ -54,13 +54,20 @@ describe('Search API organizationId scoping', () => {
   })
 
   test('/api/search/search uses resolved org scope (selected org)', async () => {
-    mockGetAuthFromRequest.mockResolvedValue({ tenantId: 't1', orgId: 'org-A', sub: 'user-1', isSuperAdmin: false })
+    mockGetAuthFromRequest.mockResolvedValue({ tenantId: 't1', orgId: 'org-A', sub: 'user-1', isSuperAdmin: false, features: ['demo.view'] })
 
     const searchService = {
       search: jest.fn().mockResolvedValue([{ entityId: 'x:y', recordId: '1', score: 1, source: 'tokens' }]),
     }
     const container = {
-      resolve: jest.fn((name: string) => (name === 'searchService' ? searchService : undefined)),
+      resolve: jest.fn((name: string) => {
+        if (name === 'searchService') return searchService
+        if (name === 'searchIndexer') return {
+          getEntityConfig: () => ({ entityId: 'x:y', aclFeatures: ['demo.view'] }),
+          getAllEntityConfigs: () => [{ entityId: 'x:y', aclFeatures: ['demo.view'] }],
+        }
+        return undefined
+      }),
       dispose: jest.fn(),
     }
     mockCreateRequestContainer.mockResolvedValue(container)
@@ -87,14 +94,62 @@ describe('Search API organizationId scoping', () => {
     expect(Array.isArray(body.results)).toBe(true)
   })
 
+  test('/api/search/search does not query a requested entity without its declared view feature', async () => {
+    mockGetAuthFromRequest.mockResolvedValue({
+      tenantId: 't1',
+      orgId: 'org-A',
+      sub: 'user-1',
+      features: ['search.view'],
+    })
+    const searchService = { search: jest.fn().mockResolvedValue([]) }
+    const finooConfig = {
+      entityId: 'finoo_intermediaries:finoo_intermediary',
+      aclFeatures: ['finoo_intermediaries.view'],
+    }
+    const container = {
+      resolve: jest.fn((name: string) => {
+        if (name === 'searchService') return searchService
+        if (name === 'searchIndexer') return {
+          getEntityConfig: () => finooConfig,
+          getAllEntityConfigs: () => [finooConfig],
+        }
+        return undefined
+      }),
+      dispose: jest.fn(),
+    }
+    mockCreateRequestContainer.mockResolvedValue(container)
+    mockResolveOrganizationScopeForRequest.mockResolvedValue({
+      selectedId: 'org-A',
+      filterIds: ['org-A'],
+      allowedIds: ['org-A'],
+      tenantId: 't1',
+    } satisfies MockOrganizationScope)
+
+    const response = await hybridSearchGet(new Request(
+      'http://localhost/api/search/search?q=ada&strategies=tokens&entityTypes=finoo_intermediaries:finoo_intermediary',
+    ))
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body.results).toEqual([])
+    expect(searchService.search).not.toHaveBeenCalled()
+  })
+
   test('/api/search/search/global uses full allowed org scope when no single org is selected', async () => {
-    mockGetAuthFromRequest.mockResolvedValue({ tenantId: 't1', orgId: 'org-A', sub: 'user-1', isSuperAdmin: false })
+    mockGetAuthFromRequest.mockResolvedValue({ tenantId: 't1', orgId: 'org-A', sub: 'user-1', isSuperAdmin: false, features: ['demo.view'] })
 
     const searchService = {
       search: jest.fn().mockResolvedValue([]),
     }
     const container = {
-      resolve: jest.fn((name: string) => (name === 'searchService' ? searchService : undefined)),
+      resolve: jest.fn((name: string) => {
+        if (name === 'searchService') return searchService
+        if (name === 'searchIndexer') return {
+          getEntityConfig: () => ({ entityId: 'x:y', aclFeatures: ['demo.view'] }),
+          getAllEntityConfigs: () => [{ entityId: 'x:y', aclFeatures: ['demo.view'] }],
+        }
+        return undefined
+      }),
       dispose: jest.fn(),
     }
     mockCreateRequestContainer.mockResolvedValue(container)
@@ -114,13 +169,20 @@ describe('Search API organizationId scoping', () => {
   })
 
   test('/api/search/search uses full allowed org scope when restricted user has no selected org', async () => {
-    mockGetAuthFromRequest.mockResolvedValue({ tenantId: 't1', orgId: 'org-A', sub: 'user-1', isSuperAdmin: false })
+    mockGetAuthFromRequest.mockResolvedValue({ tenantId: 't1', orgId: 'org-A', sub: 'user-1', isSuperAdmin: false, features: ['demo.view'] })
 
     const searchService = {
       search: jest.fn().mockResolvedValue([]),
     }
     const container = {
-      resolve: jest.fn((name: string) => (name === 'searchService' ? searchService : undefined)),
+      resolve: jest.fn((name: string) => {
+        if (name === 'searchService') return searchService
+        if (name === 'searchIndexer') return {
+          getEntityConfig: () => ({ entityId: 'x:y', aclFeatures: ['demo.view'] }),
+          getAllEntityConfigs: () => [{ entityId: 'x:y', aclFeatures: ['demo.view'] }],
+        }
+        return undefined
+      }),
       dispose: jest.fn(),
     }
     mockCreateRequestContainer.mockResolvedValue(container)

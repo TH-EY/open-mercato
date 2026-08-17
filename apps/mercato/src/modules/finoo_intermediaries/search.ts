@@ -12,6 +12,7 @@ export const searchConfig: SearchModuleConfig = {
       enabled: true,
       priority: 7,
       strategies: ['fulltext', 'tokens'],
+      aclFeatures: ['finoo_intermediaries.view'],
       fieldPolicy: {
         searchable: ['first_name', 'last_name'],
         hashOnly: ['email'],

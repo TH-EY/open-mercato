@@ -131,12 +131,25 @@ export function registerSearchModule(
 ): void {
   const strategies: SearchStrategy[] = []
 
+  const entityConfigMap = new Map<EntityId, SearchEntityConfig>()
+  for (const moduleConfig of (options?.moduleConfigs ?? [])) {
+    for (const entityConfig of moduleConfig.entities) {
+      if (entityConfig.enabled !== false) {
+        entityConfigMap.set(entityConfig.entityId as EntityId, entityConfig)
+      }
+    }
+  }
+
   // Token strategy (always available unless explicitly skipped)
   if (!options?.skipTokens) {
     try {
       const em = container.resolve<any>('em')
       const db = em.getKysely() as Kysely<any>
-      strategies.push(new TokenSearchStrategy(db))
+      strategies.push(new TokenSearchStrategy(
+        db,
+        undefined,
+        (entityId) => entityConfigMap.get(entityId)?.fieldPolicy,
+      ))
     } catch {
       // Kysely not available via em, skipping TokenSearchStrategy
     }
@@ -156,16 +169,6 @@ export function registerSearchModule(
       }
     } catch {
       // Vector module not available, skipping VectorSearchStrategy
-    }
-  }
-
-  // Build entity config map for field policy resolution
-  const entityConfigMap = new Map<EntityId, SearchEntityConfig>()
-  for (const moduleConfig of (options?.moduleConfigs ?? [])) {
-    for (const entityConfig of moduleConfig.entities) {
-      if (entityConfig.enabled !== false) {
-        entityConfigMap.set(entityConfig.entityId as EntityId, entityConfig)
-      }
     }
   }
 

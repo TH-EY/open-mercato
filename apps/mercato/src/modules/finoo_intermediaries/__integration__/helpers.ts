@@ -5,7 +5,11 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, type APIRequestContext, type APIResponse } from '@playwright/test'
 import { apiRequest, getAuthToken } from '@open-mercato/core/helpers/integration/api'
-import { seedSystemEmailChannel } from '@open-mercato/core/helpers/integration/communicationChannelsFixtures'
+import {
+  clearCapturedSystemEmails,
+  listCapturedSystemEmails,
+  seedSystemEmailChannel,
+} from '@open-mercato/core/helpers/integration/communicationChannelsFixtures'
 import {
   createOrganizationFixture,
   createRoleFixture,
@@ -55,6 +59,7 @@ export type Scenario = {
   intermediaryRoleId: string
   systemEmailChannelId: string
   recipient: string
+  capturedRecipients: Set<string>
 }
 
 type CapturedEmail = {
@@ -208,6 +213,7 @@ export async function createScenario(
     intermediaryRoleId: intermediaryRoleId!,
     systemEmailChannelId,
     recipient: `${testId.toLowerCase()}-${suffix}@test.local`,
+    capturedRecipients: new Set<string>(),
   }
 }
 
@@ -244,8 +250,10 @@ export async function inviteIntermediary(
   scenario: Scenario,
   input: { email?: string; firstName?: string; lastName?: string } = {},
 ): Promise<{ response: APIResponse; body: DirectoryMutation }> {
+  const email = input.email ?? scenario.recipient
+  scenario.capturedRecipients.add(email.toLowerCase())
   const response = await scopedApiRequest(request, scenario, 'POST', `${DIRECTORY_PATH}/invite`, {
-    email: input.email ?? scenario.recipient,
+    email,
     firstName: input.firstName ?? 'Ada',
     lastName: input.lastName ?? 'Lovelace',
   })
@@ -386,6 +394,15 @@ export async function seedAssignment(input: {
 
 export async function cleanupScenario(request: APIRequestContext, scenario: Scenario | null): Promise<void> {
   if (!scenario) return
+  for (const systemRecipient of scenario.capturedRecipients) {
+    await clearCapturedSystemEmails(request, scenario.superToken, { systemRecipient })
+    expect(
+      await listCapturedSystemEmails(request, scenario.superToken, { systemRecipient }),
+      `captured email for ${systemRecipient} should be removed`,
+    ).toHaveLength(0)
+  }
+  await queryDatabase('delete from search_tokens where tenant_id = $1 and organization_id = $2', [scenario.tenantId, scenario.organizationId])
+  await queryDatabase('delete from entity_indexes where tenant_id = $1 and organization_id = $2', [scenario.tenantId, scenario.organizationId])
   await queryDatabase('delete from finoo_intermediary_notes where tenant_id = $1 and organization_id = $2', [scenario.tenantId, scenario.organizationId])
   await queryDatabase('delete from finoo_intermediary_assignments where tenant_id = $1 and organization_id = $2', [scenario.tenantId, scenario.organizationId])
   await queryDatabase('delete from finoo_intermediaries where tenant_id = $1 and organization_id = $2', [scenario.tenantId, scenario.organizationId])
@@ -420,6 +437,16 @@ export async function cleanupScenario(request: APIRequestContext, scenario: Scen
   await deleteUserIfExists(request, scenario.superToken, scenario.staffUserId)
   await deleteRoleIfExists(request, scenario.superToken, scenario.staffRoleId)
   await deleteOrganizationIfExists(request, scenario.superToken, scenario.organizationId)
+  await queryDatabase('delete from search_tokens where tenant_id = $1 and organization_id = $2', [scenario.tenantId, scenario.organizationId])
+  await queryDatabase('delete from entity_indexes where tenant_id = $1 and organization_id = $2', [scenario.tenantId, scenario.organizationId])
+  const residualSearchRows = await queryDatabase<{ count: string }>(
+    `select (
+       (select count(*) from search_tokens where tenant_id = $1 and organization_id = $2)
+       + (select count(*) from entity_indexes where tenant_id = $1 and organization_id = $2)
+     )::text as count`,
+    [scenario.tenantId, scenario.organizationId],
+  )
+  expect(residualSearchRows[0]?.count, 'scoped search projections should be removed').toBe('0')
   await apiRequest(request, 'DELETE', '/api/directory/tenants', {
     token: scenario.superToken,
     data: { id: scenario.tenantId },

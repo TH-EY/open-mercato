@@ -10,6 +10,7 @@ import { resolveEmbeddingConfig } from '../../../lib/embedding-config'
 import { resolveGlobalSearchStrategies } from '../../../lib/global-search-config'
 import { searchError } from '../../../../../lib/debug'
 import { globalSearchOpenApi } from '../../openapi'
+import { resolveAuthorizedSearchEntityTypes } from '../../authorized-entity-types'
 
 export const metadata = {
   GET: { requireAuth: true, requireFeatures: ['search.view'] },
@@ -97,13 +98,24 @@ export async function GET(req: Request) {
     const scopeFilter = resolveOrganizationScopeFilter(scope, auth)
     const organizationId =
       typeof scope.selectedId === 'string' && scope.selectedId.trim().length > 0 ? scope.selectedId.trim() : undefined
+    const authorizedEntityTypes = resolveAuthorizedSearchEntityTypes(container, auth, entityTypes)
+    if (authorizedEntityTypes.length === 0) {
+      return NextResponse.json({
+        results: [],
+        strategiesUsed: [],
+        strategiesEnabled: strategies,
+        timing: Date.now() - startTime,
+        query,
+        limit,
+      })
+    }
     const searchOptions = {
       tenantId: auth.tenantId,
       organizationId,
       organizationIds: scopeFilter.organizationIds,
       limit,
       strategies,
-      entityTypes,
+      entityTypes: authorizedEntityTypes,
     }
 
     const results = await searchService.search(query, searchOptions)

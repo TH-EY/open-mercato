@@ -712,30 +712,43 @@ export const activateIntermediaryFromInvitationCommand: CommandHandler<unknown, 
   async execute(rawInput, ctx) {
     const input = activateFromInvitationSchema.parse(rawInput)
     if (!ctx.systemActor) throw new CrudHttpError(403, { error: 'Forbidden' })
-    const scopeBase = { tenantId: input.tenantId }
     const em = commandEntityManager(ctx)
+    const invitationCandidate = await findOneWithDecryption(
+      em,
+      CustomerUserInvitation,
+      { id: input.invitationId, tenantId: input.tenantId } as FilterQuery<CustomerUserInvitation>,
+    )
+    if (!invitationCandidate) throw directoryNotFound()
+    const scope = {
+      tenantId: input.tenantId,
+      organizationId: invitationCandidate.organizationId,
+    }
     const outcome = await em.transactional(async (operationEm): Promise<TransactionOutcome> => {
-      const invitation = await findOneWithDecryption(
-        operationEm,
-        CustomerUserInvitation,
-        { id: input.invitationId, tenantId: scopeBase.tenantId } as FilterQuery<CustomerUserInvitation>,
-        { lockMode: LockMode.PESSIMISTIC_WRITE },
-      )
-      if (!invitation || !invitation.acceptedAt || invitation.cancelledAt) throw directoryNotFound()
-      const scope = { tenantId: input.tenantId, organizationId: invitation.organizationId }
       const intermediary = await findOneWithDecryption(
         operationEm,
         FinooIntermediary,
         {
           tenantId: scope.tenantId,
           organizationId: scope.organizationId,
-          invitationId: invitation.id,
+          invitationId: input.invitationId,
           deletedAt: null,
         } as FilterQuery<FinooIntermediary>,
         { lockMode: LockMode.PESSIMISTIC_WRITE },
         scope,
       )
       if (!intermediary) throw directoryNotFound()
+      const invitation = await findOneWithDecryption(
+        operationEm,
+        CustomerUserInvitation,
+        {
+          id: input.invitationId,
+          tenantId: scope.tenantId,
+          organizationId: scope.organizationId,
+        } as FilterQuery<CustomerUserInvitation>,
+        { lockMode: LockMode.PESSIMISTIC_WRITE },
+        scope,
+      )
+      if (!invitation || !invitation.acceptedAt || invitation.cancelledAt) throw directoryNotFound()
       const user = await loadScopedCustomerUser(operationEm, input.userId, scope, true)
       const role = await loadIntermediaryRole(operationEm, scope)
       const membership = await loadIntermediaryMembership(operationEm, user, role, true)
@@ -772,11 +785,6 @@ export const activateIntermediaryFromInvitationCommand: CommandHandler<unknown, 
         eventId: 'finoo_intermediaries.intermediary.activated',
       }
     })
-    const scope = {
-      tenantId: outcome.intermediary.tenantId,
-      organizationId: outcome.intermediary.organizationId,
-      actorUserId: null,
-    }
     if (outcome.invalidateCustomerUserId) {
       const customerRbacService = ctx.container.resolve('customerRbacService') as CustomerRbacService
       await customerRbacService.invalidateUserCache(outcome.invalidateCustomerUserId)

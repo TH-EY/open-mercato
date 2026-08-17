@@ -8,6 +8,7 @@ import {
 import { tokenizeText } from '@open-mercato/shared/lib/search/tokenize'
 import { parseBooleanToken } from '@open-mercato/shared/lib/boolean'
 import { createLogger } from '@open-mercato/shared/lib/logger'
+import type { SearchFieldPolicy } from '@open-mercato/shared/modules/search'
 
 const logger = createLogger('query_index').child({ component: 'search-tokens' })
 
@@ -37,6 +38,7 @@ type BuildTokenOptions = {
   tenantId?: string | null
   doc?: Record<string, unknown> | null
   config?: SearchConfig
+  fieldPolicy?: SearchFieldPolicy
 }
 
 const DEFAULT_SCOPE = { organizationId: null, tenantId: null }
@@ -73,6 +75,7 @@ function shouldIndexField(
   value: unknown,
   config: SearchConfig,
   entityType: string | null,
+  fieldPolicy?: SearchFieldPolicy,
 ): boolean {
   if (typeof value !== 'string' && !Array.isArray(value)) return false
   const lower = field.toLowerCase()
@@ -80,6 +83,8 @@ function shouldIndexField(
   if (lower.endsWith('_at')) return false
   if (['created_at', 'updated_at', 'deleted_at', 'tenant_id', 'organization_id'].includes(lower)) return false
   if (isSearchFieldBlocklisted(field, entityType, config)) return false
+  if (fieldPolicy?.excluded?.includes(field) || fieldPolicy?.hashOnly?.includes(field)) return false
+  if (fieldPolicy?.searchable && !fieldPolicy.searchable.includes(field)) return false
   return collectTextValues(value).some((text) => text.length > 0)
 }
 
@@ -100,7 +105,7 @@ export function buildSearchTokenRows(params: BuildTokenOptions): SearchTokenRow[
 
   for (const [field, rawValue] of Object.entries(params.doc)) {
     if (tokens.length >= recordLimit) break
-    if (!shouldIndexField(field, rawValue, config, params.entityType)) continue
+    if (!shouldIndexField(field, rawValue, config, params.entityType, params.fieldPolicy)) continue
     const values = collectTextValues(rawValue)
     const seen = new Set<string>()
     let fieldTokenCount = 0

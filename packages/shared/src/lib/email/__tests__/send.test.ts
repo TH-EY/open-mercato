@@ -1,5 +1,5 @@
 import React from 'react'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { isEmailDeliveryConfigured } from '../config'
@@ -209,6 +209,7 @@ describe('sendEmail', () => {
       links: ['https://example.com/portal/invite?token=raw'],
       text: 'Accept your invite Accept',
     }))
+    expect((await stat(capturePath)).mode & 0o777).toBe(0o600)
     expect(sendMock).not.toHaveBeenCalled()
   })
 

@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { appendFile, chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { timingSafeEqual } from 'node:crypto'
 import path from 'node:path'
 import type {
@@ -179,8 +179,9 @@ export async function clearTestSeedCapturedMessages(
   await writeFile(
     capturePath,
     `${retained.map((message) => JSON.stringify(message)).join('\n')}\n`,
-    'utf8',
+    { encoding: 'utf8', mode: 0o600 },
   )
+  await chmod(capturePath, 0o600)
 }
 
 export async function listTestSeedCapturedMessages(
@@ -195,7 +196,8 @@ export async function listTestSeedCapturedMessages(
 async function captureTestSeedMessage(record: TestSeedCapturedMessage): Promise<void> {
   const capturePath = resolveCapturePath()
   await mkdir(path.dirname(capturePath), { recursive: true })
-  await appendFile(capturePath, `${JSON.stringify(record)}\n`, 'utf8')
+  await appendFile(capturePath, `${JSON.stringify(record)}\n`, { encoding: 'utf8', mode: 0o600 })
+  await chmod(capturePath, 0o600)
 }
 
 /**

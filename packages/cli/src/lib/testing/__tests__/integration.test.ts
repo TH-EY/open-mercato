@@ -19,6 +19,7 @@ import {
   ephemeralPostgresInitSql,
   shouldReuseBuildArtifacts,
   acquireEphemeralRuntimeLock,
+  terminateChildProcess,
   waitForApplicationReadiness,
 } from '../integration'
 import { EventEmitter } from 'node:events'
@@ -640,6 +641,28 @@ describe('integration cache and options', () => {
       warn.mockRestore()
       await rm(tempRoot, { recursive: true, force: true })
     }
+  })
+})
+
+describe('ephemeral application shutdown', () => {
+  it('waits for the application process to exit after SIGTERM', async () => {
+    const processHandle = new EventEmitter() as ChildProcess
+    Object.assign(processHandle, {
+      exitCode: null,
+      signalCode: null,
+      kill: jest.fn((signal: NodeJS.Signals) => {
+        expect(signal).toBe('SIGTERM')
+        queueMicrotask(() => {
+          Object.assign(processHandle, { signalCode: 'SIGTERM' })
+          processHandle.emit('exit', null, 'SIGTERM')
+        })
+        return true
+      }),
+    })
+
+    await terminateChildProcess(processHandle)
+
+    expect(processHandle.kill).toHaveBeenCalledTimes(1)
   })
 })
 

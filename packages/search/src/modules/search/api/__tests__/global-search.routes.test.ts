@@ -96,6 +96,7 @@ describe('GET /api/search/search/global presenter localization', () => {
       orgId: 'org-1',
       sub: 'user-1',
       isSuperAdmin: false,
+      features: ['search.view', 'demo.view'],
     })
     mockResolveOrganizationScopeForRequest.mockResolvedValue({
       selectedId: 'org-1',
@@ -114,6 +115,7 @@ describe('GET /api/search/search/global presenter localization', () => {
     const config: SearchEntityConfig = {
       entityId: DEMO_ENTITY_ID,
       enabled: true,
+      aclFeatures: ['demo.view'],
       formatResult: async (context) => {
         const { t } = await resolveTranslations()
         return {
@@ -142,7 +144,16 @@ describe('GET /api/search/search/global presenter localization', () => {
       presenterEnricher,
     })
     const container = {
-      resolve: jest.fn((name: string) => (name === 'searchService' ? searchService : undefined)),
+      resolve: jest.fn((name: string) => {
+        if (name === 'searchService') return searchService
+        if (name === 'searchIndexer') {
+          return {
+            getEntityConfig: (entityId: string) => configMap.get(entityId as EntityId),
+            getAllEntityConfigs: () => [...configMap.values()],
+          }
+        }
+        return undefined
+      }),
       dispose: jest.fn().mockResolvedValue(undefined),
     }
     mockCreateRequestContainer.mockResolvedValue(container)

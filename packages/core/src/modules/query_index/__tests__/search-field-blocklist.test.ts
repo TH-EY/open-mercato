@@ -96,6 +96,25 @@ describe('per-field search tokens honour entity-scoped blocklist entries', () =>
     expect(buildRows(PERSON, { body: 'Profile note' })).toHaveLength(0)
   })
 
+  it('never prefix-tokenizes hash-only fields and honors the searchable allowlist', () => {
+    const rows = buildSearchTokenRows({
+      entityType: 'finoo_intermediaries:finoo_intermediary',
+      recordId: 'rec-1',
+      doc: {
+        first_name: 'Ada',
+        last_name: 'Lovelace',
+        email: 'ada@example.com',
+        lifecycle_state: 'active',
+      },
+      fieldPolicy: {
+        searchable: ['first_name', 'last_name'],
+        hashOnly: ['email'],
+      },
+    })
+    const fields = new Set(rows.map((row) => row.field))
+    expect(fields).toEqual(new Set(['first_name', 'last_name']))
+  })
+
   it('no longer re-indexes blocklisted text through the aggregate field', () => {
     process.env.OM_SEARCH_FIELD_BLOCKLIST = `${INTERACTION}@body`
     const doc = attachAggregateSearchField(

@@ -13,6 +13,8 @@ import {
   type Scenario,
 } from './helpers'
 
+test.setTimeout(30_000)
+
 test('TC-FINOO-INT-MGMT-011 forged, cross-scope, ambiguous, duplicate, and stale writes fail closed', async ({ request }) => {
   let owner: Scenario | null = null
   let foreignTenant: Scenario | null = null

@@ -1,5 +1,5 @@
 import React from 'react'
-import { appendFile, mkdir } from 'node:fs/promises'
+import { appendFile, chmod, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
@@ -112,7 +112,8 @@ async function captureEmailForTests(options: SendEmailOptions): Promise<void> {
   }
 
   await mkdir(dirname(capturePath), { recursive: true })
-  await appendFile(capturePath, `${JSON.stringify(record)}\n`, 'utf8')
+  await appendFile(capturePath, `${JSON.stringify(record)}\n`, { encoding: 'utf8', mode: 0o600 })
+  await chmod(capturePath, 0o600)
 }
 
 export async function sendEmail(options: SendEmailOptions): Promise<void> {
