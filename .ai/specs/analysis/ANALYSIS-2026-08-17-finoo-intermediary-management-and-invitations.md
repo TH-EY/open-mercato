@@ -104,6 +104,10 @@ The canonical review checklist is `.ai/review-checklist.md`; the path named by t
 - Tighten both picker and direct assignment authorization through one Active-directory predicate.
 - Preserve and verify the existing FINOO CLI command when adding backfill.
 - State staff sidebar placement and deployment ordering explicitly.
+- Persist the frozen invitation-accepted event and atomically claim invitations so Cancel/Resend cannot lose to a stale acceptance.
+- Expose only a safe `hasLinkedAccount` discriminator for UI behavior; keep raw Customer User IDs private.
+- Keep unlinked Inactive email edits inactive until explicit Reactivate, and use cursor `Load more` rather than fabricated page totals.
+- Sanitize command redo payloads and persist only linked staff UUID actor IDs.
 
 ### Nice-to-Have Gaps
 

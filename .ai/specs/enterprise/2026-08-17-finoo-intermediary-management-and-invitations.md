@@ -219,7 +219,9 @@ Deactivation lock order is directory row → Customer User → intermediary memb
 
 Events are declared with `createModuleEvents` and singular entity naming. Payloads contain IDs, status, tenant, organization, and actor IDs only; no name or email. Required events are `finoo_intermediaries.intermediary.invited`, `.updated`, `.activated`, `.deactivated`, `.reactivated`, `.invitation_cancelled`, and `.invitation_delivery_failed`.
 
-The existing frozen `customer_accounts.invitation.accepted` payload contains only `invitationId`, `userId`, and `tenantId`. The persistent subscriber must not infer or trust an event `organizationId`: it reloads the scoped invitation by `invitationId + tenantId`, verifies the event user, then requires equality between the invitation organization, linked Customer User organization, and directory organization while holding the command locks. A missing, foreign, stale, or already-processed relationship is a fail-closed no-op or recorded internal failure; it never activates another organization's row.
+The existing frozen `customer_accounts.invitation.accepted` payload contains only `invitationId`, `userId`, and `tenantId`. The core acceptance route must preserve those three fields while emitting with `{ persistent: true }`; persistent subscriber metadata alone is insufficient because the event bus only queues persistent emit calls. The subscriber must not infer or trust an event `organizationId`: it reloads the scoped invitation by `invitationId + tenantId`, verifies the event user, then requires equality between the invitation organization, linked Customer User organization, and directory organization while holding the command locks. A missing, foreign, stale, or already-processed relationship is a fail-closed no-op or recorded internal failure; it never activates another organization's row.
+
+Customer Invitation acceptance must claim the invitation atomically before creating or linking a Customer User. The claim remains valid only while `acceptedAt` and `cancelledAt` are null and expiry is in the future. A concurrent Cancel/Resend/Edit-email may therefore win and make the stale acceptance fail without creating a user or role; acceptance must never commit from a previously loaded, now-cancelled token.
 
 ## Invitation and Existing-Account Resolution
 
@@ -235,9 +237,11 @@ The Invite command normalizes and hashes email, then resolves within the authent
 
 Customer Invitation acceptance may still accept a user-supplied Customer User `displayName`; the module's first and last name remain administrator-owned directory fields and are not overwritten by portal acceptance. Email becomes immutable in this module once `customerUserId` is present. Account email changes remain a separate Customer Accounts workflow.
 
+For an unlinked Inactive row, Edit may change names and encrypted email/hash but remains Inactive and sends no mail or token. Only the explicit Reactivate action starts a new invitation. For pending effective states (`delivery_failed`, `invited`, `expired`), an email edit cancels/rotates the current invitation and sends the replacement as specified above.
+
 ## API Contracts
 
-All routes export per-method `metadata` and `openApi`, parse with zod, cap `pageSize <= 100`, use minimal errors, run mutation guards, and return no hashes, raw tokens, provider errors, role lists, or session data. The directory list is a custom read projection because effective expiry and grouped Related Deals are not direct entity fields; it must use the canonical Query Engine/index services and one bounded post-page batch enrichment rather than recreate filtering/search infrastructure. Every write remains a custom command route with the canonical mutation-guard registry.
+All routes export per-method `metadata` and `openApi`, parse with zod, cap `pageSize <= 100`, use minimal errors, run mutation guards, and return no hashes, raw tokens, provider errors, role lists, or session data. The directory list is a custom read projection because effective expiry and grouped Related Deals are not direct entity fields; it must use the canonical Query Engine/index services and one bounded post-page batch enrichment rather than recreate filtering/search infrastructure. Every write remains a custom command route with the canonical mutation-guard registry. Persisted actor columns use a real linked staff `auth.userId` UUID; an API-key principal without one fails closed instead of writing `auth.sub` into UUID fields.
 
 ### Directory list
 
@@ -246,7 +250,7 @@ All routes export per-method `metadata` and `openApi`, parse with zod, cap `page
 - Guard: staff auth + `finoo_intermediaries.view`.
 - Uses keyset pagination. Search matches partial first/last name through canonical text search, or an exact normalized email through `emailHash`; email is never partially searched.
 - Response: `{ items: IntermediaryDirectoryItem[], nextCursor }`.
-- Item: `id`, `firstName`, `lastName`, `email`, effective `status`, `relatedDeals`, `invitationExpiresAt`, `lastEmailStatus`, safe `lastEmailErrorCode`, `updatedAt`.
+- Item: `id`, `firstName`, `lastName`, `email`, effective `status`, `hasLinkedAccount`, `relatedDeals`, `invitationExpiresAt`, `lastEmailStatus`, safe `lastEmailErrorCode`, `updatedAt`. `hasLinkedAccount` is the only linkage discriminator exposed; raw Customer User IDs remain private.
 - Every status is included when the filter is absent.
 
 ### Invite
@@ -334,7 +338,7 @@ Columns:
 5. Related Deals as a plain integer
 6. stable-ID `RowActions`
 
-The table includes basic search and a status filter through DataTable's own FilterBar integration. All statuses appear by default. Filtered/search/no-record/loading/error states use shared DataTable and backend primitives. Related Deals is informational and does not link to a new filtered Deals route in this task.
+The table includes basic search and a status filter through DataTable's own FilterBar integration. All statuses appear by default. Filtered/search/no-record/loading/error states use shared DataTable and backend primitives. Cursor pagination is exposed as an explicit `Load more` action rather than emulating page-number totals that the API does not provide. Related Deals is informational and does not link to a new filtered Deals route in this task.
 
 The top-right `Invite intermediary` action is rendered only when the effective staff features contain every management permission. The dialog contains Email, First Name, and Last Name. Invite and Edit host embedded `CrudForm` instances so canonical validation, submit, conflict, Cmd/Ctrl+Enter, and Escape behavior is preserved; neither dialog implements a raw form or raw fetch.
 
@@ -427,9 +431,10 @@ Exit: entity/state/encryption tests pass; no UI or live write exists.
 ### Phase 2 — Invitation and account lifecycle
 
 1. Implement invite/edit/resend/cancel commands with transactional Customer Invitation reuse and fail-closed delivery state.
-2. Add persistent invitation-accepted and customer-user reconciliation subscribers.
-3. Implement whole-account deactivate/reactivate with session revocation, exact role membership, RBAC invalidation, compensating behavior, and focused multi-role tests.
-4. Add scoped APIs, OpenAPI, mutation guards, rate limits, and integration tests for every lifecycle edge.
+2. Add the backward-compatible caller-EM invitation seam and atomic acceptance claim; preserve the current service signature, return shape, TTL, and token rules for existing callers.
+3. Make the frozen invitation-accepted event emission durable and add persistent invitation-accepted and customer-user reconciliation subscribers.
+4. Implement whole-account deactivate/reactivate with session revocation, exact role membership, RBAC invalidation, compensating behavior, and focused multi-role tests.
+5. Add scoped APIs, OpenAPI, mutation guards, rate limits, PII-safe command logging, and integration tests for every lifecycle edge.
 
 Exit: all API paths pass against a fresh database and old tokens fail after replacement/cancellation.
 
@@ -473,7 +478,10 @@ Exit: exact private revision/digest and evidence pass. No upstream contribution 
 | `apps/mercato/src/modules/finoo_intermediaries/migrations/*` | Generate | Additive table/index/check migration and snapshot |
 | `apps/mercato/src/modules/finoo_intermediaries/__tests__/**` | Modify/create | Unit, API, component, security contract tests |
 | `apps/mercato/src/modules/finoo_intermediaries/__integration__/**` | Modify/create | Self-contained fresh-DB lifecycle/UI coverage |
-| `packages/core/src/modules/customer_accounts/services/customerInvitationService.ts` | Modify only if required | Minimal additive transactional EM support; no behavior/TTL/token fork |
+| `packages/core/src/modules/customer_accounts/services/customerInvitationService.ts` | Modify | Additive caller-EM support and atomic acceptance claim; preserve signature/return/TTL/token behavior |
+| `packages/core/src/modules/customer_accounts/api/invitations/accept.ts` | Modify | Persist the frozen invitation-accepted event without changing its payload |
+| `packages/core/src/modules/customer_accounts/services/__tests__/customerInvitationService.test.ts` | Modify | Caller-EM and cancel/accept concurrency coverage |
+| `packages/core/src/modules/customer_accounts/api/invitations/__tests__/*` | Modify/create | Durable accepted-event emission contract |
 
 No file under `apps/mercato/src/modules/finoo_affiliates/**` may change.
 
@@ -487,7 +495,7 @@ All integration tests create their own tenant, organization, exact intermediary 
 | `TC-FINOO-INT-MGMT-002` | New invite stores encrypted names/email, no raw token, sends one captured email, returns Invited, and exposes the user only after acceptance/Active linkage. |
 | `TC-FINOO-INT-MGMT-003` | Duplicate pending Invite updates names, rotates token, extends 72 hours, preserves one row, and rejects the prior link. |
 | `TC-FINOO-INT-MGMT-004` | Synchronous email failure preserves Delivery failed; Retry rotates token and succeeds; a stale delivery callback cannot overwrite Retry/Cancel. |
-| `TC-FINOO-INT-MGMT-005` | Time expiry renders Expired without GET mutation; Resend creates a fresh invitation; Cancel makes every old/current token invalid and leaves Inactive. |
+| `TC-FINOO-INT-MGMT-005` | Time expiry renders Expired without GET mutation; Resend creates a fresh invitation; Cancel makes every old/current token invalid and leaves Inactive, including a cancel-versus-accept race where exactly one terminal transition wins. |
 | `TC-FINOO-INT-MGMT-006` | Pre-activation email edit cancels the old invitation and sends a replacement; post-activation email edit is rejected; names remain administrator-owned after portal acceptance. |
 | `TC-FINOO-INT-MGMT-007` | Same-org active Customer User gets one intermediary membership and Active row without invitation; access-notice failure leaves Active with a warning. |
 | `TC-FINOO-INT-MGMT-008` | Same-org inactive Customer User becomes only an Inactive directory row; explicit Reactivate restores the whole account/role and requires a new login; Invite never silently restores it. |
@@ -670,6 +678,22 @@ None identified after the readiness corrections. The fresh-context scope review 
 - Preserved the existing THOM-90 assignment/portal contract and isolated Affiliate/THOM-99 work.
 - Added durable delivery/expiry/inactive lifecycle, whole-account deactivate/reactivate semantics, idempotent backfill, API/UI contracts, integration coverage, risks, and compliance review.
 - Applied pre-implementation readiness corrections: partial name plus exact hash-only email search, `search.ts`, embedded `CrudForm`, trusted acceptance-subscriber reload, Customers navigation placement, shared assignment eligibility, CLI preservation, and backfill-before-cutover ordering.
+- Applied implementation-discovery corrections: durable accepted-event emission, atomic invitation acceptance claim, Inactive-unlinked edit semantics, PII-safe command logs and actor UUIDs, safe linked-account projection, and cursor `Load more` UI.
+
+## Implementation Status
+
+| Phase | Status | Date | Notes |
+|-------|--------|------|-------|
+| Phase 1 — Entity, encryption, events, and domain state | Done | 2026-08-17 | Additive entity/search/events, migration/snapshot, 11 suites/54 module tests, 28 suites/262 search tests, app typecheck, targeted lint, generation, and repeat schema diff for FINOO passed. |
+| Phase 2 — Invitation and account lifecycle | In Progress | 2026-08-17 | Code-backed lifecycle/transaction map complete; implementation pending. |
+| Phase 3 — Directory UI and picker integration | Not Started | — | Read-only UI/navigation map complete. |
+| Phase 4 — Backfill, review, and private release | Not Started | — | Read-only backfill/cutover map complete. |
+
+### Phase 1 — Detailed Progress
+
+- [x] Add `FinooIntermediary`, indexes/checks, entity ID, encryption map, validators, lifecycle resolver, and tests.
+- [x] Add module lifecycle event declarations and typed PII-free payload contract.
+- [x] Generate and inspect the additive migration/snapshot and convention registries.
 
 ### Review — 2026-08-17
 

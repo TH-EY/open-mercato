@@ -1,5 +1,8 @@
 import {
   assignmentCreateSchema,
+  intermediaryInviteSchema,
+  intermediaryLifecycleActionSchema,
+  intermediaryUpdateSchema,
   noteBodySchema,
   partnerStatusUpdateSchema,
 } from '../data/validators'
@@ -40,5 +43,43 @@ describe('finoo_intermediaries validators', () => {
       expectedUpdatedAt: '2026-08-13T10:00:00.000Z',
     })
     expect(() => partnerStatusUpdateSchema.parse({ status: 'done' })).toThrow()
+  })
+
+  it('normalizes and validates the complete intermediary identity', () => {
+    expect(intermediaryInviteSchema.parse({
+      email: '  Patryk.Madaj@THEY.DEV ',
+      firstName: ' Patryk ',
+      lastName: ' Madaj ',
+    })).toEqual({
+      email: 'patryk.madaj@they.dev',
+      firstName: 'Patryk',
+      lastName: 'Madaj',
+    })
+    expect(() => intermediaryInviteSchema.parse({
+      email: 'invalid',
+      firstName: 'Patryk',
+      lastName: 'Madaj',
+    })).toThrow()
+    expect(() => intermediaryInviteSchema.parse({
+      email: 'patryk.madaj@they.dev',
+      firstName: ' ',
+      lastName: 'Madaj',
+    })).toThrow()
+  })
+
+  it('keeps email optional on edit and requires optimistic locking for every lifecycle action', () => {
+    expect(intermediaryUpdateSchema.parse({
+      firstName: 'Patryk',
+      lastName: 'Madaj',
+      expectedUpdatedAt: '2026-08-17T10:00:00.000Z',
+    })).toEqual({
+      firstName: 'Patryk',
+      lastName: 'Madaj',
+      expectedUpdatedAt: '2026-08-17T10:00:00.000Z',
+    })
+    expect(intermediaryLifecycleActionSchema.parse({
+      expectedUpdatedAt: '2026-08-17T10:00:00.000Z',
+    })).toEqual({ expectedUpdatedAt: '2026-08-17T10:00:00.000Z' })
+    expect(() => intermediaryLifecycleActionSchema.parse({})).toThrow()
   })
 })

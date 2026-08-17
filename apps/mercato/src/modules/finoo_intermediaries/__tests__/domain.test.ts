@@ -3,6 +3,7 @@ import {
   isExactEligiblePipelineName,
   isExactEligibleStageLabel,
   isLegalPartnerStatusTransition,
+  resolveEffectiveIntermediaryStatus,
   scopedActiveAssignmentWhere,
 } from '../lib/domain'
 
@@ -41,8 +42,37 @@ describe('finoo_intermediaries domain contracts', () => {
     })
   })
 
+  it('derives expiry without mutating the stored lifecycle state', () => {
+    const intermediary = {
+      lifecycleState: 'invited' as const,
+      invitationExpiresAt: new Date('2026-08-17T10:00:00.000Z'),
+    }
+
+    expect(resolveEffectiveIntermediaryStatus(
+      intermediary,
+      new Date('2026-08-17T10:00:00.000Z'),
+    )).toBe('expired')
+    expect(intermediary.lifecycleState).toBe('invited')
+    expect(resolveEffectiveIntermediaryStatus({
+      lifecycleState: 'invited',
+      invitationExpiresAt: new Date('2026-08-17T10:00:00.001Z'),
+    }, new Date('2026-08-17T10:00:00.000Z'))).toBe('invited')
+    expect(resolveEffectiveIntermediaryStatus({
+      lifecycleState: 'active',
+      invitationExpiresAt: new Date('2026-08-17T09:00:00.000Z'),
+    }, new Date('2026-08-17T10:00:00.000Z'))).toBe('active')
+  })
+
   it('encrypts note bodies without adding an equality hash', () => {
     expect(defaultEncryptionMaps).toEqual([
+      {
+        entityId: 'finoo_intermediaries:finoo_intermediary',
+        fields: [
+          { field: 'first_name' },
+          { field: 'last_name' },
+          { field: 'email', hashField: 'email_hash' },
+        ],
+      },
       {
         entityId: 'finoo_intermediaries:finoo_intermediary_note',
         fields: [{ field: 'body' }],
