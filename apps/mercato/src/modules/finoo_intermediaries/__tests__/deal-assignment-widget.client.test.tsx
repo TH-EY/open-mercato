@@ -58,13 +58,23 @@ const existingAssignment = {
   updatedAt: '2026-08-17T00:00:00.000Z',
 }
 
-function mockWidgetLoad(canManage: boolean, assignment: typeof existingAssignment | null = null) {
+function mockWidgetLoad(
+  canManage: boolean,
+  assignment: typeof existingAssignment | null = null,
+  notes: Array<{
+    id: string
+    authorCustomerUserId: string
+    body: string
+    createdAt: string
+    updatedAt: string
+  }> = [],
+) {
   mockReadApiResult.mockImplementation(async (url) => {
     if (String(url).includes('/admin/assignments?')) {
       return {
         assignment,
         eligibility: { canManage, reason: canManage ? null : 'ineligible_stage' },
-        notes: [],
+        notes,
         notesNextCursor: null,
       }
     }
@@ -108,5 +118,24 @@ describe('DealAssignmentWidget', () => {
     expect(await screen.findByText('new')).toBeVisible()
     expect(screen.getByRole('combobox')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Unassign' })).toBeDisabled()
+  })
+
+  it('uses intermediary terminology and hides technical note author identifiers', async () => {
+    const authorCustomerUserId = 'adf72801-1dfd-45b2-a46e-ab0a24e4e6cc'
+    const updatedAt = '2026-08-18T09:16:59.000Z'
+    mockWidgetLoad(true, existingAssignment, [{
+      id: 'note-1',
+      authorCustomerUserId,
+      body: 'Visible note',
+      createdAt: updatedAt,
+      updatedAt,
+    }])
+
+    render(<DealAssignmentWidget context={{ dealId: 'deal-1' }} />)
+
+    expect(await screen.findByText('Intermediary status')).toBeVisible()
+    expect(screen.getByText('Visible note')).toBeVisible()
+    expect(screen.getByText(new Date(updatedAt).toLocaleString())).toBeVisible()
+    expect(screen.queryByText(authorCustomerUserId, { exact: false })).not.toBeInTheDocument()
   })
 })

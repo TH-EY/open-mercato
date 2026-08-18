@@ -726,7 +726,7 @@ None identified in the authored specification. Implementation readiness remains 
 
 ### 2026-08-18 — THOM-102
 
-- Removed the unconditional portal retry alert that appeared without a blocked mutation; real optimistic-lock conflicts continue through the shared conflict surface.
+- Removed the unconditional portal retry alert that appeared without a blocked mutation; the portal Deal detail renders the shared conflict surface only after a real optimistic-lock conflict and clears it when leaving the record.
 - Removed the technical Customer User UUID from staff-facing note metadata while retaining the note timestamp.
 - Renamed only the staff Deal-tab label from `Partner status` to `Intermediary status` (`Status partnera` to `Status pośrednika`). Portal wording, success messages, and the technical `partnerStatus`/`partner_status` contracts remain unchanged because Partner and Intermediary are separate domain concepts.
 

@@ -172,7 +172,7 @@ export default function DealAssignmentWidget({ context }: InjectionWidgetCompone
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
-        <span className="text-sm font-medium">{t('finoo_intermediaries.staff.currentStatus', 'Partner status')}</span>
+        <span className="text-sm font-medium">{t('finoo_intermediaries.staff.currentStatus', 'Intermediary status')}</span>
         {assignment ? (
           <StatusBadge variant={statusMap[assignment.partnerStatus]}>
             {t(`finoo_intermediaries.status.${assignment.partnerStatus}`, assignment.partnerStatus)}
@@ -220,7 +220,7 @@ export default function DealAssignmentWidget({ context }: InjectionWidgetCompone
             {notes.map((note) => (
               <li key={note.id} className="space-y-1 py-3">
                 <p className="whitespace-pre-wrap text-sm">{note.body}</p>
-                <p className="text-xs text-muted-foreground">{note.authorCustomerUserId} — {new Date(note.updatedAt).toLocaleString()}</p>
+                <p className="text-xs text-muted-foreground">{new Date(note.updatedAt).toLocaleString()}</p>
               </li>
             ))}
           </ul>

@@ -55,7 +55,7 @@
     },
     "staff": {
       "tabLabel": "Intermediary",
-      "currentStatus": "Partner status",
+      "currentStatus": "Intermediary status",
       "unassignedState": "Not assigned",
       "intermediary": "Intermediary",
       "selectIntermediary": "Select intermediary",

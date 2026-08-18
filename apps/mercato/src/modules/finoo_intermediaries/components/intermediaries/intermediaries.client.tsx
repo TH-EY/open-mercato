@@ -10,9 +10,9 @@ import { useBackendChrome } from '@open-mercato/ui/backend/BackendChromeProvider
 import { DataTable } from '@open-mercato/ui/backend/DataTable'
 import type { FilterDef, FilterValues } from '@open-mercato/ui/backend/FilterBar'
 import { RowActions } from '@open-mercato/ui/backend/RowActions'
-import { ErrorMessage, LoadingMessage } from '@open-mercato/ui/backend/detail'
+import { ErrorMessage } from '@open-mercato/ui/backend/detail'
 import { ListEmptyState } from '@open-mercato/ui/backend/filters/ListEmptyState'
-import { PageBody, PageHeader } from '@open-mercato/ui/backend/Page'
+import { PageBody } from '@open-mercato/ui/backend/Page'
 import { apiCall } from '@open-mercato/ui/backend/utils/apiCall'
 import { Button } from '@open-mercato/ui/primitives/button'
 import { StatusBadge, type StatusMap } from '@open-mercato/ui/primitives/status-badge'
@@ -164,61 +164,52 @@ export default function IntermediariesClient() {
 
   return (
     <>
-      <PageHeader
-        title={t('finoo_intermediaries.directory.title')}
-        description={t('finoo_intermediaries.directory.description')}
-        actions={canInvite ? (
-          <Button type="button" onClick={() => setInviteOpen(true)}>
-            <Plus className="size-4" aria-hidden />
-            {t('finoo_intermediaries.directory.actions.invite')}
-          </Button>
-        ) : undefined}
-      />
       <PageBody>
-        {loading && rows.length === 0 ? (
-          <LoadingMessage label={t('finoo_intermediaries.directory.loading')} />
-        ) : error && rows.length === 0 ? (
-          <ErrorMessage
-            label={error}
-            action={<Button type="button" variant="outline" size="sm" onClick={reload}>{t('finoo_intermediaries.directory.actions.retryLoad')}</Button>}
-          />
-        ) : (
-          <>
-            <DataTable<IntermediaryDirectoryItem>
-              entityId="finoo_intermediaries:finoo_intermediary"
-              extensionTableId="finoo_intermediaries.intermediaries"
-              columns={columns}
-              data={rows}
-              isLoading={loading}
-              error={error ? <ErrorMessage label={error} /> : null}
-              emptyState={emptyState}
-              searchValue={search}
-              onSearchChange={setSearch}
-              searchPlaceholder={t('finoo_intermediaries.directory.search.placeholder')}
-              filters={filters}
-              filterValues={filterValues}
-              onFiltersApply={setFilterValues}
-              onFiltersClear={() => setFilterValues({})}
-              rowActions={(row) => <RowActions items={getRowActions(row)} />}
-              disableRowClick
-              stickyActionsColumn
+        <DataTable<IntermediaryDirectoryItem>
+          title={t('finoo_intermediaries.directory.title')}
+          actions={canInvite ? (
+            <Button type="button" onClick={() => setInviteOpen(true)}>
+              <Plus className="size-4" aria-hidden />
+              {t('finoo_intermediaries.directory.actions.invite')}
+            </Button>
+          ) : undefined}
+          entityId="finoo_intermediaries:finoo_intermediary"
+          extensionTableId="finoo_intermediaries.intermediaries"
+          columns={columns}
+          data={rows}
+          isLoading={loading}
+          error={error ? (
+            <ErrorMessage
+              label={error}
+              action={<Button type="button" variant="outline" size="sm" onClick={reload}>{t('finoo_intermediaries.directory.actions.retryLoad')}</Button>}
             />
-            {nextCursor ? (
-              <div className="flex justify-center">
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={loadingMore}
-                  onClick={() => { void loadPage(nextCursor, true) }}
-                >
-                  {t(loadingMore
-                    ? 'finoo_intermediaries.directory.loadingMore'
-                    : 'finoo_intermediaries.directory.actions.loadMore')}
-                </Button>
-              </div>
-            ) : null}
-          </>
-        )}
+          ) : null}
+          emptyState={emptyState}
+          searchValue={search}
+          onSearchChange={setSearch}
+          searchPlaceholder={t('finoo_intermediaries.directory.search.placeholder')}
+          filters={filters}
+          filterValues={filterValues}
+          onFiltersApply={setFilterValues}
+          onFiltersClear={() => setFilterValues({})}
+          rowActions={(row) => <RowActions items={getRowActions(row)} />}
+          disableRowClick
+          stickyActionsColumn
+        />
+        {nextCursor ? (
+          <div className="flex justify-center">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={loadingMore}
+              onClick={() => { void loadPage(nextCursor, true) }}
+            >
+              {t(loadingMore
+                ? 'finoo_intermediaries.directory.loadingMore'
+                : 'finoo_intermediaries.directory.actions.loadMore')}
+            </Button>
+          </div>
+        ) : null}
       </PageBody>
       <IntermediaryDialog
         open={inviteOpen}

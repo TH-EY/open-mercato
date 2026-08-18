@@ -55,7 +55,7 @@
     },
     "staff": {
       "tabLabel": "Pośrednik",
-      "currentStatus": "Status partnera",
+      "currentStatus": "Status pośrednika",
       "unassignedState": "Nieprzypisane",
       "intermediary": "Pośrednik",
       "selectIntermediary": "Wybierz pośrednika",

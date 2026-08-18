@@ -1089,11 +1089,63 @@ test.describe.serial('THOM-90 FINOO intermediary portal', () => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.getByText('Intermediary Company 010').click()
     await expect(page.getByText('intermediary-person-010@test.local')).toBeVisible()
+    await expect(page.getByText('A blocked operation can be retried after resolving the conflict.')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
     await page.getByRole('button', { name: /start work/i }).click()
     await expect(page.getByText('In progress', { exact: true })).toBeVisible()
     await page.getByRole('textbox').fill('Headed intermediary note')
+    const noteCreateResponsePromise = page.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && new URL(response.url()).pathname === `${PORTAL_DEALS}/${bundle.dealId}/notes`
+    ))
+    const saveButton = page.getByRole('button', { name: 'Save', exact: true })
+    await expect(saveButton).toBeEnabled()
+    await saveButton.click()
+    const noteCreateResponse = await noteCreateResponsePromise
+    expect(noteCreateResponse.status()).toBe(201)
+    const createdNote = (await noteCreateResponse.json() as {
+      note?: { id: string; body: string; updatedAt: string }
+    }).note
+    expect(createdNote).toBeTruthy()
+    const noteRow = page.locator('li').filter({ hasText: 'Headed intermediary note' })
+    await expect(noteRow).toBeVisible()
+    await noteRow
+      .getByRole('button', { name: 'Edit', exact: true })
+      .click()
+    const concurrentUpdate = await portalRequest(
+      request,
+      state.firstSession,
+      'PUT',
+      `${PORTAL_DEALS}/${bundle.dealId}/notes/${createdNote!.id}`,
+      { body: 'Concurrent intermediary note', expectedUpdatedAt: createdNote!.updatedAt },
+    )
+    expect(concurrentUpdate.status()).toBe(200)
+    await page.getByRole('textbox').fill('Stale intermediary note')
     await page.getByRole('button', { name: 'Save', exact: true }).click()
-    await expect(page.getByText('Headed intermediary note', { exact: true })).toBeVisible()
+    await expect(page.getByTestId('record-conflict-banner')).toContainText('Record changed')
+    await expect(page.getByTestId('record-conflict-banner')).toContainText('This record was modified by someone else.')
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+    await expect(page.getByText('Concurrent intermediary note', { exact: true })).toBeVisible()
+
+    await page.context().clearCookies()
+    const staffLogin = new URLSearchParams({ email: 'admin@acme.com', password: 'secret' })
+    expect((await page.request.post('/api/auth/login', {
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      data: staffLogin.toString(),
+    })).ok()).toBeTruthy()
+    await page.context().addCookies([{
+      name: 'om_selected_org',
+      value: state.organizationId,
+      url: baseUrl,
+    }])
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(`/backend/customers/deals/${bundle.dealId}`)
+    await page.getByRole('tab', { name: 'Intermediary', exact: true }).click()
+    await expect(page.getByText('Intermediary status', { exact: true })).toBeVisible()
+    await expect(page.getByText('Partner status', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('Concurrent intermediary note', { exact: true })).toBeVisible()
+    await expect(page.getByText(state.firstUser.id, { exact: false })).toHaveCount(0)
+
     const currentResponse = await apiRequest(
       request,
       'GET',

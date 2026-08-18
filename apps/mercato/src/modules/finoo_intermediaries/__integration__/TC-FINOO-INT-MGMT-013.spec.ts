@@ -44,7 +44,10 @@ test('TC-FINOO-INT-MGMT-013 headed desktop and narrow lifecycle UI evidence', as
     await page.context().addCookies([{ name: 'om_selected_org', value: scenario.organizationId, url: baseUrl! }])
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/backend/finoo-intermediaries/intermediaries')
-    await expect(page.getByRole('heading', { name: 'Intermediaries' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Intermediaries', level: 2 })).toHaveCount(1)
+    await expect(page.getByRole('button', { name: 'Invite intermediary', exact: true })).toBeVisible()
+    await expect(page.getByPlaceholder('Search by name or exact email')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Filters', exact: true })).toBeVisible()
     await expect(page.getByText('Delivery failed', { exact: true }).first()).toBeVisible()
     await expect(page.getByText('Expired', { exact: true }).first()).toBeVisible()
     await expect(page.getByText('Active', { exact: true }).first()).toBeVisible()
@@ -88,8 +91,10 @@ test('TC-FINOO-INT-MGMT-013 headed desktop and narrow lifecycle UI evidence', as
     await expect(rowForEmail(page, activeUser.email).getByRole('cell', { name: 'Active', exact: true })).toBeVisible()
 
     await page.setViewportSize({ width: 390, height: 844 })
-    await expect(page.getByRole('heading', { name: 'Intermediaries' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Intermediaries', level: 2 })).toHaveCount(1)
+    await expect(page.getByRole('button', { name: 'Invite intermediary', exact: true })).toBeVisible()
     await expect(page.getByPlaceholder('Search by name or exact email')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Filters', exact: true })).toBeVisible()
   } finally {
     await cleanupScenario(request, scenario)
   }

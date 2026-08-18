@@ -5,13 +5,13 @@ import { useRouter } from 'next/navigation'
 import { Pencil, Trash2 } from 'lucide-react'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { useConfirmDialog } from '@open-mercato/ui/backend/confirm-dialog'
+import { dismissRecordConflict, RecordConflictBanner } from '@open-mercato/ui/backend/conflicts'
 import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
 import { ErrorMessage, LoadingMessage } from '@open-mercato/ui/backend/detail'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
 import { buildOptimisticLockHeader } from '@open-mercato/ui/backend/utils/optimisticLock'
 import { PortalPageHeader } from '@open-mercato/ui/portal/components/PortalPageHeader'
-import { Alert, AlertDescription } from '@open-mercato/ui/primitives/alert'
 import { Button } from '@open-mercato/ui/primitives/button'
 import { FormField } from '@open-mercato/ui/primitives/form-field'
 import { IconButton } from '@open-mercato/ui/primitives/icon-button'
@@ -62,7 +62,7 @@ export default function DealDetailPageClient({ orgSlug, dealId }: { orgSlug: str
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
-  const { runMutation, retryLastMutation } = useGuardedMutation<{ dealId: string }>({
+  const { runMutation } = useGuardedMutation<{ dealId: string }>({
     contextId: `finoo_intermediaries.portal.${dealId}`,
     blockedMessage: t('finoo_intermediaries.portal.errors.blocked', 'Operation blocked by validation.'),
   })
@@ -89,6 +89,10 @@ export default function DealDetailPageClient({ orgSlug, dealId }: { orgSlug: str
   }, [dealId, t])
 
   React.useEffect(() => { void load() }, [load])
+  React.useEffect(() => {
+    dismissRecordConflict()
+    return dismissRecordConflict
+  }, [dealId])
 
   const mutate = React.useCallback(async (operation: () => Promise<void>, payload: Record<string, unknown>) => {
     setSaving(true)
@@ -210,6 +214,8 @@ export default function DealDetailPageClient({ orgSlug, dealId }: { orgSlug: str
         action={<Button type="button" variant="outline" onClick={() => router.push(`/${orgSlug}/portal/intermediary/deals`)}>{t('common.back', 'Back')}</Button>}
       />
 
+      <RecordConflictBanner />
+
       <section className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
           <StatusBadge variant={statusMap[deal.partnerStatus]}>
@@ -291,12 +297,6 @@ export default function DealDetailPageClient({ orgSlug, dealId }: { orgSlug: str
         ) : null}
       </section>
 
-      <Alert status="information" style="lighter" size="sm">
-        <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
-          <span>{t('finoo_intermediaries.portal.retryAvailable', 'A blocked operation can be retried after resolving the conflict.')}</span>
-          <Button type="button" variant="outline" size="sm" onClick={() => void retryLastMutation()}>{t('common.retry', 'Retry')}</Button>
-        </AlertDescription>
-      </Alert>
       {ConfirmDialogElement}
     </div>
   )
