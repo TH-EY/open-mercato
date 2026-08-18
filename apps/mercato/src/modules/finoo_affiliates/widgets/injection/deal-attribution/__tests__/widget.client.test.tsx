@@ -105,7 +105,7 @@ describe('DealAttributionWidget', () => {
   it.each(['percentage', 'fixed'] as const)('shows the pending state and omits the legacy amount for %s rules', async (commissionMode) => {
     renderWidget(payload(commissionMode))
 
-    expect(await screen.findByText('Not calculated yet')).toBeVisible()
+    expect(await screen.findByRole('alert', { name: 'Not calculated yet' })).toBeVisible()
     expect(screen.getByText(/calculated and snapshotted when the Deal first reaches Accepted/)).toBeVisible()
     expect(screen.queryByLabelText('Legacy commission amount')).not.toBeInTheDocument()
 

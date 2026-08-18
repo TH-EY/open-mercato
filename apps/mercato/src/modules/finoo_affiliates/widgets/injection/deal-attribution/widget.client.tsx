@@ -9,6 +9,7 @@ import { buildOptimisticLockHeader } from '@open-mercato/ui/backend/utils/optimi
 import { surfaceRecordConflict } from '@open-mercato/ui/backend/conflicts'
 import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
+import { Alert, AlertDescription, AlertTitle } from '@open-mercato/ui/primitives/alert'
 import { Button } from '@open-mercato/ui/primitives/button'
 import { Input } from '@open-mercato/ui/primitives/input'
 import { Label } from '@open-mercato/ui/primitives/label'
@@ -135,7 +136,11 @@ export default function DealAttributionWidget({ context, disabled }: InjectionWi
   if (loading) return <p className="text-sm text-muted-foreground">{t('finooAffiliates.common.loading', 'Loading…')}</p>
 
   return (
-    <form className="max-w-2xl space-y-5" onSubmit={handleSubmit}>
+    <form
+      aria-label={t('finooAffiliates.deal.tab', 'Affiliate commission')}
+      className="max-w-2xl space-y-5"
+      onSubmit={handleSubmit}
+    >
       <div className="space-y-1.5">
         <Label htmlFor="finoo-affiliate-user">{t('finooAffiliates.deal.affiliateUser', 'Affiliate user')}</Label>
         <Select value={affiliateUserId} onValueChange={setAffiliateUserId} disabled={disabled || saving}>
@@ -182,15 +187,20 @@ export default function DealAttributionWidget({ context, disabled }: InjectionWi
           </div>
         </dl>
       ) : (
-        <div className="border-t border-border pt-4 text-sm">
-          <p className="font-medium">{t('finooAffiliates.deal.notCalculatedTitle', 'Not calculated yet')}</p>
-          <p className="mt-1 text-muted-foreground">
+        <Alert
+          aria-label={t('finooAffiliates.deal.notCalculatedTitle', 'Not calculated yet')}
+          status="information"
+          style="stroke"
+          size="sm"
+        >
+          <AlertTitle>{t('finooAffiliates.deal.notCalculatedTitle', 'Not calculated yet')}</AlertTitle>
+          <AlertDescription>
             {t(
               'finooAffiliates.deal.notCalculatedDescription',
               'Commission is calculated and snapshotted when the Deal first reaches Accepted.',
             )}
-          </p>
-        </div>
+          </AlertDescription>
+        </Alert>
       )}
       <div className="space-y-1.5">
         <Label htmlFor="finoo-commission-status">{t('finooAffiliates.deal.commissionStatus', 'Commission status')}</Label>

@@ -34,6 +34,9 @@ const COMMISSION_DIALOG_NAME = /Edit commission rule|Edytuj regułę prowizji/;
 const COMMISSION_MODE_NAME = /Commission type|Typ prowizji/;
 const COMMISSION_PERCENTAGE_NAME = /Percentage|Procent(?:owa)?/;
 const COMMISSION_FIXED_NAME = /Fixed amount|Stała kwota/;
+const DEAL_COMMISSION_TAB_NAME = /Affiliate commission|Prowizja afilianta/;
+const NOT_CALCULATED_NAME = /Not calculated yet|Jeszcze nie obliczono/;
+const TRANSACTION_PROCESSING_NAME = /Processing|W trakcie przetwarzania/;
 
 type Scope = { tenantId: string; organizationId: string };
 type DbClient = {
@@ -401,8 +404,10 @@ async function openCommissionDialog(page: Parameters<typeof login>[0], code: str
 
 test.describe("TC-FINOO-AFF-017..018: affiliate commission persistence and UI", () => {
   test("TC-017: persists exact percentage/fixed snapshots and keeps existing transactions immutable", async ({
+    page,
     request,
   }) => {
+    test.slow();
     const token = await getAuthToken(request, "admin");
     const tokenContext = getTokenContext(token);
     const scope = {
@@ -573,6 +578,35 @@ test.describe("TC-FINOO-AFF-017..018: affiliate commission persistence and UI", 
         affiliateTransactionStatus: null,
         affiliateTransactionCommissionMode: null,
       });
+      await login(page, "admin");
+      await page.goto(
+        `/backend/customers/deals/${percentageDealId}?tab=finoo_affiliates.deal.attribution`,
+      );
+      const percentageCommissionForm = page.getByRole("form", {
+        name: DEAL_COMMISSION_TAB_NAME,
+      });
+      await expect(percentageCommissionForm).toBeVisible();
+      await expect(
+        percentageCommissionForm.getByRole("alert", { name: NOT_CALCULATED_NAME }),
+      ).toBeVisible();
+      await expect(
+        percentageCommissionForm.getByLabel(/Legacy commission amount|Historyczna kwota prowizji/),
+      ).toHaveCount(0);
+      const pendingSaveResponse = page.waitForResponse((response) =>
+        response.request().method() === "PUT"
+        && new URL(response.url()).pathname === "/api/finoo_affiliates/deal-attributions",
+      );
+      await percentageCommissionForm.getByRole("button", {
+        name: /Save|Zapisz/,
+        exact: true,
+      }).click();
+      const pendingSave = await pendingSaveResponse;
+      expect(pendingSave.status()).toBe(200);
+      expect(pendingSave.request().postDataJSON()).toMatchObject({
+        dealId: percentageDealId,
+        affiliateUserId: affiliate.user.id,
+      });
+      expect(pendingSave.request().postDataJSON()).not.toHaveProperty("commissionAmount");
       await updateDealStage(
         request,
         client,
@@ -602,6 +636,14 @@ test.describe("TC-FINOO-AFF-017..018: affiliate commission persistence and UI", 
         affiliateTransactionStatus: "processing",
         affiliateTransactionCommissionMode: "percentage",
       });
+      await page.reload();
+      await expect(percentageCommissionForm.getByText("125 PLN", { exact: true })).toBeVisible();
+      await expect(
+        percentageCommissionForm.getByText(TRANSACTION_PROCESSING_NAME, { exact: true }),
+      ).toBeVisible();
+      await expect(
+        percentageCommissionForm.getByRole("alert", { name: NOT_CALCULATED_NAME }),
+      ).toHaveCount(0);
 
       const delayedDealId = await createDealFixture(request, token, {
         title: `THOM-91 Delayed ${Date.now()}`,
@@ -786,6 +828,19 @@ test.describe("TC-FINOO-AFF-017..018: affiliate commission persistence and UI", 
         status: "processing",
         commissionMode: "fixed",
       });
+      await page.goto(
+        `/backend/customers/deals/${fixedDealId}?tab=finoo_affiliates.deal.attribution`,
+      );
+      const fixedCommissionForm = page.getByRole("form", {
+        name: DEAL_COMMISSION_TAB_NAME,
+      });
+      await expect(fixedCommissionForm.getByText("90 PLN", { exact: true })).toBeVisible();
+      await expect(
+        fixedCommissionForm.getByText(TRANSACTION_PROCESSING_NAME, { exact: true }),
+      ).toBeVisible();
+      await expect(
+        fixedCommissionForm.getByRole("alert", { name: NOT_CALCULATED_NAME }),
+      ).toHaveCount(0);
 
       const portalSession = await portalLogin(request, {
         email: affiliate.user.email,
@@ -866,6 +921,48 @@ test.describe("TC-FINOO-AFF-017..018: affiliate commission persistence and UI", 
         });
       } finally {
         await client.query("delete from finoo_affiliates where id = $1", [hiddenAffiliateId]);
+      }
+
+      const crossScopeDealId = await createDealFixture(request, token, {
+        title: `THOM-99 Cross scope ${Date.now()}`,
+        companyIds: [companyId],
+        pipelineId,
+        pipelineStageId: openStageId,
+        valueAmount: 300,
+        valueCurrency: "PLN",
+      });
+      dealIds.push(crossScopeDealId);
+      await client.query(
+        "update customer_deals set organization_id = $1 where id = $2",
+        [hiddenOrganizationId, crossScopeDealId],
+      );
+      try {
+        const crossScopeEditor = await apiRequest(
+          request,
+          "GET",
+          `/api/finoo_affiliates/deal-attributions?dealId=${crossScopeDealId}`,
+          { token },
+        );
+        expect(crossScopeEditor.status()).toBe(404);
+        const crossScopeAssignment = await apiRequest(
+          request,
+          "PUT",
+          "/api/finoo_affiliates/deal-attributions",
+          {
+            token,
+            data: {
+              dealId: crossScopeDealId,
+              affiliateUserId: affiliate.user.id,
+              commissionStatusEntryId: waitingStatusId,
+            },
+          },
+        );
+        expect(crossScopeAssignment.status()).toBe(404);
+      } finally {
+        await client.query(
+          "update customer_deals set organization_id = $1 where id = $2",
+          [scope.organizationId, crossScopeDealId],
+        );
       }
 
       const transactionsResponse = await apiRequest(
