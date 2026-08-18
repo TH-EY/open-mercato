@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { bulkAssignmentBindingHash, canonicalBulkAssignmentDealIds } from '../lib/bulkAssignments'
 import widget from '../widgets/injection/deal-bulk-assignment/widget'
 
@@ -45,5 +47,15 @@ describe('bulk intermediary assignment contracts', () => {
     const result = await widget.bulkActions[0].onExecute(rows, { navigate, translate: (_key: string, fallback: string) => fallback })
     expect(result).toMatchObject({ ok: false })
     expect(navigate).not.toHaveBeenCalled()
+  })
+
+  it('reads the selected Deal ids in the client because module pages do not receive Next search params', () => {
+    const page = readFileSync(resolve(process.cwd(), 'src/modules/finoo_intermediaries/backend/finoo-intermediaries/bulk-assignments/page.tsx'), 'utf8')
+    const client = readFileSync(resolve(process.cwd(), 'src/modules/finoo_intermediaries/components/bulk-assignments/bulk-assignment.client.tsx'), 'utf8')
+
+    expect(page).toContain('<BulkAssignmentClient />')
+    expect(page).not.toContain('searchParams')
+    expect(client).toContain("useSearchParams()")
+    expect(client).toContain("searchParams.get('dealIds')")
   })
 })

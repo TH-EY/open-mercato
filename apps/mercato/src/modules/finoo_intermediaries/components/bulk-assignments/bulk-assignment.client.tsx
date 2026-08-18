@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { surfaceRecordConflict } from '@open-mercato/ui/backend/conflicts'
 import { ErrorMessage, LoadingMessage } from '@open-mercato/ui/backend/detail'
@@ -49,9 +49,11 @@ const outcomeMap: StatusMap<DealOutcome> = {
   blocked: 'error',
 }
 
-export default function BulkAssignmentClient({ dealIds }: { dealIds: string }) {
+export default function BulkAssignmentClient() {
   const t = useT()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const dealIds = searchParams.get('dealIds') ?? ''
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
   const [preflight, setPreflight] = React.useState<Preflight | null>(null)
   const [targetId, setTargetId] = React.useState('')
