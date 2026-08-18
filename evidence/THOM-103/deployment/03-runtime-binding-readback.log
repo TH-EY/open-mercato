@@ -1,0 +1,29 @@
+^Dreadback_at=2026-08-18T20:34:23Z
+implementation_sha=a5eb83110b71e546e44c9d387a20f840442330be
+{
+    "digest": "sha256:801c78b42d1f28f156c73f0983d92f54a720330e00113f6174a86890ac400f24",
+    "pushedAt": "2026-08-18T22:06:08.976000+02:00",
+    "tags": [
+        "finoo-a5eb83110b71e546e44c9d387a20f840442330be"
+    ]
+}
+{
+    "Status": "Success",
+    "ResponseCode": 0,
+    "ExecutionStartDateTime": "2026-08-18T20:14:52.503Z",
+    "ExecutionEndDateTime": "2026-08-18T20:14:52.503Z",
+    "StandardOutputContent": "ACTIVE_COMMIT=a5eb83110b71e546e44c9d387a20f840442330be\nACTIVE_DIGEST=sha256:801c78b42d1f28f156c73f0983d92f54a720330e00113f6174a86890ac400f24\nCONTAINER_STATUS=running\nCONTAINER_IMAGE=062648047691.dkr.ecr.eu-west-2.amazonaws.com/openmercato-app@sha256:801c78b42d1f28f156c73f0983d92f54a720330e00113f6174a86890ac400f24\nOCI_REVISION=a5eb83110b71e546e44c9d387a20f840442330be\nLOCAL_HTTP=200\n",
+    "StandardErrorContent": ""
+}
+[
+    {
+        "Target": {
+            "Id": "i-0c6ec8e5a53900297",
+            "Port": 4786
+        },
+        "Health": "healthy",
+        "Reason": null
+    }
+]
+public_http=200
+exit_code=0

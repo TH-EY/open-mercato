@@ -1,0 +1,20 @@
+^Dreadback_at=2026-08-18T20:34:58Z
+command_id=891959c7-871a-4995-a939-6c1666b1fa52
+{
+    "Status": "Success",
+    "ResponseCode": 0,
+    "ExecutionStartDateTime": "2026-08-18T20:20:52.191Z",
+    "ExecutionEndDateTime": "2026-08-18T20:20:52.191Z",
+    "StandardOutputContent": "TX|10310500-0000-4000-8000-000000000001|paid_out|3c08b7d2-069f-4b46-b163-e81d3085bb36\nTX|10310500-0000-4000-8000-000000000002|paid_out|3c08b7d2-069f-4b46-b163-e81d3085bb36\nPAYOUT|1|100\nPREVIEW|1|1\n",
+    "StandardErrorContent": ""
+}
+command_id=841b16e4-3da0-4f5c-a970-8302d2b9e08b
+{
+    "Status": "Success",
+    "ResponseCode": 0,
+    "ExecutionStartDateTime": "2026-08-18T20:21:44.090Z",
+    "ExecutionEndDateTime": "2026-08-18T20:21:44.090Z",
+    "StandardOutputContent": "PROGRESS_BEFORE|f55111b1-89aa-4174-aa76-f6386a75b665|completed|100|2/2\nBEGIN\nDELETE 2\nDELETE 1\nDELETE 1\nDELETE 1\nCOMMIT\nTX_AFTER|0\nPREVIEW_AFTER|0\nPAYOUT_AFTER|0\nPROGRESS_AFTER|0\n",
+    "StandardErrorContent": ""
+}
+exit_code=0

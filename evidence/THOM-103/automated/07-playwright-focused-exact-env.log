@@ -1,60 +1,230 @@
-START 2026-08-18T19:21:18Z
-2429cca8d31366f28e42a1290890580ce4e398fb
+^Dstarted_at=2026-08-18T20:32:29Z
+sha=a5eb83110b71e546e44c9d387a20f840442330be
+ephemeral_environment=resolved_with_queue_base
+supervised_queue_worker_state=T+
 
 Running 7 tests using 1 worker
 
-  ✓  1 apps/mercato/src/modules/finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts:438:3 › TC-FINOO-AFF-009..023: membership, ledger, privacy, and payout integration › TC-009..012: repairs membership, snapshots first Accepted once, enforces transitions, and preserves legacy lead fields (1.7s)
+(node:73945) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+     1 apps/mercato/src/modules/finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts:438:3 › TC-FINOO-AFF-009..023: membership, ledger, privacy, and payout integration › TC-009..012: repairs membership, snapshots first Accepted once, enforces transitions, and preserves legacy lead fields
+  ✓  1 apps/mercato/src/modules/finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts:438:3 › TC-FINOO-AFF-009..023: membership, ledger, privacy, and payout integration › TC-009..012: repairs membership, snapshots first Accepted once, enforces transitions, and preserves legacy lead fields (1.8s)
+     2 apps/mercato/src/modules/finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts:783:3 › TC-FINOO-AFF-009..023: membership, ledger, privacy, and payout integration › TC-013..014: keeps bank profiles private and optimistic while enforcing exact payout eligibility and scope
   ✓  2 apps/mercato/src/modules/finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts:783:3 › TC-FINOO-AFF-009..023: membership, ledger, privacy, and payout integration › TC-013..014: keeps bank profiles private and optimistic while enforcing exact payout eligibility and scope (1.2s)
-{"level":30,"time":1787080888885,"pid":46149,"hostname":"MacBook-Pro-2.local","name":"shared","component":"orm","poolMin":2,"poolMax":20,"poolIdleTimeout":3000,"poolAcquireTimeout":6000,"idleInTransactionTimeoutMs":120000,"nodeEnv":"production","msg":"Pool config"}
+     3 apps/mercato/src/modules/finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts:1062:3 › TC-FINOO-AFF-009..023: membership, ledger, privacy, and payout integration › TC-015..016: converges overlapping confirms atomically and keeps payout/dashboard contracts affiliate-owned
+[drain-child finoo-affiliates-payout-create exit=0] STDERR:
+(node:73950) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)                                         
- Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY                                                                  
- Secret fingerprint (sha256, truncated): [redacted]                                                     
- Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.           
+ 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)
+ Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY
+ Secret fingerprint (sha256, truncated): c7eabc7b8d9e7cd0
+ Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-{"level":40,"time":1787080889156,"pid":46149,"hostname":"MacBook-Pro-2.local","name":"shared","component":"kms","secretFingerprint":"[redacted]","msg":"Using derived tenant encryption keys (Vault unavailable / no DEK)"}
-{"level":30,"time":1787080889157,"pid":46149,"hostname":"MacBook-Pro-2.local","name":"shared","component":"orm","max":20,"min":0,"idleTimeoutMillis":3000,"connectionTimeoutMillis":6000,"msg":"pg pool created with options"}
-  ✓  3 apps/mercato/src/modules/finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts:1062:3 › TC-FINOO-AFF-009..023: membership, ledger, privacy, and payout integration › TC-015..016: converges overlapping confirms atomically and keeps payout/dashboard contracts affiliate-owned (5.5s)
-[cache] sqlite strategy unavailable (better-sqlite3 native module needs rebuild for the current Node.js version). Falling back to memory strategy.
-{"level":30,"time":1787080891212,"pid":46149,"hostname":"MacBook-Pro-2.local","name":"queue","queue":"finoo-affiliates-payout-create","jobId":"45b56d69-ddea-475a-a34b-40674bc14f5c","msg":"Job completed"}
-  ✓  4 apps/mercato/src/modules/finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts:1383:3 › TC-FINOO-AFF-009..023: membership, ledger, privacy, and payout integration › TC-019..023: groups affiliates, blocks incomplete profiles, confirms atomically, and projects readiness (2.0s)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)                                         
- Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY                                                                  
- Secret fingerprint (sha256, truncated): [redacted]                                                     
- Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.           
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[cache] sqlite strategy unavailable (better-sqlite3 native module needs rebuild for the current Node.js version). Falling back to memory strategy.
-{"level":30,"time":1787080894855,"pid":46149,"hostname":"MacBook-Pro-2.local","name":"queue","queue":"finoo-intermediaries-assignment-bulk","jobId":"07adb617-6dae-4037-8338-c90c69b3cf11","msg":"Job completed"}
-{"level":30,"time":1787080894893,"pid":46149,"hostname":"MacBook-Pro-2.local","name":"queue","queue":"finoo-intermediaries-assignment-bulk","jobId":"a1a702f6-3f0c-456d-8225-a0e788b2a4d6","msg":"Job completed"}
-  ✓  5 apps/mercato/src/modules/finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-014.spec.ts:27:1 › TC-FINOO-INT-MGMT-014 atomically assigns selected Deals and treats an exact replay as a no-op (4.0s)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)                                         
- Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY                                                                  
- Secret fingerprint (sha256, truncated): [redacted]                                                     
- Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.           
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[cache] sqlite strategy unavailable (better-sqlite3 native module needs rebuild for the current Node.js version). Falling back to memory strategy.
-{"level":30,"time":1787080899105,"pid":46149,"hostname":"MacBook-Pro-2.local","name":"queue","queue":"finoo-intermediaries-assignment-bulk","jobId":"3bd87841-cddc-4048-8517-e0e8a163b153","msg":"Job completed"}
-  ✓  6 apps/mercato/src/modules/finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-015-018.spec.ts:71:1 › TC-FINOO-INT-MGMT-015 enforces confirmation and commits a mixed create, no-op, and reassignment batch (4.2s)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)                                         
- Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY                                                                  
- Secret fingerprint (sha256, truncated): [redacted]                                                     
- Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.           
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[cache] sqlite strategy unavailable (better-sqlite3 native module needs rebuild for the current Node.js version). Falling back to memory strategy.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)                                         
- Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY                                                                  
- Secret fingerprint (sha256, truncated): [redacted]                                                     
- Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.           
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[cache] sqlite strategy unavailable (better-sqlite3 native module needs rebuild for the current Node.js version). Falling back to memory strategy.
-{"level":50,"time":1787080906040,"pid":46149,"hostname":"MacBook-Pro-2.local","name":"queue","queue":"finoo-intermediaries-assignment-bulk","jobId":"96513207-8d8f-40c3-b548-7790e80c3c7a","attemptNumber":1,"maxAttempts":3,"err":{"type":"CrudHttpError","message":"Deal is not in the eligible stage","stack":"Error: Deal is not in the eligible stage\n    at run (file://$WORKTREE/apps/mercato/.mercato/generated/command-loaders.generated.mjs?cache=c24fea39f9ea89ec165b930facbaa3d6cdf38950bc089116d0deaa86f7509001:868:21)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at TransactionManager.executeTransactionFlow (file://$WORKTREE/node_modules/@mikro-orm/core/utils/TransactionManager.js:256:21)\n    at PostgreSqlConnection.transactional (file://$WORKTREE/node_modules/@mikro-orm/sql/AbstractSqlConnection.js:108:25)\n    at Object.execute (file://$WORKTREE/apps/mercato/.mercato/generated/command-loaders.generated.mjs?cache=c24fea39f9ea89ec165b930facbaa3d6cdf38950bc089116d0deaa86f7509001:936:18)\n    at CommandBus.execute (file://$WORKTREE/packages/shared/src/lib/commands/command-bus.ts:264:11)\n    at handle3 (file://$WORKTREE/apps/mercato/.mercato/generated/modules.cli.generated.mjs?cache=d79ce84f1f58791a78a95af907047ca632a91357dcaadd248bbb7c5ed28712a2:1618:9)\n    at queue.process.limit (file://$WORKTREE/packages/core/src/helpers/integration/queue-runner.ts:52:11)\n    at processBatch (file://$WORKTREE/packages/queue/src/strategies/local.ts:249:11)\n    at drainQueueFromAppRoot (file://$WORKTREE/packages/core/src/helpers/integration/queue-runner.ts:50:22)\n    at file://$WORKTREE/apps/mercato/src/modules/finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-015-018.spec.ts:189:12\n    at $WORKTREE/node_modules/playwright/lib/worker/workerProcessEntry.js:1644:9\n    at $WORKTREE/node_modules/playwright/lib/worker/workerProcessEntry.js:1133:11\n    at TimeoutManager.withRunnable ($WORKTREE/node_modules/playwright/lib/worker/workerProcessEntry.js:403:14)\n    at TestInfoImpl._runWithTimeout ($WORKTREE/node_modules/playwright/lib/worker/workerProcessEntry.js:1131:7)\n    at $WORKTREE/node_modules/playwright/lib/worker/workerProcessEntry.js:1642:7\n    at WorkerMain._runTest ($WORKTREE/node_modules/playwright/lib/worker/workerProcessEntry.js:1615:5)\n    at WorkerMain.runTestGroup ($WORKTREE/node_modules/playwright/lib/worker/workerProcessEntry.js:1510:9)\n    at process.<anonymous> ($WORKTREE/node_modules/playwright/lib/common/index.js:1997:25)","status":422,"body":{"error":"Deal is not in the eligible stage","code":"ineligible_stage"}},"msg":"Job failed"}
-[queue-drain] 1 job(s) FAILED in "finoo-intermediaries-assignment-bulk" (processed 0); failed jobs retry with backoff and dead-letter after max attempts
-  ✓  7 apps/mercato/src/modules/finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-015-018.spec.ts:151:1 › TC-FINOO-INT-MGMT-016-018 rejects stale and inactive state and rolls back a late atomic failure (7.4s)
+JIT runtime error: Do not know how to serialize a BigInt
 
-  7 passed (27.3s)
-END 2026-08-18T19:21:47Z
-EXIT_CODE=0
+  function(entity) {
+    const ret = {};
+    if (typeof entity.id !== 'undefined') {
+      ret.id = clone(entity.id);
+    }
+
+    if (typeof entity.tenantId !== 'undefined') {
+      ret.tenantId = clone(entity.tenantId);
+    }
+
+    if (typeof entity.organizationId !== 'undefined') {
+      ret.organizationId = clone(entity.organizationId);
+    }
+
+    if (typeof entity.actorUserId !== 'undefined') {
+      ret.actorUserId = clone(entity.actorUserId);
+    }
+
+    if (typeof entity.commandId !== 'undefined') {
+      ret.commandId = clone(entity.commandId);
+    }
+
+    if (typeof entity.actionLabel !== 'undefined') {
+      ret.actionLabel = clone(entity.actionLabel);
+    }
+
+    if (typeof entity.actionType !== 'undefined') {
+      ret.actionType = clone(entity.actionType);
+    }
+
+    if (typeof entity.resourceKind !== 'undefined') {
+      ret.resourceKind = clone(entity.resourceKind);
+    }
+
+    if (typeof entity.resourceId !== 'undefined') {
+      ret.resourceId = clone(entity.resourceId);
+    }
+
+    if (typeof entity.parentResourceKind !== 'undefined') {
+      ret.parentResourceKind = clone(entity.parentResourceKind);
+    }
+
+    if (typeof entity.parentResourceId !== 'undefined') {
+      ret.parentResourceId = clone(entity.parentResourceId);
+    }
+
+    if (typeof entity.executionState !== 'undefined') {
+      ret.executionState = clone(entity.executionState);
+    }
+
+    if (typeof entity.undoToken !== 'undefined') {
+      ret.undoToken = clone(entity.undoToken);
+    }
+
+>   if (typeof entity.commandPayload !== 'undefined') {
+                                ^
+      ret.commandPayload = clone(convertToDatabaseValue_commandPayload(entity.commandPayload));
+    }
+
+    if (typeof entity.snapshotBefore !== 'undefined') {
+      ret.snapshotBefore = clone(convertToDatabaseValue_snapshotBefore(entity.snapshotBefore));
+    }
+
+    if (typeof entity.snapshotAfter !== 'undefined') {
+      ret.snapshotAfter = clone(convertToDatabaseValue_snapshotAfter(entity.snapshotAfter));
+    }
+
+    if (typeof entity.changesJson !== 'undefined') {
+      ret.changesJson = clone(convertToDatabaseValue_changesJson(entity.changesJson));
+    }
+
+    if (typeof entity.changedFields !== 'undefined') {
+      ret.changedFields = clone(convertToDatabaseValue_changedFields(entity.changedFields));
+    }
+
+    if (typeof entity.primaryChangedField !== 'undefined') {
+      ret.primaryChangedField = clone(entity.primaryChangedField);
+    }
+
+    if (typeof entity.contextJson !== 'undefined') {
+      ret.contextJson = clone(convertToDatabaseValue_contextJson(entity.contextJson));
+    }
+
+    if (typeof entity.sourceKey !== 'undefined') {
+      ret.sourceKey = clone(entity.sourceKey);
+    }
+
+    if (typeof entity.relatedResourceKind !== 'undefined') {
+      ret.relatedResourceKind = clone(entity.relatedResourceKind);
+    }
+
+    if (typeof entity.relatedResourceId !== 'undefined') {
+      ret.relatedResourceId = clone(entity.relatedResourceId);
+    }
+
+    if (typeof entity.createdAt !== 'undefined') {
+      ret.createdAt = clone(processDateProperty(entity.createdAt));
+    }
+
+    if (typeof entity.updatedAt !== 'undefined') {
+      ret.updatedAt = clone(processDateProperty(entity.updatedAt));
+    }
+
+    if (typeof entity.deletedAt !== 'undefined') {
+      ret.deletedAt = clone(processDateProperty(entity.deletedAt));
+    }
+
+    return ret;
+  }
+[queue-drain] 1 job(s) FAILED in "finoo-affiliates-payout-create" (processed 1); failed jobs retry with backoff and dead-letter after max attempts
+
+  ✓  3 apps/mercato/src/modules/finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts:1062:3 › TC-FINOO-AFF-009..023: membership, ledger, privacy, and payout integration › TC-015..016: converges overlapping confirms atomically and keeps payout/dashboard contracts affiliate-owned (3.4s)
+     4 apps/mercato/src/modules/finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts:1383:3 › TC-FINOO-AFF-009..023: membership, ledger, privacy, and payout integration › TC-019..023: groups affiliates, blocks incomplete profiles, confirms atomically, and projects readiness
+[drain-child finoo-affiliates-payout-create exit=0] STDERR:
+(node:74020) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)
+ Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY
+ Secret fingerprint (sha256, truncated): c7eabc7b8d9e7cd0
+ Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[queue-drain] 1 job(s) FAILED in "finoo-affiliates-payout-create" (processed 1); failed jobs retry with backoff and dead-letter after max attempts
+
+  ✓  4 apps/mercato/src/modules/finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts:1383:3 › TC-FINOO-AFF-009..023: membership, ledger, privacy, and payout integration › TC-019..023: groups affiliates, blocks incomplete profiles, confirms atomically, and projects readiness (4.1s)
+     5 apps/mercato/src/modules/finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-014.spec.ts:27:1 › TC-FINOO-INT-MGMT-014 atomically assigns selected Deals and treats an exact replay as a no-op
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)
+ Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY
+ Secret fingerprint (sha256, truncated): c7eabc7b8d9e7cd0
+ Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[drain-child finoo-intermediaries-assignment-bulk exit=0] STDERR:
+(node:74059) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)
+ Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY
+ Secret fingerprint (sha256, truncated): c7eabc7b8d9e7cd0
+ Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[drain-child finoo-intermediaries-assignment-bulk exit=0] STDERR:
+(node:74062) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)
+ Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY
+ Secret fingerprint (sha256, truncated): c7eabc7b8d9e7cd0
+ Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ✓  5 apps/mercato/src/modules/finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-014.spec.ts:27:1 › TC-FINOO-INT-MGMT-014 atomically assigns selected Deals and treats an exact replay as a no-op (8.2s)
+     6 apps/mercato/src/modules/finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-015-018.spec.ts:71:1 › TC-FINOO-INT-MGMT-015 enforces confirmation and commits a mixed create, no-op, and reassignment batch
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)
+ Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY
+ Secret fingerprint (sha256, truncated): c7eabc7b8d9e7cd0
+ Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[drain-child finoo-intermediaries-assignment-bulk exit=0] STDERR:
+(node:74067) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)
+ Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY
+ Secret fingerprint (sha256, truncated): c7eabc7b8d9e7cd0
+ Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ✓  6 apps/mercato/src/modules/finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-015-018.spec.ts:71:1 › TC-FINOO-INT-MGMT-015 enforces confirmation and commits a mixed create, no-op, and reassignment batch (6.3s)
+     7 apps/mercato/src/modules/finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-015-018.spec.ts:151:1 › TC-FINOO-INT-MGMT-016-018 rejects stale and inactive state and rolls back a late atomic failure
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)
+ Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY
+ Secret fingerprint (sha256, truncated): c7eabc7b8d9e7cd0
+ Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)
+ Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY
+ Secret fingerprint (sha256, truncated): c7eabc7b8d9e7cd0
+ Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[drain-child finoo-intermediaries-assignment-bulk exit=0] STDERR:
+(node:74073) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)
+ Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY
+ Secret fingerprint (sha256, truncated): c7eabc7b8d9e7cd0
+ Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[queue-drain] 1 job(s) FAILED in "finoo-intermediaries-assignment-bulk" (processed 0); failed jobs retry with backoff and dead-letter after max attempts
+
+  ✓  7 apps/mercato/src/modules/finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-015-018.spec.ts:151:1 › TC-FINOO-INT-MGMT-016-018 rejects stale and inactive state and rolls back a late atomic failure (9.7s)
+
+  7 passed (36.0s)
+
+To open last HTML report run:
+
+  yarn playwright show-report .ai/qa/test-results/html
+
+finished_at=2026-08-18T20:33:07Z
+exit_code=0

@@ -1,0 +1,13 @@
+^Da5eb83110b71e546e44c9d387a20f840442330be
+2026-08-18T19:45:54Z
+21:46:00.132 WARN  [shared:kms] Vault not healthy or misconfigured (missing VAULT_ADDR/VAULT_TOKEN) and no fallback secret provided; falling back to noop KMS
+21:46:00.133 WARN  [shared:kms] Vault not healthy or misconfigured (missing VAULT_ADDR/VAULT_TOKEN) and no fallback secret provided; falling back to noop KMS
+21:46:01.754 WARN  [finoo_intermediaries:customer-invitation-accepted] Invitation acceptance did not match a scoped intermediary lifecycle invitationId=22222222-2222-4222-8222-222222222222 tenantId=11111111-1111-4111-8111-111111111111 status=409
+
+Test Suites: 61 passed, 61 total
+Tests:       288 passed, 288 total
+Snapshots:   0 total
+Time:        7.019 s, estimated 8 s
+Ran all test suites matching src/modules/finoo_(affiliates|intermediaries).
+2026-08-18T19:46:02Z
+EXIT_CODE=0

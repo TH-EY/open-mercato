@@ -1,0 +1,81 @@
+^DDEPLOY_SHA=a5eb83110b71e546e44c9d387a20f840442330be
+2026-08-18T20:10:36Z
+062648047691	arn:aws:iam::062648047691:user/patryk-madaj
+20:12:23.857 DEBUG [shared:encryption] Entity IDs re-registered (this may occur during HMR)
+╔═══════════════════════╗
+║  🧩 Open Mercato CLI  ║
+╚═══════════════════════╝
+
+🚀 Running channel_ses:assert-env-preset-exact
+20:12:24.485 WARN  [shared:kms] Using derived tenant encryption keys (Vault unavailable / no DEK) secretFingerprint=c7eabc7b8d9e7cd0
+20:12:24.533 DEBUG [shared:di] App-level DI override module (@/di) not resolvable; skipping
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@/di' imported from /app/packages/shared/dist/lib/di/container.js
+    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:301:9)
+    at packageResolve (node:internal/modules/esm/resolve:768:81)
+    at moduleResolve (node:internal/modules/esm/resolve:859:18)
+    at defaultResolve (node:internal/modules/esm/resolve:992:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:701:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:721:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:759:56)
+    at #resolve (node:internal/modules/esm/loader:683:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:603:35)
+    at node:internal/modules/esm/loader:632:32
+Amazon SES environment preset state exactly matches every organization.
+⏱️ Done in 1825ms
+[finoo-email] Existing exact Amazon SES preset preserved
+20:12:34.511 DEBUG [shared:encryption] Entity IDs re-registered (this may occur during HMR)
+╔═══════════════════════╗
+║  🧩 Open Mercato CLI  ║
+╚═══════════════════════╝
+
+🚀 Running channel_ses:assert-explicit-credentials --tenant 26d5dc28-6df5-4944-b0e9-0ff26a8bf8a6 --organization 4ec19265-3d35-4e9f-bcd2-531e62cf8385
+20:12:34.977 WARN  [shared:kms] Using derived tenant encryption keys (Vault unavailable / no DEK) secretFingerprint=c7eabc7b8d9e7cd0
+20:12:35.022 DEBUG [shared:di] App-level DI override module (@/di) not resolvable; skipping
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@/di' imported from /app/packages/shared/dist/lib/di/container.js
+    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:301:9)
+    at packageResolve (node:internal/modules/esm/resolve:768:81)
+    at moduleResolve (node:internal/modules/esm/resolve:859:18)
+    at defaultResolve (node:internal/modules/esm/resolve:992:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:701:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:721:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:759:56)
+    at #resolve (node:internal/modules/esm/loader:683:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:603:35)
+    at node:internal/modules/esm/loader:632:32
+Amazon SES dedicated credentials are present for the requested scope.
+⏱️ Done in 1435ms
+20:12:42.707 DEBUG [shared:encryption] Entity IDs re-registered (this may occur during HMR)
+╔═══════════════════════╗
+║  🧩 Open Mercato CLI  ║
+╚═══════════════════════╝
+
+🚀 Running channel_ses:assert-credentials-health --tenant 26d5dc28-6df5-4944-b0e9-0ff26a8bf8a6 --organization 4ec19265-3d35-4e9f-bcd2-531e62cf8385
+20:12:44.064 WARN  [shared:kms] Using derived tenant encryption keys (Vault unavailable / no DEK) secretFingerprint=c7eabc7b8d9e7cd0
+20:12:44.114 DEBUG [shared:di] App-level DI override module (@/di) not resolvable; skipping
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@/di' imported from /app/packages/shared/dist/lib/di/container.js
+    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:301:9)
+    at packageResolve (node:internal/modules/esm/resolve:768:81)
+    at moduleResolve (node:internal/modules/esm/resolve:859:18)
+    at defaultResolve (node:internal/modules/esm/resolve:992:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:701:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:721:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:759:56)
+    at #resolve (node:internal/modules/esm/loader:683:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:603:35)
+    at node:internal/modules/esm/loader:632:32
+Amazon SES dedicated credentials are healthy for the requested scope.
+⏱️ Done in 2622ms
+[finoo-email] Dedicated FINOO Amazon SES credentials verified
+[finoo-smoke] Authenticated superadmin access verified
+[finoo-smoke] Authenticated employee access verified
+[finoo-smoke] Existing admin role assignment verified without password access
+remote_finoo_stage=pending-public-verification
+
+finoo_hostname=finoo.om.they.dev
+finoo_url=https://finoo.om.they.dev
+finoo_port=4786
+finoo_target_group_arn=arn:aws:elasticloadbalancing:eu-west-2:062648047691:targetgroup/om-demo-finoo/3995a20f8445a545
+finoo_commit=a5eb83110b71e546e44c9d387a20f840442330be
+finoo_image_digest=sha256:801c78b42d1f28f156c73f0983d92f54a720330e00113f6174a86890ac400f24
+2026-08-18T20:14:14Z
+EXIT_CODE=0
