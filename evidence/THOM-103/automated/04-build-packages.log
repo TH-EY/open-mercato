@@ -1,0 +1,205 @@
+START 2026-08-18T19:03:43Z
+2429cca8d31366f28e42a1290890580ce4e398fb
+• turbo 2.10.8
+
+   • Packages in scope: @open-mercato/ai-assistant, @open-mercato/cache, @open-mercato/channel-gmail, @open-mercato/channel-imap, @open-mercato/channel-resend, @open-mercato/channel-ses, @open-mercato/checkout, @open-mercato/cli, @open-mercato/content, @open-mercato/core, @open-mercato/enterprise, @open-mercato/eslint-plugin-ds, @open-mercato/events, @open-mercato/gateway-stripe, @open-mercato/onboarding, @open-mercato/queue, @open-mercato/scheduler, @open-mercato/search, @open-mercato/shared, @open-mercato/storage-s3, @open-mercato/sync-akeneo, @open-mercato/ui, @open-mercato/webhooks, create-mercato-app
+   • Running build in 24 packages
+   • Remote caching disabled, using shared worktree cache
+
+@open-mercato/queue:build: cache hit, replaying logs dc1297a6d1b099d0
+@open-mercato/queue:build: [build:queue] found 8 entry points
+@open-mercato/queue:build: [build:queue] built successfully
+@open-mercato/cache:build: cache hit, replaying logs 54c06a9f730c768f
+@open-mercato/cache:build: [build:cache] found 11 entry points
+@open-mercato/cache:build: [build:cache] built successfully
+@open-mercato/channel-ses:build: cache hit, replaying logs 7058da240dd6bec5
+@open-mercato/channel-ses:build: [build:channel-ses] found 13 entry points
+@open-mercato/channel-ses:build: [build:channel-ses] built successfully
+@open-mercato/storage-s3:build: cache hit, replaying logs d8cab7dd930c05cd
+@open-mercato/storage-s3:build: Found 20 entry points
+@open-mercato/storage-s3:build: storage-s3 built successfully
+@open-mercato/gateway-stripe:build: cache hit, replaying logs 421af4b06036581f
+@open-mercato/gateway-stripe:build: [build:gateway-stripe] found 25 entry points
+@open-mercato/gateway-stripe:build: [build:gateway-stripe] built successfully
+@open-mercato/content:build: cache hit, replaying logs ec424383850658de
+@open-mercato/content:build: [build:content] found 7 entry points
+@open-mercato/content:build: [build:content] built successfully
+@open-mercato/events:build: cache hit, replaying logs 86a1091ece32b6b2
+@open-mercato/events:build: [build:events] found 9 entry points
+@open-mercato/events:build: [build:events] built successfully
+@open-mercato/onboarding:build: cache hit, replaying logs 7471b5a8707bb4a2
+@open-mercato/onboarding:build: [build:onboarding] found 34 entry points
+@open-mercato/onboarding:build: [build:onboarding] built successfully
+@open-mercato/channel-resend:build: cache hit, replaying logs e1e0579877aaa15b
+@open-mercato/channel-resend:build: [build:channel-resend] found 12 entry points
+@open-mercato/channel-resend:build: [build:channel-resend] built successfully
+@open-mercato/scheduler:build: cache hit, replaying logs 75f0fe774cafe42c
+@open-mercato/scheduler:build: [build:scheduler] found 55 entry points
+@open-mercato/scheduler:build: [build:scheduler] built successfully
+@open-mercato/sync-akeneo:build: cache hit, replaying logs 86f84b416b3def37
+@open-mercato/sync-akeneo:build: [build:sync-akeneo] found 29 entry points
+@open-mercato/sync-akeneo:build: [build:sync-akeneo] built successfully
+@open-mercato/channel-imap:build: cache hit, replaying logs 433e577be9c8b506
+@open-mercato/channel-imap:build: [build:channel-imap] found 33 entry points
+@open-mercato/channel-imap:build: [build:channel-imap] built successfully
+@open-mercato/channel-gmail:build: cache hit, replaying logs 4411470d9a0686b6
+@open-mercato/channel-gmail:build: [build:channel-gmail] found 22 entry points
+@open-mercato/channel-gmail:build: [build:channel-gmail] built successfully
+@open-mercato/webhooks:build: cache hit, replaying logs 44f01ab85418aad4
+@open-mercato/webhooks:build: [build:webhooks] found 75 entry points
+@open-mercato/webhooks:build: [build:webhooks] built successfully
+@open-mercato/search:build: cache hit, replaying logs d3c81726e3a01e3c
+@open-mercato/search:build: [build:search] found 98 entry points
+@open-mercato/search:build: [build:search] built successfully
+@open-mercato/checkout:build: cache hit, replaying logs b5db81366f95288b
+@open-mercato/checkout:build: [build:checkout] found 161 entry points
+@open-mercato/checkout:build: [build:checkout] built successfully
+@open-mercato/shared:build: cache hit, replaying logs a454014f66f3b00d
+@open-mercato/shared:build: [build:shared] found 255 entry points
+@open-mercato/shared:build: [build:shared] built successfully
+@open-mercato/ai-assistant:build: cache hit, replaying logs b3e5aa8dec8d9372
+@open-mercato/ai-assistant:build: [build:ai-assistant] found 231 entry points
+@open-mercato/ai-assistant:build: [build:ai-assistant] built successfully
+@open-mercato/enterprise:build: cache hit, replaying logs aa5683798b300298
+@open-mercato/enterprise:build: [build:enterprise] found 329 entry points
+@open-mercato/enterprise:build: [build:enterprise] built successfully
+@open-mercato/ui:build: cache hit, replaying logs 6f73b813062c0dc3
+@open-mercato/ui:build: Generated lucide registry with 145 icons -> /Users/patrykmadaj/Sites/open-mercato-thom89-finoo-affiliate-payouts/packages/ui/src/backend/icons/lucideRegistry.generated.tsx
+@open-mercato/ui:build: [build:ui] found 398 entry points
+@open-mercato/ui:build: [build:ui] built successfully
+@open-mercato/cli:build: cache hit, replaying logs e06887cb6329027c
+@open-mercato/cli:build: [build:cli] found 99 entry points
+@open-mercato/cli:build: Copied create-app/agentic/ → dist/agentic/
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for ai_assistant
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for channel_gmail
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for channel_imap
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for channel_resend
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for channel_ses
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for checkout
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for content
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for api_docs
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for api_keys
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for attachments
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for audit_logs
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for auth
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for business_rules
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for catalog
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for communication_channels
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for configs
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for currencies
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for customer_accounts
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for customers
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for dashboards
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for data_sync
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for design_system
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for dictionaries
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for directory
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for entities
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for feature_toggles
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for inbox_ops
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for integrations
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for messages
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for notifications
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for payment_gateways
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for perspectives
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for planner
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for portal
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for progress
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for query_index
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for resources
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for sales
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for shipping_carriers
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for staff
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for sync_excel
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for translations
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for wms
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for workflows
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for record_locks
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for security
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for sso
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for system_status_overlays
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for events
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for gateway_stripe
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for onboarding
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for scheduler
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for search
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for generators
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for storage_s3
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for sync_akeneo
+@open-mercato/cli:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for webhooks
+@open-mercato/cli:build: Generated 57 module fact-sheets → dist/agentic/guides/modules/
+@open-mercato/cli:build: [build:cli] built successfully
+create-mercato-app:build: cache hit, replaying logs 134186b5dbe713bb
+create-mercato-app:build: Copied src/lib/templates/ → dist/templates/
+create-mercato-app:build: Copied agentic/ → dist/agentic/
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for ai_assistant
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for channel_gmail
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for channel_imap
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for channel_resend
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for channel_ses
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for checkout
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for content
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for api_docs
+create-mercato-app:build: Generated 57 module fact-sheets → dist/agentic/guides/modules/
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for api_keys
+create-mercato-app:build: Build complete: dist/index.js
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for attachments
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for audit_logs
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for auth
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for business_rules
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for catalog
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for communication_channels
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for configs
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for currencies
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for customer_accounts
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for customers
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for dashboards
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for data_sync
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for design_system
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for dictionaries
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for directory
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for entities
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for feature_toggles
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for inbox_ops
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for integrations
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for messages
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for notifications
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for payment_gateways
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for perspectives
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for planner
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for portal
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for progress
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for query_index
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for resources
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for sales
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for shipping_carriers
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for staff
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for sync_excel
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for translations
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for wms
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for workflows
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for record_locks
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for security
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for sso
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for system_status_overlays
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for events
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for gateway_stripe
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for onboarding
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for scheduler
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for search
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for generators
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for storage_s3
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for sync_akeneo
+create-mercato-app:build: [module-facts] module registry unavailable (registryPath not provided); API route auth omitted for webhooks
+@open-mercato/core:build: cache hit, replaying logs 3d29499224c3973c
+@open-mercato/core:build: [build:core] found 3789 entry points
+@open-mercato/core:build: [build:core] built successfully
+@open-mercato/core:build: [build:core:generated] found 197 entry points
+@open-mercato/core:build: [build:core:generated] built successfully
+
+ Tasks:    23 successful, 23 total
+Cached:    23 cached, 23 total
+  Time:    1.57s >>> FULL TURBO
+
+END 2026-08-18T19:03:46Z
+EXIT_CODE=0

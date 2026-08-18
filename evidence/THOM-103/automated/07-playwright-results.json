@@ -1,0 +1,419 @@
+{
+  "config": {
+    "argv": [
+      "/Users/patrykmadaj/.nvm/versions/node/v24.14.0/bin/node",
+      "/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/node_modules/@playwright/test/cli.js",
+      "test",
+      "--config",
+      ".ai/qa/tests/playwright.thom103-final.config.ts"
+    ],
+    "configFile": "/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/.ai/qa/tests/playwright.thom103-final.config.ts",
+    "rootDir": "/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/apps/mercato/src/modules",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/.ai/qa/test-results/artifacts",
+        "repeatEach": 1,
+        "retries": 1,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/apps/mercato/src/modules",
+        "testIgnore": [
+          "/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/.claude/**",
+          "/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/.codex/**",
+          "/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/.ai/tmp/**",
+          "/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/packages/create-app/template/**"
+        ],
+        "testMatch": [
+          "finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts",
+          "finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-014.spec.ts",
+          "finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-015-018.spec.ts"
+        ],
+        "timeout": 20000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/.ai/qa/test-results/results.json"
+        }
+      ],
+      [
+        "html",
+        {
+          "outputFolder": "/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/.ai/qa/test-results/html",
+          "open": "never"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.62.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts",
+      "file": "finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "TC-FINOO-AFF-009..023: membership, ledger, privacy, and payout integration",
+          "file": "finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts",
+          "line": 437,
+          "column": 6,
+          "specs": [
+            {
+              "title": "TC-009..012: repairs membership, snapshots first Accepted once, enforces transitions, and preserves legacy lead fields",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 20000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1692,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-18T19:21:20.908Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fa52b0c4fb9c39bb3212-79d3df6ccb04394a02a2",
+              "file": "finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts",
+              "line": 438,
+              "column": 3
+            },
+            {
+              "title": "TC-013..014: keeps bank profiles private and optimistic while enforcing exact payout eligibility and scope",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 20000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1218,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-18T19:21:22.622Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fa52b0c4fb9c39bb3212-43d0316975d42548f087",
+              "file": "finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts",
+              "line": 783,
+              "column": 3
+            },
+            {
+              "title": "TC-015..016: converges overlapping confirms atomically and keeps payout/dashboard contracts affiliate-owned",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 20000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 5502,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "{\"level\":30,\"time\":1787080888885,\"pid\":46149,\"hostname\":\"MacBook-Pro-2.local\",\"name\":\"shared\",\"component\":\"orm\",\"poolMin\":2,\"poolMax\":20,\"poolIdleTimeout\":3000,\"poolAcquireTimeout\":6000,\"idleInTransactionTimeoutMs\":120000,\"nodeEnv\":\"production\",\"msg\":\"Pool config\"}\n"
+                        },
+                        {
+                          "text": "{\"level\":40,\"time\":1787080889156,\"pid\":46149,\"hostname\":\"MacBook-Pro-2.local\",\"name\":\"shared\",\"component\":\"kms\",\"secretFingerprint\":\"c7eabc7b8d9e7cd0\",\"msg\":\"Using derived tenant encryption keys (Vault unavailable / no DEK)\"}\n"
+                        },
+                        {
+                          "text": "{\"level\":30,\"time\":1787080889157,\"pid\":46149,\"hostname\":\"MacBook-Pro-2.local\",\"name\":\"shared\",\"component\":\"orm\",\"max\":20,\"min\":0,\"idleTimeoutMillis\":3000,\"connectionTimeoutMillis\":6000,\"msg\":\"pg pool created with options\"}\n"
+                        }
+                      ],
+                      "stderr": [
+                        {
+                          "text": "\u001b[41m\u001b[97m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n\u001b[41m\u001b[97m 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)                                         \u001b[0m\n\u001b[41m\u001b[97m Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY                                                                  \u001b[0m\n\u001b[41m\u001b[97m Secret fingerprint (sha256, truncated): c7eabc7b8d9e7cd0                                                     \u001b[0m\n\u001b[41m\u001b[97m Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.           \u001b[0m\n\u001b[41m\u001b[97m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n"
+                        }
+                      ],
+                      "retry": 0,
+                      "startTime": "2026-08-18T19:21:23.845Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fa52b0c4fb9c39bb3212-9ad235169dc9204fc685",
+              "file": "finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts",
+              "line": 1062,
+              "column": 3
+            },
+            {
+              "title": "TC-019..023: groups affiliates, blocks incomplete profiles, confirms atomically, and projects readiness",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 20000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1994,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "{\"level\":30,\"time\":1787080891212,\"pid\":46149,\"hostname\":\"MacBook-Pro-2.local\",\"name\":\"queue\",\"queue\":\"finoo-affiliates-payout-create\",\"jobId\":\"45b56d69-ddea-475a-a34b-40674bc14f5c\",\"msg\":\"Job completed\"}\n"
+                        }
+                      ],
+                      "stderr": [
+                        {
+                          "text": "[cache] sqlite strategy unavailable (better-sqlite3 native module needs rebuild for the current Node.js version). Falling back to memory strategy.\n"
+                        }
+                      ],
+                      "retry": 0,
+                      "startTime": "2026-08-18T19:21:29.352Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fa52b0c4fb9c39bb3212-7cb9949d0772088fb09d",
+              "file": "finoo_affiliates/__integration__/TC-FINOO-AFF-009-016.spec.ts",
+              "line": 1383,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-014.spec.ts",
+      "file": "finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-014.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "TC-FINOO-INT-MGMT-014 atomically assigns selected Deals and treats an exact replay as a no-op",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 20000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 4039,
+                  "errors": [],
+                  "stdout": [
+                    {
+                      "text": "{\"level\":30,\"time\":1787080894855,\"pid\":46149,\"hostname\":\"MacBook-Pro-2.local\",\"name\":\"queue\",\"queue\":\"finoo-intermediaries-assignment-bulk\",\"jobId\":\"07adb617-6dae-4037-8338-c90c69b3cf11\",\"msg\":\"Job completed\"}\n"
+                    },
+                    {
+                      "text": "{\"level\":30,\"time\":1787080894893,\"pid\":46149,\"hostname\":\"MacBook-Pro-2.local\",\"name\":\"queue\",\"queue\":\"finoo-intermediaries-assignment-bulk\",\"jobId\":\"a1a702f6-3f0c-456d-8225-a0e788b2a4d6\",\"msg\":\"Job completed\"}\n"
+                    }
+                  ],
+                  "stderr": [
+                    {
+                      "text": "\u001b[41m\u001b[97m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n\u001b[41m\u001b[97m 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)                                         \u001b[0m\n\u001b[41m\u001b[97m Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY                                                                  \u001b[0m\n\u001b[41m\u001b[97m Secret fingerprint (sha256, truncated): c7eabc7b8d9e7cd0                                                     \u001b[0m\n\u001b[41m\u001b[97m Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.           \u001b[0m\n\u001b[41m\u001b[97m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n[cache] sqlite strategy unavailable (better-sqlite3 native module needs rebuild for the current Node.js version). Falling back to memory strategy.\n"
+                    }
+                  ],
+                  "retry": 0,
+                  "startTime": "2026-08-18T19:21:31.357Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "24813dc0ed72513d0b33-b5286701c784f269ead8",
+          "file": "finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-014.spec.ts",
+          "line": 27,
+          "column": 1
+        }
+      ]
+    },
+    {
+      "title": "finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-015-018.spec.ts",
+      "file": "finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-015-018.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "TC-FINOO-INT-MGMT-015 enforces confirmation and commits a mixed create, no-op, and reassignment batch",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 20000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 4176,
+                  "errors": [],
+                  "stdout": [
+                    {
+                      "text": "{\"level\":30,\"time\":1787080899105,\"pid\":46149,\"hostname\":\"MacBook-Pro-2.local\",\"name\":\"queue\",\"queue\":\"finoo-intermediaries-assignment-bulk\",\"jobId\":\"3bd87841-cddc-4048-8517-e0e8a163b153\",\"msg\":\"Job completed\"}\n"
+                    }
+                  ],
+                  "stderr": [
+                    {
+                      "text": "\u001b[41m\u001b[97m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n\u001b[41m\u001b[97m 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)                                         \u001b[0m\n\u001b[41m\u001b[97m Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY                                                                  \u001b[0m\n\u001b[41m\u001b[97m Secret fingerprint (sha256, truncated): c7eabc7b8d9e7cd0                                                     \u001b[0m\n\u001b[41m\u001b[97m Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.           \u001b[0m\n\u001b[41m\u001b[97m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n[cache] sqlite strategy unavailable (better-sqlite3 native module needs rebuild for the current Node.js version). Falling back to memory strategy.\n"
+                    }
+                  ],
+                  "retry": 0,
+                  "startTime": "2026-08-18T19:21:35.405Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "0637458449c4fcb19f53-d8fa261a5ab8f36941b5",
+          "file": "finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-015-018.spec.ts",
+          "line": 71,
+          "column": 1
+        },
+        {
+          "title": "TC-FINOO-INT-MGMT-016-018 rejects stale and inactive state and rolls back a late atomic failure",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 20000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 7374,
+                  "errors": [],
+                  "stdout": [
+                    {
+                      "text": "{\"level\":50,\"time\":1787080906040,\"pid\":46149,\"hostname\":\"MacBook-Pro-2.local\",\"name\":\"queue\",\"queue\":\"finoo-intermediaries-assignment-bulk\",\"jobId\":\"96513207-8d8f-40c3-b548-7790e80c3c7a\",\"attemptNumber\":1,\"maxAttempts\":3,\"err\":{\"type\":\"CrudHttpError\",\"message\":\"Deal is not in the eligible stage\",\"stack\":\"Error: Deal is not in the eligible stage\\n    at run (file:///Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/apps/mercato/.mercato/generated/command-loaders.generated.mjs?cache=c24fea39f9ea89ec165b930facbaa3d6cdf38950bc089116d0deaa86f7509001:868:21)\\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\\n    at TransactionManager.executeTransactionFlow (file:///Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/node_modules/@mikro-orm/core/utils/TransactionManager.js:256:21)\\n    at PostgreSqlConnection.transactional (file:///Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/node_modules/@mikro-orm/sql/AbstractSqlConnection.js:108:25)\\n    at Object.execute (file:///Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/apps/mercato/.mercato/generated/command-loaders.generated.mjs?cache=c24fea39f9ea89ec165b930facbaa3d6cdf38950bc089116d0deaa86f7509001:936:18)\\n    at CommandBus.execute (file:///Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/packages/shared/src/lib/commands/command-bus.ts:264:11)\\n    at handle3 (file:///Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/apps/mercato/.mercato/generated/modules.cli.generated.mjs?cache=d79ce84f1f58791a78a95af907047ca632a91357dcaadd248bbb7c5ed28712a2:1618:9)\\n    at queue.process.limit (file:///Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/packages/core/src/helpers/integration/queue-runner.ts:52:11)\\n    at processBatch (file:///Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/packages/queue/src/strategies/local.ts:249:11)\\n    at drainQueueFromAppRoot (file:///Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/packages/core/src/helpers/integration/queue-runner.ts:50:22)\\n    at file:///Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/apps/mercato/src/modules/finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-015-018.spec.ts:189:12\\n    at /Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/node_modules/playwright/lib/worker/workerProcessEntry.js:1644:9\\n    at /Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/node_modules/playwright/lib/worker/workerProcessEntry.js:1133:11\\n    at TimeoutManager.withRunnable (/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/node_modules/playwright/lib/worker/workerProcessEntry.js:403:14)\\n    at TestInfoImpl._runWithTimeout (/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/node_modules/playwright/lib/worker/workerProcessEntry.js:1131:7)\\n    at /Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/node_modules/playwright/lib/worker/workerProcessEntry.js:1642:7\\n    at WorkerMain._runTest (/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/node_modules/playwright/lib/worker/workerProcessEntry.js:1615:5)\\n    at WorkerMain.runTestGroup (/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/node_modules/playwright/lib/worker/workerProcessEntry.js:1510:9)\\n    at process.<anonymous> (/Users/patrykmadaj/.codex/worktrees/thom103/open-mercato/node_modules/playwright/lib/common/index.js:1997:25)\",\"status\":422,\"body\":{\"error\":\"Deal is not in the eligible stage\",\"code\":\"ineligible_stage\"}},\"msg\":\"Job failed\"}\n"
+                    }
+                  ],
+                  "stderr": [
+                    {
+                      "text": "\u001b[41m\u001b[97m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n\u001b[41m\u001b[97m 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)                                         \u001b[0m\n\u001b[41m\u001b[97m Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY                                                                  \u001b[0m\n\u001b[41m\u001b[97m Secret fingerprint (sha256, truncated): c7eabc7b8d9e7cd0                                                     \u001b[0m\n\u001b[41m\u001b[97m Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.           \u001b[0m\n\u001b[41m\u001b[97m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n[cache] sqlite strategy unavailable (better-sqlite3 native module needs rebuild for the current Node.js version). Falling back to memory strategy.\n"
+                    },
+                    {
+                      "text": "\u001b[41m\u001b[97m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n\u001b[41m\u001b[97m 🚨 Using derived tenant encryption keys (Vault unavailable / no DEK)                                         \u001b[0m\n\u001b[41m\u001b[97m Source: TENANT_DATA_ENCRYPTION_FALLBACK_KEY                                                                  \u001b[0m\n\u001b[41m\u001b[97m Secret fingerprint (sha256, truncated): c7eabc7b8d9e7cd0                                                     \u001b[0m\n\u001b[41m\u001b[97m Persist this secret securely. Without it, encrypted tenant data cannot be recovered after restart.           \u001b[0m\n\u001b[41m\u001b[97m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n[cache] sqlite strategy unavailable (better-sqlite3 native module needs rebuild for the current Node.js version). Falling back to memory strategy.\n"
+                    },
+                    {
+                      "text": "[queue-drain] 1 job(s) FAILED in \"finoo-intermediaries-assignment-bulk\" (processed 0); failed jobs retry with backoff and dead-letter after max attempts\n"
+                    }
+                  ],
+                  "retry": 0,
+                  "startTime": "2026-08-18T19:21:39.585Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "0637458449c4fcb19f53-a8da3b39086e12c1d5dc",
+          "file": "finoo_intermediaries/__integration__/TC-FINOO-INT-MGMT-015-018.spec.ts",
+          "line": 151,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-08-18T19:21:19.701Z",
+    "duration": 27289.443,
+    "expected": 7,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

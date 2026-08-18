@@ -1,0 +1,70 @@
+START 2026-08-18T19:03:11Z
+2429cca8d31366f28e42a1290890580ce4e398fb
+• turbo 2.10.8
+
+   • Packages in scope: @open-mercato/app
+   • Running generate in 1 packages
+   • Remote caching disabled, using shared worktree cache
+
+@open-mercato/app:generate: cache bypass, force executing 19ddcdb479f840a5
+@open-mercato/app:generate: ◇ injected env (109) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+@open-mercato/app:generate: ╔═══════════════════════╗
+@open-mercato/app:generate: ║  🧩 Open Mercato CLI  ║
+@open-mercato/app:generate: ╚═══════════════════════╝
+@open-mercato/app:generate: 
+@open-mercato/app:generate: 🚀 Running generate:all 
+@open-mercato/app:generate: Running all generators...
+@open-mercato/app:generate: Generated .mercato/generated/modules.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/modules.runtime.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/frontend-routes.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/backend-routes.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/api-routes.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/subscribers.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/command-loaders.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/search.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/notifications.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/notifications.client.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/payments.client.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/notification-handlers.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/message-types.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/message-objects.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/messages.client.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/ai-tools.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/ai-agents.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/events.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/analytics.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/translations-fields.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/enrichers.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/interceptors.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/component-overrides.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/inbox-actions.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/guards.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/command-interceptors.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/frontend-middleware.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/backend-middleware.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/dashboard-widgets.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/injection-widgets.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/injection-tables.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/workflows.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/webhook-sources.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/webhook-handlers.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/bootstrap-registrations.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/modules.app.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/modules.bootstrap.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/modules.i18n.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/bootstrap-modules.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/enabled-module-ids.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/modules.cli.generated.ts
+@open-mercato/app:generate: Generated .mercato/generated/cli-modules.generated.ts
+@open-mercato/app:generate: [OpenAPI] Skipped (inputs unchanged): $WORKTREE/apps/mercato/.mercato/generated/openapi.generated.json
+@open-mercato/app:generate: [generate] Invalidating generated structure...
+@open-mercato/app:generate: [generate] Structural invalidation completed (0 cache entries, 91 generated artifacts refreshed).
+@open-mercato/app:generate: All generators completed.
+@open-mercato/app:generate: ⏱️ Done in 5669ms
+
+ Tasks:    1 successful, 1 total
+Cached:    0 cached, 1 total
+  Time:    6.982s 
+
+END 2026-08-18T19:03:19Z
+EXIT_CODE=0
