@@ -1,5 +1,6 @@
 import {
   assignmentCreateSchema,
+  bulkAssignmentRequestSchema,
   intermediaryInviteSchema,
   intermediaryLifecycleActionSchema,
   intermediaryUpdateSchema,
@@ -25,6 +26,28 @@ describe('finoo_intermediaries validators', () => {
       dealId: uuid,
       intermediaryCustomerUserId: uuid,
       eligibleStageId: uuid,
+    })).toThrow()
+  })
+
+  it('accepts a bounded coherent bulk assignment and rejects stale selection shapes', () => {
+    const secondUuid = '22222222-2222-4222-8222-222222222222'
+    const deal = {
+      id: uuid,
+      updatedAt: '2026-08-18T10:00:00.000Z',
+      assignmentId: null,
+      assignmentUpdatedAt: null,
+    }
+    expect(bulkAssignmentRequestSchema.parse({
+      deals: [deal],
+      intermediaryCustomerUserId: secondUuid,
+    })).toMatchObject({ deals: [deal], confirmReassign: false })
+    expect(() => bulkAssignmentRequestSchema.parse({
+      deals: [{ ...deal, assignmentId: secondUuid }],
+      intermediaryCustomerUserId: secondUuid,
+    })).toThrow()
+    expect(() => bulkAssignmentRequestSchema.parse({
+      deals: [deal, deal],
+      intermediaryCustomerUserId: secondUuid,
     })).toThrow()
   })
 

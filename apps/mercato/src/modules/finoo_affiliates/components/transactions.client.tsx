@@ -15,7 +15,12 @@ import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { Button } from '@open-mercato/ui/primitives/button'
 import { StatusBadge } from '@open-mercato/ui/primitives/status-badge'
 import { ListEmptyState } from '@open-mercato/ui/backend/filters/ListEmptyState'
-import PayoutPreviewDialog, { type PayoutPreview } from './payout-preview-dialog.client'
+import PayoutPreviewDialog, {
+  normalizePayoutPreview,
+  type PayoutPreview,
+  type PayoutPreviewResponse,
+} from './payout-preview-dialog.client'
+import { payoutErrorMessage } from './payout-error'
 
 type TransactionStatus = 'processing' | 'approved' | 'rejected' | 'paid_out'
 type TransactionAction = 'accept' | 'reject' | 'reprocess'
@@ -149,15 +154,23 @@ export default function TransactionsClient() {
   ], [busyId, t, transition])
 
   const payOut = React.useCallback(async (selected: TransactionRow[]) => {
-    if (selected.some((row) => row.commissionStatus !== 'approved')) throw new Error(t('finooAffiliates.payouts.approvedOnly', 'Only approved transactions can be paid out.'))
+    if (selected.some((row) => row.commissionStatus !== 'approved')) {
+      flash(t('finooAffiliates.payouts.approvedOnly', 'Only approved transactions can be paid out.'), 'error')
+      return false
+    }
     const payload = { transactions: selected.map(({ id, updatedAt }) => ({ id, updatedAt })) }
-    const preview = await runMutation({
-      operation: () => readApiResultOrThrow<PayoutPreview>('/api/finoo_affiliates/payouts/preview', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }),
-      context: { recordId: selected.map((row) => row.id).sort().join(','), retryLastMutation },
-      mutationPayload: payload,
-    })
-    setPayoutPreview(preview)
-    return new Promise<{ ok: boolean; progressJobId?: string }>((resolve) => { payoutResolver.current = resolve })
+    try {
+      const response = await runMutation({
+        operation: () => readApiResultOrThrow<PayoutPreviewResponse>('/api/finoo_affiliates/payouts/preview', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }),
+        context: { recordId: selected.map((row) => row.id).sort().join(','), retryLastMutation },
+        mutationPayload: payload,
+      })
+      setPayoutPreview(normalizePayoutPreview(response))
+      return new Promise<{ ok: boolean; progressJobId?: string }>((resolve) => { payoutResolver.current = resolve })
+    } catch (caught) {
+      flash(payoutErrorMessage(caught, t), 'error')
+      return false
+    }
   }, [retryLastMutation, runMutation, t])
 
   return (

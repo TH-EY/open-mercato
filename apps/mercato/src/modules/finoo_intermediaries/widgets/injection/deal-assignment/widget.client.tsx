@@ -6,6 +6,7 @@ import { hasFeature } from '@open-mercato/shared/security/features'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { useBackendChrome } from '@open-mercato/ui/backend/BackendChromeProvider'
 import { useConfirmDialog } from '@open-mercato/ui/backend/confirm-dialog'
+import { surfaceRecordConflict } from '@open-mercato/ui/backend/conflicts'
 import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
 import { ErrorMessage, LoadingMessage } from '@open-mercato/ui/backend/detail'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
@@ -54,7 +55,7 @@ export default function DealAssignmentWidget({ context }: InjectionWidgetCompone
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
-  const { runMutation, retryLastMutation } = useGuardedMutation<{ dealId: string }>({
+  const { runMutation, retryLastMutation } = useGuardedMutation<{ dealId: string; retryLastMutation: () => Promise<boolean> }>({
     contextId: `finoo_intermediaries.staff.${dealId ?? 'missing'}`,
     blockedMessage: t('finoo_intermediaries.staff.blocked', 'Assignment change blocked.'),
   })
@@ -97,7 +98,7 @@ export default function DealAssignmentWidget({ context }: InjectionWidgetCompone
     setSaving(true)
     try {
       await runMutation({
-        context: { dealId },
+        context: { dealId, retryLastMutation },
         mutationPayload: { intermediaryCustomerUserId: selectedUserId },
         operation: async () => {
           const result = await readApiResultOrThrow<{ assignment: Assignment }>(
@@ -122,6 +123,10 @@ export default function DealAssignmentWidget({ context }: InjectionWidgetCompone
           flash(t('finoo_intermediaries.staff.saved', 'Intermediary assignment saved.'), 'success')
         },
       })
+    } catch (caught) {
+      if (!surfaceRecordConflict(caught, t, { onRefresh: load })) {
+        flash(t('finoo_intermediaries.staff.actionError', 'Unable to update the intermediary assignment.'), 'error')
+      }
     } finally {
       setSaving(false)
     }
@@ -137,7 +142,7 @@ export default function DealAssignmentWidget({ context }: InjectionWidgetCompone
     setSaving(true)
     try {
       await runMutation({
-        context: { dealId },
+        context: { dealId, retryLastMutation },
         mutationPayload: { assignmentId: assignment.id },
         operation: async () => {
           await readApiResultOrThrow<{ ok: boolean }>(`/api/finoo_intermediaries/admin/assignments/${assignment.id}`, {
@@ -149,6 +154,10 @@ export default function DealAssignmentWidget({ context }: InjectionWidgetCompone
           flash(t('finoo_intermediaries.staff.unassigned', 'Intermediary assignment removed.'), 'success')
         },
       })
+    } catch (caught) {
+      if (!surfaceRecordConflict(caught, t, { onRefresh: load })) {
+        flash(t('finoo_intermediaries.staff.actionError', 'Unable to update the intermediary assignment.'), 'error')
+      }
     } finally {
       setSaving(false)
     }
@@ -156,11 +165,15 @@ export default function DealAssignmentWidget({ context }: InjectionWidgetCompone
 
   async function loadMoreNotes() {
     if (!assignment || !notesCursor) return
-    const result = await readApiResultOrThrow<{ items: StaffNote[]; nextCursor: string | null }>(
-      `/api/finoo_intermediaries/admin/assignments/${assignment.id}/notes?pageSize=50&cursor=${encodeURIComponent(notesCursor)}`,
-    )
-    setNotes((previous) => [...previous, ...result.items])
-    setNotesCursor(result.nextCursor)
+    try {
+      const result = await readApiResultOrThrow<{ items: StaffNote[]; nextCursor: string | null }>(
+        `/api/finoo_intermediaries/admin/assignments/${assignment.id}/notes?pageSize=50&cursor=${encodeURIComponent(notesCursor)}`,
+      )
+      setNotes((previous) => [...previous, ...result.items])
+      setNotesCursor(result.nextCursor)
+    } catch {
+      flash(t('finoo_intermediaries.staff.notesLoadError', 'Unable to load more partner notes.'), 'error')
+    }
   }
 
   if (!dealId) return <ErrorMessage label={t('finoo_intermediaries.staff.missingDeal', 'Deal context is unavailable.')} />

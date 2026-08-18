@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Pencil, Trash2 } from 'lucide-react'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { useConfirmDialog } from '@open-mercato/ui/backend/confirm-dialog'
-import { dismissRecordConflict, RecordConflictBanner } from '@open-mercato/ui/backend/conflicts'
+import { dismissRecordConflict, RecordConflictBanner, surfaceRecordConflict } from '@open-mercato/ui/backend/conflicts'
 import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
 import { ErrorMessage, LoadingMessage } from '@open-mercato/ui/backend/detail'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
@@ -102,10 +102,14 @@ export default function DealDetailPageClient({ orgSlug, dealId }: { orgSlug: str
         mutationPayload: payload,
         operation,
       })
+    } catch (caught) {
+      if (!surfaceRecordConflict(caught, t, { onRefresh: load })) {
+        flash(t('finoo_intermediaries.portal.errors.action', 'Unable to complete the operation.'), 'error')
+      }
     } finally {
       setSaving(false)
     }
-  }, [dealId, runMutation])
+  }, [dealId, load, runMutation, t])
 
   async function advanceStatus() {
     if (!deal) return
@@ -175,20 +179,28 @@ export default function DealDetailPageClient({ orgSlug, dealId }: { orgSlug: str
 
   async function loadMoreNotes() {
     if (!notesCursor) return
-    const result = await readApiResultOrThrow<{ items: Note[]; nextCursor: string | null }>(
-      `/api/finoo_intermediaries/portal/deals/${dealId}/notes?pageSize=50&cursor=${encodeURIComponent(notesCursor)}`,
-    )
-    setNotes((previous) => [...previous, ...result.items])
-    setNotesCursor(result.nextCursor)
+    try {
+      const result = await readApiResultOrThrow<{ items: Note[]; nextCursor: string | null }>(
+        `/api/finoo_intermediaries/portal/deals/${dealId}/notes?pageSize=50&cursor=${encodeURIComponent(notesCursor)}`,
+      )
+      setNotes((previous) => [...previous, ...result.items])
+      setNotesCursor(result.nextCursor)
+    } catch {
+      flash(t('finoo_intermediaries.portal.errors.loadMore', 'Unable to load more results.'), 'error')
+    }
   }
 
   async function loadMoreActivities() {
     if (!activitiesCursor) return
-    const result = await readApiResultOrThrow<{ items: Activity[]; nextCursor: string | null }>(
-      `/api/finoo_intermediaries/portal/deals/${dealId}/activities?pageSize=50&cursor=${encodeURIComponent(activitiesCursor)}`,
-    )
-    setActivities((previous) => [...previous, ...result.items])
-    setActivitiesCursor(result.nextCursor)
+    try {
+      const result = await readApiResultOrThrow<{ items: Activity[]; nextCursor: string | null }>(
+        `/api/finoo_intermediaries/portal/deals/${dealId}/activities?pageSize=50&cursor=${encodeURIComponent(activitiesCursor)}`,
+      )
+      setActivities((previous) => [...previous, ...result.items])
+      setActivitiesCursor(result.nextCursor)
+    } catch {
+      flash(t('finoo_intermediaries.portal.errors.loadMore', 'Unable to load more results.'), 'error')
+    }
   }
 
   if (loading) return <LoadingMessage label={t('common.loading', 'Loading…')} />

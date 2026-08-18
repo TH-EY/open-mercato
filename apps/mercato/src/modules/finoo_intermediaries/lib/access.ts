@@ -119,7 +119,7 @@ function ineligibleStage(): CrudHttpError {
   return new CrudHttpError(422, { error: 'Deal is not in the eligible stage', code: 'ineligible_stage' })
 }
 
-async function loadScopedDeal(
+export async function loadScopedDeal(
   em: EntityManager,
   input: ScopedDealInput,
   lock = false,
@@ -134,7 +134,7 @@ async function loadScopedDeal(
   return deal
 }
 
-async function loadEligibleConfiguration(em: EntityManager, input: ScopedDealInput) {
+export async function loadEligibleConfiguration(em: EntityManager, input: ScopedDealInput) {
   const pipelines = await em.find(CustomerPipeline, {
     tenantId: input.tenantId,
     organizationId: input.organizationId,

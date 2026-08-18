@@ -14,10 +14,12 @@ describe('payout privacy and convergence source contract', () => {
     }
   })
 
-  it('uses one compound command and converges through the preview payout id', () => {
+  it('uses the aggregate batch command while preserving the legacy single-payout command', () => {
     const worker = readFileSync(resolve(process.cwd(), 'src/modules/finoo_affiliates/workers/payout-create.ts'), 'utf8')
     const payouts = readFileSync(resolve(process.cwd(), 'src/modules/finoo_affiliates/lib/payouts.ts'), 'utf8')
-    expect(worker.match(/commandBus\.execute/g)).toHaveLength(1)
+    expect(worker).toContain("'finoo_affiliates.payout_batch.create'")
+    expect(worker).toContain("'finoo_affiliates.payout.create'")
+    expect(worker.match(/commandBus\.execute/g)).toHaveLength(2)
     expect(payouts).toContain('if (preview.payoutId)')
     expect(payouts).toContain('lockMode: LockMode.PESSIMISTIC_WRITE')
     expect(payouts).toContain('preview.payoutId = payout.id')

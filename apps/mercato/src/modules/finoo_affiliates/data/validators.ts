@@ -63,11 +63,57 @@ export const finooPayoutPreviewSchema = z.object({
   transactions: finooPayoutSelectionSchema,
 })
 
-export const finooPayoutConfirmSchema = z.object({
+export const finooPayoutConfirmGroupSchema = z.object({
   paymentReference: z.string().trim().min(1).max(100),
   affiliateUpdatedAt: z.string().datetime(),
   transactions: finooPayoutSelectionSchema,
 })
+
+export const finooPayoutLegacyConfirmSchema = finooPayoutConfirmGroupSchema
+
+export const finooPayoutBatchConfirmSchema = z.object({
+  batchId: z.string().uuid(),
+  groups: z.array(finooPayoutConfirmGroupSchema).min(1).max(100),
+}).superRefine((input, context) => {
+  const references = new Set<string>()
+  const transactionIds = new Set<string>()
+  let transactionCount = 0
+  for (const group of input.groups) {
+    if (references.has(group.paymentReference)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'Duplicate payment reference', path: ['groups'] })
+    }
+    references.add(group.paymentReference)
+    for (const transaction of group.transactions) {
+      transactionCount += 1
+      if (transactionIds.has(transaction.id)) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: 'Duplicate payout transaction', path: ['groups'] })
+      }
+      transactionIds.add(transaction.id)
+    }
+  }
+  if (transactionCount > 100) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Payout batch cannot exceed 100 transactions', path: ['groups'] })
+  }
+})
+
+export const finooPayoutConfirmSchema = z.union([
+  finooPayoutLegacyConfirmSchema,
+  finooPayoutBatchConfirmSchema,
+])
+
+export type FinooPayoutConfirmGroupInput = z.infer<typeof finooPayoutConfirmGroupSchema>
+
+export function normalizePayoutConfirmGroups(
+  input: z.infer<typeof finooPayoutConfirmSchema>,
+): FinooPayoutConfirmGroupInput[] {
+  return 'groups' in input ? input.groups : [input]
+}
+
+export function payoutConfirmBatchId(
+  input: z.infer<typeof finooPayoutConfirmSchema>,
+): string | null {
+  return 'groups' in input ? input.batchId : null
+}
 
 export const finooPayoutsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),

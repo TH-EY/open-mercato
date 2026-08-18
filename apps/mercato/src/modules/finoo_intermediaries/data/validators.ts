@@ -42,6 +42,41 @@ export const assignmentDeleteSchema = z.object({
   expectedUpdatedAt: expectedUpdatedAtSchema,
 }).strict()
 
+export const bulkAssignmentDealSchema = z.object({
+  id: z.string().uuid(),
+  updatedAt: expectedUpdatedAtSchema,
+  assignmentId: z.string().uuid().nullable(),
+  assignmentUpdatedAt: expectedUpdatedAtSchema.nullable(),
+}).strict().superRefine((value, ctx) => {
+  if ((value.assignmentId === null) !== (value.assignmentUpdatedAt === null)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Assignment id and version must both be present or absent',
+    })
+  }
+})
+
+export const bulkAssignmentRequestSchema = z.object({
+  deals: z.array(bulkAssignmentDealSchema).min(1).max(100),
+  intermediaryCustomerUserId: z.string().uuid(),
+  confirmReassign: z.boolean().default(false),
+}).strict().superRefine((value, ctx) => {
+  if (new Set(value.deals.map((deal) => deal.id)).size !== value.deals.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Deal ids must be unique', path: ['deals'] })
+  }
+  const assignmentIds = value.deals.flatMap((deal) => deal.assignmentId ? [deal.assignmentId] : [])
+  if (new Set(assignmentIds).size !== assignmentIds.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Assignment ids must be unique', path: ['deals'] })
+  }
+})
+
+export const bulkAssignmentCommandSchema = bulkAssignmentRequestSchema.extend({
+  operationId: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  actorUserId: z.string().uuid(),
+})
+
 export const partnerStatusUpdateSchema = z.object({
   status: partnerStatusSchema,
   expectedUpdatedAt: expectedUpdatedAtSchema,
@@ -62,6 +97,9 @@ export const noteDeleteSchema = z.object({
 
 export type AssignmentCreateInput = z.infer<typeof assignmentCreateSchema>
 export type AssignmentUpdateInput = z.infer<typeof assignmentUpdateSchema>
+export type BulkAssignmentDealInput = z.infer<typeof bulkAssignmentDealSchema>
+export type BulkAssignmentRequestInput = z.infer<typeof bulkAssignmentRequestSchema>
+export type BulkAssignmentCommandInput = z.infer<typeof bulkAssignmentCommandSchema>
 export type PartnerStatusUpdateInput = z.infer<typeof partnerStatusUpdateSchema>
 export type NoteCreateInput = z.infer<typeof noteCreateSchema>
 export type NoteUpdateInput = z.infer<typeof noteUpdateSchema>

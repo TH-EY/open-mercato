@@ -8,13 +8,13 @@ import {
 import {
   createCustomerRoleFixture,
   createCustomerUserFixture,
-  deleteCustomerRoleFixture,
   deleteCustomerUserFixture,
   portalCookieHeaders,
   portalLogin,
   type CustomerUserFixture,
   type PortalSession,
 } from "@open-mercato/core/helpers/integration/customerAccountsFixtures";
+import { seedSystemEmailChannel } from "@open-mercato/core/helpers/integration/communicationChannelsFixtures";
 import {
   createCompanyFixture,
   createDealFixture,
@@ -104,6 +104,10 @@ async function createAffiliateFixture(
 ): Promise<AffiliateFixture> {
   const stamp = `${Date.now()}-${randomUUID().slice(0, 8)}`;
   const email = `qa-finoo-${label}-${stamp}@test.local`;
+  await seedSystemEmailChannel(request, token, {
+    displayName: `QA Finoo ${label} system email`,
+    externalIdentifier: `system-${stamp}@test-seed.local`,
+  });
   const invite = await apiRequest(
     request,
     "POST",
@@ -430,7 +434,7 @@ async function updateOwnProfile(
   });
 }
 
-test.describe("TC-FINOO-AFF-009..016: membership, ledger, privacy, and payout integration", () => {
+test.describe("TC-FINOO-AFF-009..023: membership, ledger, privacy, and payout integration", () => {
   test("TC-009..012: repairs membership, snapshots first Accepted once, enforces transitions, and preserves legacy lead fields", async ({
     request,
   }) => {
@@ -772,8 +776,6 @@ test.describe("TC-FINOO-AFF-009..016: membership, ledger, privacy, and payout in
         companyId,
       );
       await cleanupAffiliateFixture(request, client, token, affiliate);
-      if (role.created)
-        await deleteCustomerRoleFixture(request, token, role.id);
       await client.end();
     }
   });
@@ -882,7 +884,11 @@ test.describe("TC-FINOO-AFF-009..016: membership, ledger, privacy, and payout in
       );
       expect(incompletePreview.status()).toBe(409);
       expect(await readJsonSafe(incompletePreview)).toMatchObject({
-        error: "PROFILE_INCOMPLETE",
+        error: "PAYOUT_PROFILES_INCOMPLETE",
+        affiliates: [{
+          affiliateId: firstAffiliate.affiliateId,
+          missingFields: ["accountHolderName", "accountNumber"],
+        }],
       });
 
       const saved = await updateOwnProfile(request, firstAffiliate.session, {
@@ -984,9 +990,16 @@ test.describe("TC-FINOO-AFF-009..016: membership, ledger, privacy, and payout in
           },
         },
       );
-      expect(mixed.status()).toBe(409);
+      expect(mixed.status()).toBe(200);
       expect(await readJsonSafe(mixed)).toMatchObject({
-        error: "MIXED_AFFILIATES",
+        selectedCount: 2,
+        affiliateCount: 2,
+        totalAmount: "65",
+        currency: "PLN",
+        groups: [
+          { selectedCount: 1, currency: "PLN" },
+          { selectedCount: 1, currency: "PLN" },
+        ],
       });
       const outsideScope = await apiRequest(
         request,
@@ -1042,8 +1055,6 @@ test.describe("TC-FINOO-AFF-009..016: membership, ledger, privacy, and payout in
     } finally {
       await cleanupAffiliateFixture(request, client, token, secondAffiliate);
       await cleanupAffiliateFixture(request, client, token, firstAffiliate);
-      if (role.created)
-        await deleteCustomerRoleFixture(request, token, role.id);
       await client.end();
     }
   });
@@ -1365,8 +1376,211 @@ test.describe("TC-FINOO-AFF-009..016: membership, ledger, privacy, and payout in
     } finally {
       await cleanupAffiliateFixture(request, client, token, otherAffiliate);
       await cleanupAffiliateFixture(request, client, token, paidAffiliate);
-      if (role.created)
-        await deleteCustomerRoleFixture(request, token, role.id);
+      await client.end();
+    }
+  });
+
+  test("TC-019..023: groups affiliates, blocks incomplete profiles, confirms atomically, and projects readiness", async ({
+    request,
+  }) => {
+    const token = await getAuthToken(request, "admin");
+    const tokenContext = getTokenContext(token);
+    const scope = {
+      tenantId: tokenContext.tenantId,
+      organizationId: tokenContext.organizationId,
+    };
+    const client: DbClient = new Client({ connectionString: requireDatabaseUrl() });
+    await client.connect();
+    const role = await ensureAffiliateRole(request, token);
+    let firstAffiliate: AffiliateFixture | null = null;
+    let secondAffiliate: AffiliateFixture | null = null;
+    let incompleteAffiliate: AffiliateFixture | null = null;
+
+    try {
+      firstAffiliate = await createAffiliateFixture(request, client, token, scope, role.id, "batch-a");
+      secondAffiliate = await createAffiliateFixture(request, client, token, scope, role.id, "batch-b");
+      incompleteAffiliate = await createAffiliateFixture(request, client, token, scope, role.id, "batch-incomplete");
+
+      const loadProfile = async (affiliate: AffiliateFixture) => {
+        const response = await request.get(resolveUrl("/api/finoo_affiliates/portal/profile"), {
+          headers: portalCookieHeaders(affiliate.session),
+        });
+        return (await readJsonSafe<{ updatedAt: string }>(response))!;
+      };
+      const firstProfile = await loadProfile(firstAffiliate);
+      const firstSaved = await updateOwnProfile(request, firstAffiliate.session, {
+        accountHolderName: "QA Batch Affiliate A",
+        accountNumber: "PL61109010140000071219812874",
+        updatedAt: firstProfile.updatedAt,
+      });
+      expect(firstSaved.status()).toBe(200);
+      const secondProfile = await loadProfile(secondAffiliate);
+      const secondSaved = await updateOwnProfile(request, secondAffiliate.session, {
+        accountHolderName: "QA Batch Affiliate B",
+        accountNumber: "PL52114020040000300201355387",
+        updatedAt: secondProfile.updatedAt,
+      });
+      expect(secondSaved.status()).toBe(200);
+
+      const approvedEntry = await readStatusEntry(client, scope, "approved");
+      const firstTransaction = await insertTransaction(client, scope, firstAffiliate, approvedEntry, "approved", 75);
+      const secondTransaction = await insertTransaction(client, scope, secondAffiliate, approvedEntry, "approved", 125);
+      const incompleteTransaction = await insertTransaction(client, scope, incompleteAffiliate, approvedEntry, "approved", 30);
+
+      const incompleteResponse = await apiRequest(request, "POST", "/api/finoo_affiliates/payouts/preview", {
+        token,
+        data: {
+          transactions: [
+            { id: firstTransaction.id, updatedAt: firstTransaction.updatedAt },
+            { id: incompleteTransaction.id, updatedAt: incompleteTransaction.updatedAt },
+          ],
+        },
+      });
+      expect(incompleteResponse.status()).toBe(409);
+      expect(await readJsonSafe(incompleteResponse)).toMatchObject({
+        error: "PAYOUT_PROFILES_INCOMPLETE",
+        affiliates: [{
+          affiliateId: incompleteAffiliate.affiliateId,
+          missingFields: ["accountHolderName", "accountNumber"],
+        }],
+      });
+      const preflightWrites = await client.query<{ count: string }>(
+        "select count(*)::text as count from finoo_payout_previews where affiliate_id = any($1::uuid[])",
+        [[firstAffiliate.affiliateId, incompleteAffiliate.affiliateId]],
+      );
+      expect(preflightWrites.rows[0]?.count).toBe("0");
+
+      const readinessResponse = await apiRequest(
+        request,
+        "GET",
+        "/api/finoo_affiliates/affiliates?page=1&pageSize=100",
+        { token },
+      );
+      expect(readinessResponse.status()).toBe(200);
+      const readiness = await readJsonSafe<{
+        items: Array<{ id: string; payoutProfileComplete: boolean; accountNumber?: unknown }>;
+      }>(readinessResponse);
+      expect(readiness?.items.find((item) => item.id === firstAffiliate?.affiliateId)).toMatchObject({ payoutProfileComplete: true });
+      expect(readiness?.items.find((item) => item.id === secondAffiliate?.affiliateId)).toMatchObject({ payoutProfileComplete: true });
+      expect(readiness?.items.find((item) => item.id === incompleteAffiliate?.affiliateId)).toMatchObject({ payoutProfileComplete: false });
+      expect(readiness?.items.some((item) => Object.hasOwn(item, "accountNumber"))).toBe(false);
+
+      const makePreview = async () => {
+        const response = await apiRequest(request, "POST", "/api/finoo_affiliates/payouts/preview", {
+          token,
+          data: {
+            transactions: [
+              { id: secondTransaction.id, updatedAt: secondTransaction.updatedAt },
+              { id: firstTransaction.id, updatedAt: firstTransaction.updatedAt },
+            ],
+          },
+        });
+        expect(response.status()).toBe(200);
+        return (await readJsonSafe<{
+          batchId: string;
+          affiliateCount: number;
+          selectedCount: number;
+          totalAmount: string;
+          groups: Array<{
+            affiliateId: string;
+            paymentReference: string;
+            affiliateUpdatedAt: string;
+            amount: string;
+            transactions: Array<{ id: string; updatedAt: string }>;
+          }>;
+        }>(response))!;
+      };
+
+      const stalePreview = await makePreview();
+      expect(stalePreview).toMatchObject({ affiliateCount: 2, selectedCount: 2, totalAmount: "200" });
+      expect(stalePreview.groups.map((group) => group.affiliateId)).toEqual(
+        [firstAffiliate.affiliateId, secondAffiliate.affiliateId].sort(),
+      );
+      expect(stalePreview.groups.map((group) => group.amount).sort()).toEqual(["125", "75"]);
+
+      const omittedGroup = await apiRequest(request, "POST", "/api/finoo_affiliates/payouts/confirm", {
+        token,
+        data: {
+          batchId: stalePreview.batchId,
+          groups: [stalePreview.groups[0]].map(({ paymentReference, affiliateUpdatedAt, transactions }) => ({ paymentReference, affiliateUpdatedAt, transactions })),
+        },
+      });
+      expect(omittedGroup.status()).toBe(409);
+      expect(await readJsonSafe(omittedGroup)).toMatchObject({ error: "PAYOUT_PREVIEW_STALE" });
+
+      const secondGroup = stalePreview.groups.find((group) => group.affiliateId === secondAffiliate?.affiliateId)!;
+      const changedProfile = await updateOwnProfile(request, secondAffiliate.session, {
+        accountHolderName: "QA Batch Affiliate B Changed",
+        accountNumber: "PL52114020040000300201355387",
+        updatedAt: secondGroup.affiliateUpdatedAt,
+      });
+      expect(changedProfile.status()).toBe(200);
+      const staleConfirmation = await apiRequest(request, "POST", "/api/finoo_affiliates/payouts/confirm", {
+        token,
+        data: { batchId: stalePreview.batchId, groups: stalePreview.groups.map(({ paymentReference, affiliateUpdatedAt, transactions }) => ({ paymentReference, affiliateUpdatedAt, transactions })) },
+      });
+      expect(staleConfirmation.status()).toBe(409);
+      expect(await readJsonSafe(staleConfirmation)).toMatchObject({ error: "PAYOUT_PREVIEW_STALE" });
+      const afterStale = await client.query<{ payout_count: string; paid_count: string }>(
+        `select
+          (select count(*) from finoo_affiliate_payouts where affiliate_id = any($1::uuid[]))::text as payout_count,
+          (select count(*) from finoo_affiliate_transactions where id = any($2::uuid[]) and commission_status = 'paid_out')::text as paid_count`,
+        [[firstAffiliate.affiliateId, secondAffiliate.affiliateId], [firstTransaction.id, secondTransaction.id]],
+      );
+      expect(afterStale.rows[0]).toEqual({ payout_count: "0", paid_count: "0" });
+
+      const freshPreview = await makePreview();
+      const otherPreview = await makePreview();
+      const recombined = await apiRequest(request, "POST", "/api/finoo_affiliates/payouts/confirm", {
+        token,
+        data: {
+          batchId: freshPreview.batchId,
+          groups: [freshPreview.groups[0], otherPreview.groups[1]].map(({ paymentReference, affiliateUpdatedAt, transactions }) => ({ paymentReference, affiliateUpdatedAt, transactions })),
+        },
+      });
+      expect(recombined.status()).toBe(409);
+      expect(await readJsonSafe(recombined)).toMatchObject({ error: "PAYOUT_PREVIEW_STALE" });
+      const confirmation = {
+        batchId: freshPreview.batchId,
+        groups: freshPreview.groups.map(({ paymentReference, affiliateUpdatedAt, transactions }) => ({
+          paymentReference,
+          affiliateUpdatedAt,
+          transactions,
+        })),
+      };
+      const confirmResponse = await apiRequest(request, "POST", "/api/finoo_affiliates/payouts/confirm", {
+        token,
+        data: confirmation,
+      });
+      expect(confirmResponse.status()).toBe(202);
+      await drainIntegrationQueue(PAYOUT_QUEUE);
+
+      const payoutRows = await client.query<{ id: string; affiliate_id: string; payment_reference: string }>(
+        `select id, affiliate_id, payment_reference
+         from finoo_affiliate_payouts
+         where affiliate_id = any($1::uuid[])
+         order by affiliate_id`,
+        [[firstAffiliate.affiliateId, secondAffiliate.affiliateId]],
+      );
+      expect(payoutRows.rows).toHaveLength(2);
+      const paidRows = await client.query<{ id: string; payout_id: string | null; commission_status: string }>(
+        "select id, payout_id, commission_status from finoo_affiliate_transactions where id = any($1::uuid[]) order by id",
+        [[firstTransaction.id, secondTransaction.id]],
+      );
+      expect(paidRows.rows.every((row) => row.commission_status === "paid_out" && row.payout_id !== null)).toBe(true);
+
+      const exactRetry = await apiRequest(request, "POST", "/api/finoo_affiliates/payouts/confirm", {
+        token,
+        data: confirmation,
+      });
+      expect(exactRetry.status()).toBe(200);
+      const exactRetryBody = await readJsonSafe<{ payoutIds: string[]; paymentReferences: string[] }>(exactRetry);
+      expect(new Set(exactRetryBody?.payoutIds)).toEqual(new Set(payoutRows.rows.map((row) => row.id)));
+      expect(new Set(exactRetryBody?.paymentReferences)).toEqual(new Set(payoutRows.rows.map((row) => row.payment_reference)));
+    } finally {
+      await cleanupAffiliateFixture(request, client, token, incompleteAffiliate);
+      await cleanupAffiliateFixture(request, client, token, secondAffiliate);
+      await cleanupAffiliateFixture(request, client, token, firstAffiliate);
       await client.end();
     }
   });

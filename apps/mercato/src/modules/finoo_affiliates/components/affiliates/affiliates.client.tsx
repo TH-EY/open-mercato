@@ -11,6 +11,7 @@ import { ListEmptyState } from '@open-mercato/ui/backend/filters/ListEmptyState'
 import { apiCall, readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { Button } from '@open-mercato/ui/primitives/button'
+import { StatusBadge } from '@open-mercato/ui/primitives/status-badge'
 import InviteAffiliateDialog from './invite-affiliate-dialog.client'
 import CommissionSettingsDialog, { type AffiliateCommissionSettings } from './commission-settings-dialog.client'
 
@@ -22,6 +23,7 @@ type AffiliateRow = AffiliateCommissionSettings & {
   code: string
   trackedUrl: string
   relatedDeals: number
+  payoutProfileComplete: boolean
   state: 'invited' | 'active'
 }
 
@@ -159,6 +161,17 @@ export default function AffiliatesClient() {
       enableSorting: false,
     },
     { accessorKey: 'relatedDeals', header: t('finooAffiliates.affiliates.relatedDeals', 'Related deals') },
+    {
+      accessorKey: 'payoutProfileComplete',
+      header: t('finooAffiliates.affiliates.payoutAccount', 'Payout account'),
+      cell: ({ row }) => (
+        <StatusBadge variant={row.original.payoutProfileComplete ? 'success' : 'warning'}>
+          {row.original.payoutProfileComplete
+            ? t('finooAffiliates.affiliates.payoutReady', 'Ready')
+            : t('finooAffiliates.affiliates.payoutMissing', 'Missing data')}
+        </StatusBadge>
+      ),
+    },
     {
       id: 'commission',
       header: t('finooAffiliates.affiliates.commission', 'Commission'),

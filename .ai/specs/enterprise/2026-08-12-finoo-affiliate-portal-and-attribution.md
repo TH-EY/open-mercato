@@ -57,7 +57,7 @@ The current implementation has six material gaps:
 - Immediate code reservation after the staff invitation succeeds; link activation only after the invitation is accepted.
 - Exactly one commission transaction per attributed Deal, created from the first normalized `Accepted` stage transition.
 - Explicit transaction transitions: `processing -> approved`, `processing -> rejected`, `rejected -> processing`, and `approved -> paid_out` only through payout confirmation.
-- Atomic and idempotent payout creation across one affiliate's selected approved transactions.
+- Atomic and idempotent payout creation across one affiliate's selected approved transactions. Mixed-affiliate batching is superseded by `.ai/specs/enterprise/2026-08-18-finoo-batch-payouts-and-visible-errors.md`.
 - Encrypted profile and payout bank details.
 - Affiliate-scoped portal reads and feature-gated staff actions.
 - Additive migration and preserved THOM-88 public/private contract surfaces.
@@ -84,7 +84,7 @@ The current implementation has six material gaps:
 - Commission amount: non-negative integer entered by staff before Accepted and snapshotted into the transaction on first Accepted.
 - Status wording: the business text's “Accepted” transaction status means the technical `approved` commission status; Deal stage `Accepted` remains a separate workflow concept.
 - Payout eligibility: only `approved` transactions.
-- Payout selection: one or more transactions belonging to exactly one affiliate and one tenant/organization.
+- Payout selection: the original contract supports one or more transactions belonging to exactly one affiliate and one tenant/organization; `.ai/specs/enterprise/2026-08-18-finoo-batch-payouts-and-visible-errors.md` additively groups a mixed selection into one payout per affiliate.
 - Payout effect: one payout row plus links to all selected transactions and their transition to `paid_out`, in one database transaction.
 - Payout warning: localized through `finooAffiliates.payouts.confirmWarning`; Polish displays “Potwierdź wyłącznie wtedy, gdy płatność została faktycznie wykonana.”
 - Bank payment: external/manual; confirmation records it only.
@@ -257,6 +257,8 @@ Each transaction has at most one `payout_id`; one payout has one or more transac
 | Field | Type | Rules |
 |---|---|---|
 | `payment_reference` | text | server-generated globally unique opaque reference |
+| `batch_id` | UUID nullable | server-issued aggregate identity; nullable only for previews created before the batch-binding migration |
+| `batch_binding_hash` | text nullable | scope-bound hash of the canonical payment-reference/group-binding set |
 | `affiliate_id` | UUID | module membership ID |
 | `binding_hash` | text | versioned, scope-bound HMAC of canonical transaction IDs/versions, affiliate version, total, currency, and bank-profile HMAC; creation fails closed without a server-side pepper |
 | `selection` | JSON | bounded 1..100 transaction IDs and versions; no bank data |
@@ -402,11 +404,11 @@ Requires `finoo_affiliates.manage`. Body: `action` (`accept`, `reject`, `reproce
 
 #### `POST /api/finoo_affiliates/payouts/preview`
 
-Requires `finoo_affiliates.payouts.manage`. Body: 1..100 transaction IDs. Read-only response: affiliate identity, `affiliateUpdatedAt`, account holder, account number, total amount as a base-10 integer string, currency, selected count, canonical transaction rows with `id` and `updatedAt`, and a server-generated payment reference. The reference is an opaque server-side reservation bound to the canonical sorted transaction IDs and versions, affiliate ID and version, exact total, currency, and bank-profile snapshot hash; it cannot be reused with a different payload. Returns `409 PROFILE_INCOMPLETE`, `409 MIXED_AFFILIATES`, or `409 TRANSACTION_NOT_APPROVED` as applicable.
+Requires `finoo_affiliates.payouts.manage`. Body: 1..100 transaction IDs. Read-only response: server-issued `batchId`, affiliate identity, `affiliateUpdatedAt`, account holder, account number, total amount as a base-10 integer string, currency, selected count, canonical transaction rows with `id` and `updatedAt`, and a server-generated payment reference. Each reference binds its group; `batchId` plus the aggregate binding prevents groups from being omitted or recombined. The original flat single-affiliate response remains a compatibility surface; the 2026-08-18 batch specification adds grouped mixed-affiliate responses and replaces `MIXED_AFFILIATES` with all-group preflight.
 
 #### `POST /api/finoo_affiliates/payouts/confirm`
 
-Requires `finoo_affiliates.payouts.manage`. Body: paymentReference, `affiliateUpdatedAt`, and the exact 1..100 `{ id, updatedAt }` rows returned by preview. Confirm atomically revalidates the reference binding, affiliate/profile version, transaction versions, statuses, amount, and scope before enqueueing or committing any financial change. Any changed selection, profile, amount, status, version, scope, or retry payload returns structured `409 PAYOUT_PREVIEW_STALE`; the client must request a new preview. A valid request returns `202 { progressJobId, paymentReference }`; an exact concurrent retry may return another progress-job ID but both jobs converge on one payout. A retry after commit returns `200 { payoutId, paymentReference }`. No path creates a second payout.
+Requires `finoo_affiliates.payouts.manage`. The grouped body contains `batchId` and the exact groups returned by preview, with at most 100 transactions across the complete batch. Confirm atomically revalidates the aggregate group set, every reference binding, affiliate/profile version, transaction version/status, amount, and scope before enqueueing or committing any financial change. The legacy flat single-group body remains accepted only when the server-issued batch contains exactly one group. Any omitted/recombined group or changed selection, profile, amount, status, version, scope, or retry payload returns structured `409 PAYOUT_PREVIEW_STALE`; the client must request a new preview. A valid request returns `202`; an exact concurrent retry converges on the same payout set. A retry after commit returns `200`. No path creates a second payout.
 
 #### `GET /api/finoo_affiliates/payouts`
 
@@ -775,6 +777,10 @@ None identified before the required independent scope and pre-implementation rev
 Ready for implementation. Independent scope, backward-compatibility, data/architecture, and UI/test audits passed after the documented amendments. The detailed readiness record is `.ai/specs/analysis/ANALYSIS-2026-08-12-finoo-affiliate-portal-and-attribution.md`.
 
 ## Changelog
+
+### 2026-08-18
+
+- Linked the additive THOM-103 mixed-affiliate batch payout contract while preserving the original single-affiliate compatibility surface.
 
 ### 2026-08-14
 

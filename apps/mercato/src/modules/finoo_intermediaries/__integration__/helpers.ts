@@ -405,6 +405,7 @@ export async function cleanupScenario(request: APIRequestContext, scenario: Scen
   await queryDatabase('delete from search_tokens where tenant_id = $1 and organization_id = $2', [scenario.tenantId, scenario.organizationId])
   await queryDatabase('delete from entity_indexes where tenant_id = $1 and organization_id = $2', [scenario.tenantId, scenario.organizationId])
   await queryDatabase('delete from finoo_intermediary_notes where tenant_id = $1 and organization_id = $2', [scenario.tenantId, scenario.organizationId])
+  await queryDatabase('delete from finoo_intermediary_assignment_batches where tenant_id = $1 and organization_id = $2', [scenario.tenantId, scenario.organizationId])
   await queryDatabase('delete from finoo_intermediary_assignments where tenant_id = $1 and organization_id = $2', [scenario.tenantId, scenario.organizationId])
   await queryDatabase('delete from finoo_intermediaries where tenant_id = $1 and organization_id = $2', [scenario.tenantId, scenario.organizationId])
   await queryDatabase('delete from customer_deal_people where deal_id in (select id from customer_deals where tenant_id=$1 and organization_id=$2)', [scenario.tenantId, scenario.organizationId])

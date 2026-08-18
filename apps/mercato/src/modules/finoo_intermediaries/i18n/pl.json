@@ -49,7 +49,9 @@
       "errors": {
         "load": "Nie udało się pobrać przypisanych spraw.",
         "loadDetail": "Nie udało się pobrać szczegółów sprawy.",
-        "blocked": "Operacja została zablokowana przez walidację."
+        "blocked": "Operacja została zablokowana przez walidację.",
+        "action": "Nie udało się wykonać operacji.",
+        "loadMore": "Nie udało się wczytać kolejnych wyników."
       },
       "retryAvailable": "Zablokowaną operację można ponowić po rozwiązaniu konfliktu."
     },
@@ -69,7 +71,45 @@
       "missingDeal": "Kontekst sprawy jest niedostępny.",
       "ineligibleStage": "Przenieś sprawę do etapu Sent To Partners, aby zarządzać przypisaniem pośrednika.",
       "notesTitle": "Notatki partnera",
-      "notesEmpty": "Brak notatek partnera."
+      "notesEmpty": "Brak notatek partnera.",
+      "actionError": "Nie udało się zmienić przypisania pośrednika.",
+      "notesLoadError": "Nie udało się wczytać kolejnych notatek partnera."
+    },
+    "bulk": {
+      "action": "Przypisz pośrednika",
+      "title": "Przypisz zaznaczone sprawy",
+      "description": "Wybierz jednego pośrednika dla wszystkich kwalifikujących się spraw.",
+      "selectionLimit": "Zaznacz od 1 do 100 spraw.",
+      "loading": "Ładowanie zaznaczonych spraw…",
+      "retry": "Spróbuj ponownie",
+      "intermediary": "Pośrednik",
+      "selectIntermediary": "Wybierz pośrednika",
+      "blockedSummary": "Nie można przypisać {count} spraw. Usuń je z wyboru lub przenieś do właściwego etapu.",
+      "unavailableDeal": "Niedostępna sprawa",
+      "currentUnknown": "Obecny pośrednik",
+      "saving": "Uruchamianie…",
+      "submit": "Przypisz zaznaczone sprawy",
+      "queued": "Rozpoczęto zbiorcze przypisywanie. Postęp jest widoczny na górnym pasku.",
+      "unchanged": "Zaznaczone sprawy są już przypisane do tego pośrednika.",
+      "progressName": "Przypisz zaznaczone sprawy",
+      "progressDescription": "Przypisywanie zaznaczonych spraw do pośrednika",
+      "confirm": {
+        "title": "Zmienić pośrednika dla zaznaczonych spraw?",
+        "text": "Liczba istniejących przypisań do zmiany na pośrednika {target}: {count}."
+      },
+      "outcome": {
+        "create": "Nowe przypisanie",
+        "reassign": "Zmiana pośrednika",
+        "unchanged": "Bez zmian",
+        "blocked": "Zablokowana"
+      },
+      "errors": {
+        "load": "Nie udało się pobrać zaznaczonych spraw.",
+        "save": "Nie udało się przypisać zaznaczonych spraw. Sprawdź listę i spróbuj ponownie.",
+        "blocked": "Zbiorcze przypisywanie zostało zablokowane.",
+        "queue": "Nie udało się dodać zbiorczego przypisywania do kolejki. Spróbuj ponownie.",
+        "worker": "Zbiorcze przypisywanie nie powiodło się. Sprawdź zaznaczone sprawy i spróbuj ponownie."
+      }
     },
     "directory": {
       "title": "Pośrednicy",

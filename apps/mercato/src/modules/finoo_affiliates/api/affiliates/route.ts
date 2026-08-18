@@ -118,6 +118,7 @@ export async function GET(request: Request): Promise<Response> {
         commissionMode: affiliate.commissionMode ?? null,
         commissionRateBps: affiliate.commissionRateBps ?? null,
         commissionFixedAmount: affiliate.commissionFixedAmount ?? null,
+        payoutProfileComplete: Boolean(affiliate.accountHolderName?.trim() && affiliate.accountNumber?.trim()),
         updatedAt: affiliate.updatedAt.toISOString(),
       }
     }),
@@ -190,6 +191,7 @@ const itemSchema = z.object({
   commissionMode: z.enum(['percentage', 'fixed']).nullable(),
   commissionRateBps: z.number().int().nullable(),
   commissionFixedAmount: z.number().int().nullable(),
+  payoutProfileComplete: z.boolean(),
   updatedAt: z.string().datetime(),
 })
 

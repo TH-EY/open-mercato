@@ -415,10 +415,12 @@ export class FinooAffiliatePayout {
 
 @Entity({ tableName: 'finoo_payout_previews' })
 @Unique({ name: 'finoo_payout_previews_reference_unique', properties: ['paymentReference'] })
+@Unique({ name: 'finoo_payout_previews_batch_affiliate_unique', properties: ['batchId', 'affiliateId'] })
 @Index({ name: 'finoo_payout_previews_scope_expiry_idx', properties: ['tenantId', 'organizationId', 'expiresAt'] })
 @Index({ name: 'finoo_payout_previews_scope_payout_idx', properties: ['tenantId', 'organizationId', 'payoutId'] })
+@Index({ name: 'finoo_payout_previews_scope_batch_idx', properties: ['tenantId', 'organizationId', 'batchId'] })
 export class FinooPayoutPreview {
-  [OptionalProps]?: 'currency' | 'payoutId' | 'createdAt' | 'updatedAt'
+  [OptionalProps]?: 'batchId' | 'batchBindingHash' | 'currency' | 'payoutId' | 'createdAt' | 'updatedAt'
 
   @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
   id!: string
@@ -431,6 +433,12 @@ export class FinooPayoutPreview {
 
   @Property({ name: 'payment_reference', type: 'text' })
   paymentReference!: string
+
+  @Property({ name: 'batch_id', type: 'uuid', nullable: true })
+  batchId?: string | null
+
+  @Property({ name: 'batch_binding_hash', type: 'text', nullable: true })
+  batchBindingHash?: string | null
 
   @Property({ name: 'affiliate_id', type: 'uuid' })
   affiliateId!: string

@@ -52,10 +52,17 @@ export const openApi: OpenApiRouteDoc = {
     POST: {
       summary: 'Create an exact affiliate payout preview',
       requestBody: { schema: finooPayoutPreviewSchema },
-      responses: [{ status: 200, description: 'Bound payout preview', schema: z.object({
-        paymentReference: z.string(), affiliateId: z.string().uuid(), affiliateEmail: z.string().email(), affiliateUpdatedAt: z.string().datetime(),
-        accountHolderName: z.string(), accountNumber: z.string(), amount: z.string().regex(/^\d+$/), currency: z.literal('PLN'),
-        selectedCount: z.number().int(), transactions: finooPayoutPreviewSchema.shape.transactions, expiresAt: z.string().datetime(),
+      responses: [{ status: 200, description: 'Bound payout batch preview', schema: z.object({
+        batchId: z.string().uuid(),
+        groups: z.array(z.object({
+          paymentReference: z.string(), affiliateId: z.string().uuid(), affiliateEmail: z.string().email(), affiliateUpdatedAt: z.string().datetime(),
+          accountHolderName: z.string(), accountNumber: z.string(), amount: z.string().regex(/^\d+$/), currency: z.literal('PLN'),
+          selectedCount: z.number().int(), transactions: finooPayoutPreviewSchema.shape.transactions, expiresAt: z.string().datetime(),
+        })),
+        selectedCount: z.number().int(), affiliateCount: z.number().int(), totalAmount: z.string().regex(/^\d+$/), currency: z.literal('PLN'),
+        paymentReference: z.string().optional(), affiliateId: z.string().uuid().optional(), affiliateEmail: z.string().email().optional(), affiliateUpdatedAt: z.string().datetime().optional(),
+        accountHolderName: z.string().optional(), accountNumber: z.string().optional(), amount: z.string().regex(/^\d+$/).optional(),
+        transactions: finooPayoutPreviewSchema.shape.transactions.optional(), expiresAt: z.string().datetime().optional(),
       }) }],
     },
   },

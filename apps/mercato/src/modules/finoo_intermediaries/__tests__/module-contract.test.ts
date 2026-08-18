@@ -5,6 +5,7 @@ import type { CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import '../commands/intermediaries'
 import '../commands/directory'
+import '../commands/bulk-assignments'
 
 describe('finoo_intermediaries module contract', () => {
   it('declares the frozen staff and portal feature ids with minimal defaults', () => {
@@ -57,6 +58,13 @@ describe('finoo_intermediaries module contract', () => {
       expect(command?.isUndoable).toBe(false)
       expect(command?.undo).toBeUndefined()
     }
+  })
+
+  it('registers the atomic bulk assignment command as non-undoable', () => {
+    const command = commandRegistry.get('finoo_intermediaries.assignment.bulk_upsert')
+    expect(command).toBeDefined()
+    expect(command?.isUndoable).toBe(false)
+    expect(command?.undo).toBeUndefined()
   })
 
   it('keeps note plaintext out of generic audit snapshots', async () => {

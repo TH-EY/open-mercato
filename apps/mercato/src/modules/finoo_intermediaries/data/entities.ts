@@ -179,6 +179,43 @@ export class FinooIntermediaryAssignment {
   deletedAt?: Date | null
 }
 
+export type FinooIntermediaryAssignmentBatchResult = {
+  assignmentIds: string[]
+  createdCount: number
+  reassignedCount: number
+  unchangedCount: number
+}
+
+@Entity({ tableName: 'finoo_intermediary_assignment_batches' })
+@Index({
+  name: 'finoo_intermediary_assignment_batches_scope_idx',
+  properties: ['tenantId', 'organizationId', 'createdAt'],
+})
+export class FinooIntermediaryAssignmentBatch {
+  [OptionalProps]?: 'createdAt'
+
+  @PrimaryKey({ type: 'uuid' })
+  id!: string
+
+  @Property({ name: 'tenant_id', type: 'uuid' })
+  tenantId!: string
+
+  @Property({ name: 'organization_id', type: 'uuid' })
+  organizationId!: string
+
+  @Property({ name: 'binding_hash', type: 'text' })
+  bindingHash!: string
+
+  @Property({ type: 'json' })
+  result!: FinooIntermediaryAssignmentBatchResult
+
+  @Property({ name: 'completed_at', type: Date })
+  completedAt!: Date
+
+  @Property({ name: 'created_at', type: Date, onCreate: () => new Date() })
+  createdAt: Date = new Date()
+}
+
 @Entity({ tableName: 'finoo_intermediary_notes' })
 @Index({
   name: 'finoo_intermediary_notes_portal_idx',

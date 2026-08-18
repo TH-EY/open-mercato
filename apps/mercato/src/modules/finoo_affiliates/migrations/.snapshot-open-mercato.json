@@ -2345,6 +2345,40 @@
           "enumItems": [],
           "mappedType": "bigint"
         },
+        "batch_binding_hash": {
+          "name": "batch_binding_hash",
+          "type": "text",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "collation": null,
+          "enumItems": [],
+          "mappedType": "text"
+        },
+        "batch_id": {
+          "name": "batch_id",
+          "type": "uuid",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": true,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "collation": null,
+          "enumItems": [],
+          "mappedType": "uuid"
+        },
         "binding_hash": {
           "name": "binding_hash",
           "type": "text",
@@ -2536,6 +2570,17 @@
       "indexes": [
         {
           "columnNames": [
+            "batch_id",
+            "affiliate_id"
+          ],
+          "composite": true,
+          "constraint": true,
+          "keyName": "finoo_payout_previews_batch_affiliate_unique",
+          "primary": false,
+          "unique": true
+        },
+        {
+          "columnNames": [
             "id"
           ],
           "composite": false,
@@ -2553,6 +2598,18 @@
           "keyName": "finoo_payout_previews_reference_unique",
           "primary": false,
           "unique": true
+        },
+        {
+          "columnNames": [
+            "tenant_id",
+            "organization_id",
+            "batch_id"
+          ],
+          "composite": true,
+          "constraint": false,
+          "keyName": "finoo_payout_previews_scope_batch_idx",
+          "primary": false,
+          "unique": false
         },
         {
           "columnNames": [

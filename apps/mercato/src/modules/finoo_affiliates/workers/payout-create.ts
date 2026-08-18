@@ -3,7 +3,13 @@ import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import type { CommandBus } from '@open-mercato/shared/lib/commands'
 import type { ProgressService, ProgressServiceContext } from '@open-mercato/core/modules/progress/lib/progressService'
 import type { FinooAffiliatePayout } from '../data/entities'
-import { FINOO_PAYOUT_QUEUE, type FinooPayoutJobPayload } from '../lib/payoutQueue'
+import {
+  FINOO_PAYOUT_MAX_ATTEMPTS,
+  FINOO_PAYOUT_QUEUE,
+  payoutJobBatchId,
+  payoutJobGroups,
+  type FinooPayoutJobPayload,
+} from '../lib/payoutQueue'
 
 export const metadata: WorkerMeta = {
   queue: FINOO_PAYOUT_QUEUE,
@@ -11,7 +17,7 @@ export const metadata: WorkerMeta = {
   concurrency: 3,
 }
 
-export default async function handle(job: QueuedJob<FinooPayoutJobPayload>, _context: JobContext): Promise<void> {
+export default async function handle(job: QueuedJob<FinooPayoutJobPayload>, context: JobContext): Promise<void> {
   const container = await createRequestContainer()
   const payload = job.payload
   const progressService = container.resolve('progressService') as ProgressService
@@ -23,38 +29,75 @@ export default async function handle(job: QueuedJob<FinooPayoutJobPayload>, _con
   try {
     await progressService.startJob(payload.progressJobId, progressContext)
     const commandBus = container.resolve('commandBus') as CommandBus
-    const { result } = await commandBus.execute<Record<string, unknown>, FinooAffiliatePayout>(
-      'finoo_affiliates.payout.create',
-      {
-        input: {
-          paymentReference: payload.paymentReference,
-          affiliateUpdatedAt: payload.affiliateUpdatedAt,
-          transactions: payload.transactions,
-          tenantId: payload.tenantId,
-          organizationId: payload.organizationId,
+    const groups = payoutJobGroups(payload)
+    const batchId = payoutJobBatchId(payload)
+    let result: {
+      payouts: FinooAffiliatePayout[]
+      paymentReferences: string[]
+    }
+    if (batchId) {
+      const executed = await commandBus.execute<Record<string, unknown>, typeof result>(
+        'finoo_affiliates.payout_batch.create',
+        {
+          input: {
+            batchId,
+            groups,
+            tenantId: payload.tenantId,
+            organizationId: payload.organizationId,
+          },
+          ctx: {
+            container,
+            auth: null,
+            organizationScope: null,
+            selectedOrganizationId: payload.organizationId,
+            organizationIds: [payload.organizationId],
+            systemActor: true,
+          },
         },
-        ctx: {
-          container,
-          auth: null,
-          organizationScope: null,
-          selectedOrganizationId: payload.organizationId,
-          organizationIds: [payload.organizationId],
-          systemActor: true,
+      )
+      result = executed.result
+    } else {
+      if (groups.length !== 1) throw new Error('[internal] Legacy payout job must contain exactly one group')
+      const executed = await commandBus.execute<Record<string, unknown>, FinooAffiliatePayout>(
+        'finoo_affiliates.payout.create',
+        {
+          input: {
+            ...groups[0],
+            tenantId: payload.tenantId,
+            organizationId: payload.organizationId,
+          },
+          ctx: {
+            container,
+            auth: null,
+            organizationScope: null,
+            selectedOrganizationId: payload.organizationId,
+            organizationIds: [payload.organizationId],
+            systemActor: true,
+          },
         },
-      },
-    )
+      )
+      result = {
+        payouts: [executed.result],
+        paymentReferences: [executed.result.paymentReference],
+      }
+    }
+    const transactionCount = groups.reduce((total, group) => total + group.transactions.length, 0)
     await progressService.updateProgress(payload.progressJobId, {
-      totalCount: payload.transactions.length,
-      processedCount: payload.transactions.length,
+      totalCount: transactionCount,
+      processedCount: transactionCount,
     }, progressContext)
     await progressService.completeJob(payload.progressJobId, {
-      resultSummary: { payoutId: result.id, paymentReference: result.paymentReference },
+      resultSummary: {
+        payoutIds: result.payouts.map((payout) => payout.id),
+        paymentReferences: result.paymentReferences,
+      },
     }, progressContext)
   } catch (error) {
-    await progressService.failJob(payload.progressJobId, {
-      errorMessage: error instanceof Error ? error.message : 'Affiliate payout creation failed',
-      errorStack: error instanceof Error ? error.stack?.slice(0, 10_000) : undefined,
-    }, progressContext)
+    if (context.attemptNumber >= FINOO_PAYOUT_MAX_ATTEMPTS) {
+      await progressService.failJob(payload.progressJobId, {
+        errorMessage: payload.failureMessage ?? 'Affiliate payout creation failed',
+      }, progressContext)
+    }
     throw error
   }
 }
