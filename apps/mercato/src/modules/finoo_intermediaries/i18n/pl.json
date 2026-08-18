@@ -85,6 +85,10 @@
       "intermediary": "Pośrednik",
       "selectIntermediary": "Wybierz pośrednika",
       "blockedSummary": "Nie można przypisać {count} spraw. Usuń je z wyboru lub przenieś do właściwego etapu.",
+      "blockedReason": {
+        "ineligibleStage": "Przenieś tę sprawę do etapu Sent To Partners przed przypisaniem pośrednika.",
+        "notFound": "Ta sprawa jest niedostępna lub znajduje się poza zakresem Twojej organizacji."
+      },
       "unavailableDeal": "Niedostępna sprawa",
       "currentUnknown": "Obecny pośrednik",
       "saving": "Uruchamianie…",

@@ -77,10 +77,13 @@ export default function PayoutPreviewDialog({
 }) {
   const t = useT()
   const [busy, setBusy] = React.useState(false)
+  const busyRef = React.useRef(false)
   const [error, setError] = React.useState<string | null>(null)
   const { runMutation, retryLastMutation } = useGuardedMutation({ contextId: 'finoo-affiliate-payout-confirm' })
 
   const confirm = React.useCallback(async () => {
+    if (busyRef.current) return
+    busyRef.current = true
     setBusy(true)
     setError(null)
     try {
@@ -97,6 +100,7 @@ export default function PayoutPreviewDialog({
     } catch (caught) {
       setError(payoutErrorMessage(caught, t))
     } finally {
+      busyRef.current = false
       setBusy(false)
     }
   }, [onComplete, preview.batchId, preview.groups, retryLastMutation, runMutation, t])

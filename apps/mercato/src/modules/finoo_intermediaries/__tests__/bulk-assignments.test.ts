@@ -58,4 +58,11 @@ describe('bulk intermediary assignment contracts', () => {
     expect(client).toContain("useSearchParams()")
     expect(client).toContain("searchParams.get('dealIds')")
   })
+
+  it('uses the DI-aware optimistic-lock guard for every mutable record', () => {
+    const command = readFileSync(resolve(process.cwd(), 'src/modules/finoo_intermediaries/commands/bulk-assignments.ts'), 'utf8')
+
+    expect(command).toContain('enforceCommandOptimisticLockWithGuards(ctx.container')
+    expect(command).not.toContain('assertOptimisticLock(')
+  })
 })

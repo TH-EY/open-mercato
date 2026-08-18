@@ -85,6 +85,10 @@
       "intermediary": "Intermediary",
       "selectIntermediary": "Select intermediary",
       "blockedSummary": "{count} Deals cannot be assigned. Remove them or move them to the eligible stage.",
+      "blockedReason": {
+        "ineligibleStage": "Move this Deal to Sent To Partners before assigning an intermediary.",
+        "notFound": "This Deal is unavailable or outside your organization scope."
+      },
       "unavailableDeal": "Unavailable Deal",
       "currentUnknown": "Current intermediary",
       "saving": "Starting…",

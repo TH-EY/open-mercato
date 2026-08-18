@@ -3,7 +3,7 @@ import { LockMode, UniqueConstraintViolationException } from '@mikro-orm/core'
 import type { EntityManager, FilterQuery } from '@mikro-orm/postgresql'
 import { registerCommand, type CommandHandler } from '@open-mercato/shared/lib/commands'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
-import { assertOptimisticLock } from '@open-mercato/shared/lib/crud/optimistic-lock-command'
+import { enforceCommandOptimisticLockWithGuards } from '@open-mercato/shared/lib/crud/optimistic-lock-command'
 import {
   FinooIntermediaryAssignment,
   FinooIntermediaryAssignmentBatch,
@@ -161,11 +161,12 @@ export const bulkAssignIntermediaryCommand: CommandHandler<unknown, FinooInterme
         if (deal.pipelineId !== dependencies.pipelineId || deal.pipelineStageId !== dependencies.stageId) {
           throw new CrudHttpError(422, { error: 'Deal is not in the eligible stage', code: 'ineligible_stage' })
         }
-        assertOptimisticLock({
+        await enforceCommandOptimisticLockWithGuards(ctx.container, {
           resourceKind: 'customers.deal',
           resourceId: deal.id,
           expected: expected.updatedAt,
           current: deal.updatedAt,
+          request: ctx.request,
         })
 
         const assignment = await em.findOne(FinooIntermediaryAssignment, {
@@ -177,11 +178,12 @@ export const bulkAssignIntermediaryCommand: CommandHandler<unknown, FinooInterme
         if (!assignment && expected.assignmentId) throw conflict('assignment_removed')
         if (assignment && assignment.id !== expected.assignmentId) throw conflict('assignment_changed')
         if (assignment) {
-          assertOptimisticLock({
+          await enforceCommandOptimisticLockWithGuards(ctx.container, {
             resourceKind: 'finoo_intermediaries.assignment',
             resourceId: assignment.id,
             expected: expected.assignmentUpdatedAt,
             current: assignment.updatedAt,
+            request: ctx.request,
           })
           result.assignmentIds.push(assignment.id)
           if (assignment.intermediaryCustomerUserId === input.intermediaryCustomerUserId) {

@@ -62,6 +62,7 @@ export default function BulkAssignmentClient() {
   const [error, setError] = React.useState<string | null>(null)
   const [progressJobId, setProgressJobId] = React.useState<string | null>(null)
   const progressJobIdRef = React.useRef<string | null>(null)
+  const submitInFlightRef = React.useRef(false)
   const progress = useProgressPoll()
   const { runMutation, retryLastMutation } = useGuardedMutation({
     contextId: 'finoo_intermediaries.bulk-assignment',
@@ -88,6 +89,7 @@ export default function BulkAssignmentClient() {
   const handleTerminalProgress = React.useCallback((job: ProgressJob) => {
     if (job.id !== progressJobIdRef.current) return
     progressJobIdRef.current = null
+    submitInFlightRef.current = false
     setProgressJobId(null)
     if (job.status === 'completed') {
       window.location.assign('/backend/customers/deals')
@@ -136,7 +138,8 @@ export default function BulkAssignmentClient() {
   const target = preflight?.intermediaries.find((intermediary) => intermediary.id === targetId) ?? null
 
   async function submit() {
-    if (!preflight || !targetId || blockedCount > 0) return
+    if (submitInFlightRef.current || saving || progressJobIdRef.current || !preflight || !targetId || blockedCount > 0) return
+    submitInFlightRef.current = true
     if (reassignCount > 0) {
       const accepted = await confirm({
         title: t('finoo_intermediaries.bulk.confirm.title', 'Reassign selected Deals?'),
@@ -146,7 +149,10 @@ export default function BulkAssignmentClient() {
         }),
         variant: 'destructive',
       })
-      if (!accepted) return
+      if (!accepted) {
+        submitInFlightRef.current = false
+        return
+      }
     }
     setSaving(true)
     setError(null)
@@ -192,7 +198,10 @@ export default function BulkAssignmentClient() {
         flash(message, 'error')
       }
     } finally {
-      if (!queued) setSaving(false)
+      if (!queued) {
+        submitInFlightRef.current = false
+        setSaving(false)
+      }
     }
   }
 
@@ -237,6 +246,13 @@ export default function BulkAssignmentClient() {
             <div className="min-w-0">
               <p className="truncate text-sm font-medium">{deal.name ?? t('finoo_intermediaries.bulk.unavailableDeal', 'Unavailable Deal')}</p>
               {deal.state === 'available' && deal.assignment ? <p className="truncate text-xs text-muted-foreground">{deal.assignment.intermediaryDisplayName ?? t('finoo_intermediaries.bulk.currentUnknown', 'Current intermediary')}</p> : null}
+              {deal.blockedReason ? (
+                <p className="mt-1 text-xs text-status-danger-text">
+                  {deal.blockedReason === 'ineligible_stage'
+                    ? t('finoo_intermediaries.bulk.blockedReason.ineligibleStage', 'Move this Deal to Sent To Partners before assigning an intermediary.')
+                    : t('finoo_intermediaries.bulk.blockedReason.notFound', 'This Deal is unavailable or outside your organization scope.')}
+                </p>
+              ) : null}
             </div>
             <StatusBadge variant={outcomeMap[outcome]}>{t(`finoo_intermediaries.bulk.outcome.${outcome}`, outcome)}</StatusBadge>
           </div>
