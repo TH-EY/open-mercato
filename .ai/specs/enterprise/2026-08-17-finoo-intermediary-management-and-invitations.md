@@ -327,7 +327,7 @@ Error classes:
 
 ## UI/UX
 
-Backend route: `/backend/finoo-intermediaries/intermediaries`. Metadata requires auth plus `finoo_intermediaries.view`. A stable `Intermediaries` navigation item is injected into the main Customers group and is gated by the same view feature. The page is one primary `Page`/`PageHeader`/`PageBody` surface with a `DataTable` using stable `entityId` and `extensionTableId`; it does not add nested dashboard cards or a detail route.
+Backend route: `/backend/finoo-intermediaries/intermediaries`. Metadata requires auth plus `finoo_intermediaries.view`. A stable `Intermediaries` navigation item is injected into the main Customers group and is gated by the same view feature. The page follows the canonical list structure `Page` → `PageBody` → `DataTable`, with the title and conditional Invite action owned by the DataTable header. It uses stable `entityId` and `extensionTableId`; it does not add a standalone `PageHeader`, nested dashboard cards, or a detail route.
 
 Columns:
 
@@ -671,6 +671,11 @@ None identified after the readiness corrections. The fresh-context scope review 
 **Fully compliant at design level: ready for implementation after the task-bound branch/baseline read-back.** This authorizes the approved private implementation workflow, but not deployment before implementation/test/review gates and not any upstream contribution or public PR.
 
 ## Changelog
+
+### 2026-08-18 — THOM-102
+
+- Aligned the Intermediaries directory contract with canonical Open Mercato list pages by moving the title and Invite action into the DataTable header.
+- Preserved the existing search, status filter, cursor pagination, lifecycle actions, permissions, and stable DataTable extension contracts.
 
 ### 2026-08-17
 
