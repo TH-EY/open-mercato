@@ -306,6 +306,7 @@ export const searchConfig: SearchModuleConfig = {
   entities: [
     {
       entityId: 'catalog:catalog_product',
+      aclFeatures: ['catalog.products.view'],
       enabled: true,
       priority: 10,
       buildSource: async (ctx) => {
@@ -387,6 +388,7 @@ export const searchConfig: SearchModuleConfig = {
     },
     {
       entityId: 'catalog:catalog_product_variant',
+      aclFeatures: ['catalog.products.view'],
       enabled: true,
       priority: 8,
       buildSource: async (ctx) => {
@@ -415,6 +417,7 @@ export const searchConfig: SearchModuleConfig = {
     },
     {
       entityId: 'catalog:catalog_product_category',
+      aclFeatures: ['catalog.categories.view'],
       enabled: true,
       priority: 7,
       buildSource: async (ctx) => {
@@ -439,6 +442,7 @@ export const searchConfig: SearchModuleConfig = {
     },
     {
       entityId: 'catalog:catalog_offer',
+      aclFeatures: ['sales.channels.manage'],
       enabled: true,
       priority: 7,
       buildSource: async (ctx) => {
@@ -465,6 +469,7 @@ export const searchConfig: SearchModuleConfig = {
     },
     {
       entityId: 'catalog:catalog_product_tag',
+      aclFeatures: ['catalog.products.view'],
       enabled: true,
       priority: 5,
       buildSource: async (ctx) => {
@@ -486,6 +491,7 @@ export const searchConfig: SearchModuleConfig = {
     },
     {
       entityId: 'catalog:catalog_price_kind',
+      aclFeatures: ['catalog.settings.manage'],
       enabled: true,
       priority: 4,
       buildSource: async (ctx) => {
@@ -509,6 +515,7 @@ export const searchConfig: SearchModuleConfig = {
     },
     {
       entityId: 'catalog:catalog_product_unit_conversion',
+      aclFeatures: ['catalog.products.view'],
       enabled: true,
       priority: 3,
       buildSource: async (ctx) => {
@@ -537,6 +544,7 @@ export const searchConfig: SearchModuleConfig = {
     },
     {
       entityId: 'catalog:catalog_option_schema_template',
+      aclFeatures: ['catalog.products.view'],
       enabled: true,
       priority: 4,
       buildSource: async (ctx) => {
