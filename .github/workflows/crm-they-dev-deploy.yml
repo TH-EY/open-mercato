@@ -233,7 +233,7 @@ jobs:
           DB_POOL_ACQUIRE_TIMEOUT=60000
           DATA_SYNC_QUEUE_CONCURRENCY=1
           OPENROUTER_API_KEY=${openrouter_api_key}
-          MCP_SERVER_API_KEY= ${mcp_server_api_key}
+          MCP_SERVER_API_KEY=${mcp_server_api_key}
           OM_AI_CUSTOMERS_PROVIDER=openrouter
           OM_AI_CUSTOMERS_MODEL=meta-llama/llama-3.3-70b-instruct
           OM_AI_CATALOG_PROVIDER=openrouter

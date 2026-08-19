@@ -66,6 +66,7 @@ services:
       OM_AI_CATALOG_MODEL: ${OM_AI_CATALOG_MODEL:-}
       OPENCODE_URL: ${OPENCODE_URL:-http://opencode:4096}
       MCP_URL: ${MCP_URL:-https://crm.they.dev}
+      OM_HUB_OAUTH_STATE_KEY: ${OM_HUB_OAUTH_STATE_KEY:-}
     depends_on:
       redis:
         condition: service_healthy
