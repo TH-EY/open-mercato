@@ -51,7 +51,7 @@ flowchart LR
 
 - Scope comes only from `OM_FINOO_APPLICATION_TENANT_ID` and `OM_FINOO_APPLICATION_ORGANIZATION_ID`.
 - Integration `finoo_application` owns enabled/revoked state and encrypted `signingSecret`. Unavailable or revoked configuration fails before writes.
-- `finoo_applications` owns auth, sanitization, intake/outbox, retries, projection order, identity bindings, mapping, warnings, and retention.
+- `finoo_applications` owns auth, sanitization, intake/outbox, retries, projection order, identity bindings, mapping, and warnings.
 - Customer commands own CRM side effects. Additive optional create IDs are system-only recovery pointers.
 - Optional affiliate validation uses a scope-aware service via `tryResolve`.
 - No full-payload persistent event, lead UI, new ACL, NovaLend call, or automatic stage after `Submitted`.
@@ -91,7 +91,7 @@ HMAC input is the ASCII prefix `<message-id>.<timestamp>.` followed by exact raw
 
 The route inserts once transactionally. Duplicate success requires matching digest and repairs delivery. Enqueue after commit is best-effort. Queue payload is only `{ intakeId, tenantId, organizationId }`. Earlier failures remain `retrying`; `failed` is terminal only after retry exhaustion. A scheduled reconciler re-enqueues pending/due/expired-lease rows. Locks and compare-and-set leasing prevent concurrent projection.
 
-Successful intake payload is pruned after 30 days and terminal-failure payload after 90 days. Queue/dead-letter contains no PII. The current implementation nulls the encrypted intake payload on those schedules. A broader data-subject erasure policy for projection, identity-binding and consent-evidence rows is a production rollout decision because those rows also provide duplicate-prevention and legal evidence; no destructive behavior is inferred in code.
+Queue/dead-letter contains no PII. All encrypted intake payloads, projections, identity bindings and consent evidence are retained until the client approves an explicit retention and data-subject erasure policy. No scheduled deletion or payload pruning is registered in the current implementation.
 
 ## Projection and recovery
 
@@ -129,14 +129,14 @@ Before projection, require enabled tenant encryption, recoverable DEK, and `conf
 6. Draft/final/disqualified, duplicate/stale/conflict, one graph.
 7. Failure after each command phase and concurrent messages recover reserved IDs.
 8. Cross-scope, guessed lead ID, unrelated identity, optional affiliate unavailable/unknown.
-9. Trusted consent/integrity and retention/deletion.
+9. Trusted consent/integrity and retention without scheduled deletion.
 
 Runtime QA uses signed synthetic calls and exact-SHA deployment, raw-DB/application read-backs, headed Created/Submitted/Closed UI, canary search, and zero-residual cleanup. Caller handoff documents exact signing/retry/limit/string-lead/trusted-consent/no-browser/token rules without secrets or PII.
 
 ## Implemented verification
 
 - Seven unit suites cover exact-byte signing, UTF-8/body limits, schema stripping, consent versioning, route status separation, revocation, mandatory limiter, trusted-proxy IP fail-closed, encryption-map fail-closed, duplicate repair, durable retry terminality, crash lease and dispatch recovery.
-- `TC-FINOO-APP-001` uses the repository-managed ephemeral environment and real Postgres, booted HTTP route discovery, module bootstrap, encrypted integration credentials, tenant encryption, local durable queue and customer commands. It covers draft -> final refresh, disqualified -> Closed, stale/terminal no-op warnings, digest duplicate/conflict, concurrent same-lead delivery with one Company/Person/Deal graph, unrelated and foreign-null identity bindings, changed-NIP non-overwrite, recovery of a source-owned representative after a partial create, and faithful Company/Person/Deal partial-core states that preserve the reserved core ID while removing projection/binding, custom-field and audit-event side effects before normal queue recovery. It also covers dictionary and phone-prefix mapping, optional affiliate unavailable/unknown, real CLI replay -> reconciler -> queue success, cross-scope payload stripping, 30-day processed and 90-day failed payload pruning, append-only consent evidence, non-empty audit logs, raw ciphertext canaries and decrypted scoped API read-back.
+- `TC-FINOO-APP-001` uses the repository-managed ephemeral environment and real Postgres, booted HTTP route discovery, module bootstrap, encrypted integration credentials, tenant encryption, local durable queue and customer commands. It covers draft -> final refresh, disqualified -> Closed, stale/terminal no-op warnings, digest duplicate/conflict, concurrent same-lead delivery with one Company/Person/Deal graph, unrelated and foreign-null identity bindings, changed-NIP non-overwrite, recovery of a source-owned representative after a partial create, and faithful Company/Person/Deal partial-core states that preserve the reserved core ID while removing projection/binding, custom-field and audit-event side effects before normal queue recovery. It also covers dictionary and phone-prefix mapping, optional affiliate unavailable/unknown, real CLI replay -> reconciler -> queue success, cross-scope payload stripping, retention of aged processed and failed encrypted payloads, append-only consent evidence, non-empty audit logs, raw ciphertext canaries and decrypted scoped API read-back.
 - Async Redis queue fault injection and production callback execution remain runtime rollout evidence, not local-test substitutes.
 
 ## Production rollout decisions
@@ -145,10 +145,10 @@ Security review rejects overwriting an unrelated Company solely from public NIP.
 
 The immutable consent registry is pinned to the current 2026-08-19 `finoo.pl/apply` application bundle `index-BnFiOo84.js` (SHA-256 `7e72cbeb84185992210acd39a9fae843ccaf351836f36e868809d52f18a4c906`); the ordered server registry itself has SHA-256 `b53f8ffac9d0aaf4b82f3d48951082e1201c1e85ac1c2bbed5dca95edad95c3c`. It maps the current BIK, BIG InfoMonitor and KRD clauses (`jdg1..jdg3`, `legal1..legal2`) and keeps application-contact consent separate from optional FINOO.PL and partner marketing channels. Legal/business approval of this exact version, or an approved successor registry, is required before production consent evidence is treated as authoritative.
 
-Production rollout also requires a decision on data-subject erasure for projection/binding/evidence rows. Until then, scheduled encrypted-payload pruning is implemented, but THOM-104 remains on rollout HOLD rather than inventing destructive retention behavior.
+The client decision for the current rollout is to retain all encrypted intake payloads, projections, identity bindings and consent evidence until explicit retention and data-subject erasure periods are agreed. The module therefore registers no retention schedule and performs no automatic deletion.
 
 ## Changelog
 
 ### 2026-08-18
 
-- Replaced unsafe shared-webhook design after architecture/security review with private transactional intake/outbox, fixed scope/revocation, identifier-only queue, retry reconciliation, identity ownership, encryption preflight, consent integrity, and retention.
+- Replaced unsafe shared-webhook design after architecture/security review with private transactional intake/outbox, fixed scope/revocation, identifier-only queue, retry reconciliation, identity ownership, encryption preflight, consent integrity, and explicit no-deletion retention.

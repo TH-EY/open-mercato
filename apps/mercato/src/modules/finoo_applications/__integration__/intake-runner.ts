@@ -13,7 +13,6 @@ import { FinooApplicationIntake } from '../data/entities'
 import { FINOO_APPLICATION_INTEGRATION_ID } from '../integration'
 import { projectFinooApplication } from '../lib/projector'
 import reconcile from '../workers/reconcile'
-import prune from '../workers/prune'
 import project from '../workers/project'
 
 const action = process.argv[2]
@@ -150,9 +149,8 @@ async function main(): Promise<void> {
     : action === 'diagnose' ? await diagnose()
       : action === 'submit' ? await submit()
         : action === 'reconcile' ? await runScopedWorker(reconcile)
-          : action === 'prune' ? await runScopedWorker(prune)
-            : action === 'project-once' ? await projectOnce()
-              : action === 'project-without-affiliate' ? await projectWithoutAffiliate()
+          : action === 'project-once' ? await projectOnce()
+            : action === 'project-without-affiliate' ? await projectWithoutAffiliate()
         : null
   if (!result) throw new Error('integration_action_invalid')
   process.stdout.write(`FINOO_INTAKE_RESULT ${JSON.stringify(result)}\n`)

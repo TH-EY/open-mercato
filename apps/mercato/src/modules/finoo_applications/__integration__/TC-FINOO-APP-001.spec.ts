@@ -1058,24 +1058,19 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
       `update finoo_application_intakes set processed_at=now() - interval '31 days' where id=$1`,
       [retrySubmission.body.intakeId],
     )
-    expect(runIntakeHelper(scenario, ['prune'])).toMatchObject({ ok: true })
-    const pruned = await queryDatabase<{ payload_json: string | null }>(
-      'select payload_json::text as payload_json from finoo_application_intakes where id=$1',
-      [retrySubmission.body.intakeId],
-    )
-    expect(pruned).toEqual([{ payload_json: null }])
-
     await queryDatabase(
       `update finoo_application_intakes set state='failed', processed_at=null,
          updated_at=now() - interval '91 days' where id=$1`,
       [rejected.body.intakeId],
     )
-    expect(runIntakeHelper(scenario, ['prune'])).toMatchObject({ ok: true })
-    const failedPruned = await queryDatabase<{ payload_json: string | null }>(
-      'select payload_json::text as payload_json from finoo_application_intakes where id=$1',
-      [rejected.body.intakeId],
+    expect(runIntakeHelper(scenario, ['reconcile'])).toMatchObject({ ok: true })
+    const retainedPayloads = await queryDatabase<{ id: string; payload_json: string | null }>(
+      `select id::text, payload_json::text as payload_json
+       from finoo_application_intakes where id in ($1, $2) order by id`,
+      [retrySubmission.body.intakeId, rejected.body.intakeId],
     )
-    expect(failedPruned).toEqual([{ payload_json: null }])
+    expect(retainedPayloads).toHaveLength(2)
+    expect(retainedPayloads.every((row) => row.payload_json !== null)).toBe(true)
 
     const encryptedIdentityRow = await queryDatabase<{ id: string }>(
       `select id::text from custom_field_values

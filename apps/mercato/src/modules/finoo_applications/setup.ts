@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { ModuleSetupConfig } from '@open-mercato/shared/modules/setup'
 import { FINOO_APPLICATION_RECONCILE_QUEUE } from './workers/reconcile'
-import { FINOO_APPLICATION_PRUNE_QUEUE } from './workers/prune'
 import { isFinooApplicationScope } from './lib/scope'
 
 type SchedulerServiceLike = { register: (registration: Record<string, unknown>) => Promise<void> }
@@ -24,15 +23,6 @@ export const setup: ModuleSetupConfig = {
       scopeType: 'organization', ...scope,
       scheduleType: 'interval', scheduleValue: '1m', timezone: 'UTC',
       targetType: 'queue', targetQueue: FINOO_APPLICATION_RECONCILE_QUEUE, targetPayload: scope,
-      sourceType: 'module', sourceModule: 'finoo_applications', isEnabled: true,
-    })
-    await (container.resolve('schedulerService') as SchedulerServiceLike).register({
-      id: stableScheduleUuid(`finoo_applications:prune:${tenantId}:${organizationId}`),
-      name: 'FINOO application intake retention',
-      description: 'Remove encrypted FINOO payloads after the configured retention period.',
-      scopeType: 'organization', ...scope,
-      scheduleType: 'interval', scheduleValue: '1h', timezone: 'UTC',
-      targetType: 'queue', targetQueue: FINOO_APPLICATION_PRUNE_QUEUE, targetPayload: scope,
       sourceType: 'module', sourceModule: 'finoo_applications', isEnabled: true,
     })
   },

@@ -9,20 +9,20 @@ describe('FINOO application schedules', () => {
     process.env.OM_FINOO_APPLICATION_ORGANIZATION_ID = organizationId
   })
 
-  it('registers reconcile and prune only for the configured FINOO scope', async () => {
+  it('registers only reconciliation for the configured FINOO scope', async () => {
     const register = jest.fn(async () => undefined)
     const container = {
       hasRegistration: (name: string) => name === 'schedulerService',
       resolve: () => ({ register }),
     }
     await setup.seedDefaults?.({ container, tenantId, organizationId } as never)
-    expect(register).toHaveBeenCalledTimes(2)
+    expect(register).toHaveBeenCalledTimes(1)
 
     await setup.seedDefaults?.({
       container,
       tenantId,
       organizationId: '58f7401f-5e59-4ee3-8fbb-042d7c267517',
     } as never)
-    expect(register).toHaveBeenCalledTimes(2)
+    expect(register).toHaveBeenCalledTimes(1)
   })
 })
