@@ -211,8 +211,10 @@ jobs:
           admin_email="$(param_value "/${name_prefix}/runtime/admin-email")"
           openrouter_api_key="$(secret_value "${name_prefix}/openrouter-api-key")"
           mcp_server_api_key="$(secret_value "${name_prefix}/mcpserver_api_key")"
+          om_hub_oauth_state_key="$(secret_value "${name_prefix}/om-hub-oauth-state-key")"
 
           cat > "${workdir}/.env.crm" <<ENV_CRM
+          OM_HUB_OAUTH_STATE_KEY=${om_hub_oauth_state_key}
           APP_IMAGE=${app_image}
           APP_URL=${app_url}
           APP_PORT=${app_port}
