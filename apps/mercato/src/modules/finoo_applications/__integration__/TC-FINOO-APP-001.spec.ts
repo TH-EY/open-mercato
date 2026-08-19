@@ -171,6 +171,8 @@ function prepareEncryption(scenario: Scenario): void {
     },
   )
   expect(output).toContain('"ok":true')
+  expect(output).toMatch(/"coreRowsToEncrypt":[1-9][0-9]*/)
+  expect(output).toMatch(/"coreMapsToEnable":[1-9][0-9]*/)
 }
 
 function replayIntake(scenario: Scenario, intakeId: string): void {
@@ -309,6 +311,7 @@ async function expectSingleProjectionGraph(scenario: Scenario, leadId: string): 
 async function cleanupFinooScenario(scenario: Scenario | null): Promise<void> {
   if (!scenario) return
   const values = [scenario.tenantId, scenario.organizationId]
+  await queryDatabase('delete from action_logs where tenant_id=$1 and organization_id=$2', values)
   await queryDatabase('delete from finoo_application_consent_evidence where tenant_id=$1 and organization_id=$2', values)
   await queryDatabase('delete from finoo_application_identity_bindings where tenant_id=$1 and organization_id=$2', values)
   await queryDatabase('delete from finoo_application_projections where tenant_id=$1 and organization_id=$2', values)
@@ -347,9 +350,34 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
     ])
     process.env.OM_FINOO_APPLICATION_TENANT_ID = scenario.tenantId
     process.env.OM_FINOO_APPLICATION_ORGANIZATION_ID = scenario.organizationId
+    await queryDatabase(
+      `update encryption_maps set is_active=false, updated_at=now()
+       where tenant_id=$1 and organization_id=$2 and entity_id = any($3::text[])`,
+      [scenario.tenantId, scenario.organizationId, [
+        'customers:customer_entity',
+        'customers:customer_person_profile',
+        'customers:customer_company_profile',
+        'customers:customer_deal',
+        'audit_logs:action_log',
+        'finoo_applications:finoo_application_intake',
+      ]],
+    )
+    const backfillActionLogId = randomUUID()
+    await queryDatabase(
+      `insert into action_logs
+         (id, tenant_id, organization_id, command_id, action_label, execution_state, created_at, updated_at)
+       values ($1, $2, $3, $4, $5, 'done', now(), now())`,
+      [backfillActionLogId, scenario.tenantId, scenario.organizationId, `finoo-backfill-fixture:${randomUUID()}`, 'FINOO plaintext backfill fixture'],
+    )
     const companyTypeEntryId = await createFieldManifest(request, scenario)
     await createPipeline(request, scenario)
     prepareEncryption(scenario)
+    const backfilledActionLog = await queryDatabase<{ command_id: string; action_label: string }>(
+      'select command_id, action_label from action_logs where id=$1',
+      [backfillActionLogId],
+    )
+    expect(backfilledActionLog[0]?.command_id).toMatch(/^[^:]+:[^:]+:[^:]+:v1$/)
+    expect(backfilledActionLog[0]?.action_label).toMatch(/^[^:]+:[^:]+:[^:]+:v1$/)
     await configureIntegration(scenario)
 
     const leadId = `lead_${randomUUID().replace(/-/g, '')}`

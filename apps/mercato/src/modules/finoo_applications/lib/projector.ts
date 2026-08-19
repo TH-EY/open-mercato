@@ -14,21 +14,10 @@ import { FinooApplicationConsentEvidence, FinooApplicationIdentityBinding, Finoo
 import type { SanitizedFinooApplicationPayload } from '../data/validators'
 import { FINOO_CONSENT_REGISTRY, FINOO_CONSENT_REGISTRY_VERSION } from './consents'
 import { hasConfiguredLookupHashPepper } from './security'
-import { FINOO_APPLICATION_SENSITIVE_FIELD_SPECS } from './sensitive-fields'
+import { FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS, FINOO_APPLICATION_SENSITIVE_FIELD_SPECS } from './sensitive-fields'
 
 type Scope = { tenantId: string; organizationId: string }
 type OptionalAffiliateService = { findActiveLinkByCodeInScope?: (code: string, scope: Scope) => Promise<unknown | null> }
-
-const REQUIRED_CORE_ENCRYPTION_FIELDS = [
-  { entityId: 'customers:customer_entity', fields: ['display_name', 'primary_email', 'primary_phone'] },
-  { entityId: 'customers:customer_person_profile', fields: ['first_name', 'last_name'] },
-  { entityId: 'customers:customer_company_profile', fields: ['legal_name'] },
-  { entityId: 'customers:customer_deal', fields: ['title', 'description'] },
-  {
-    entityId: 'audit_logs:action_log',
-    fields: ['command_id', 'action_label', 'command_payload', 'snapshot_before', 'snapshot_after', 'changes_json', 'context_json'],
-  },
-] as const
 
 function normalizeDigits(value: string | undefined): string | null {
   const normalized = value?.replace(/\D/g, '') ?? ''
@@ -82,7 +71,7 @@ async function requireSensitiveFieldsEncrypted(
   encryption: TenantDataEncryptionService,
   scope: Scope,
 ): Promise<void> {
-  for (const requirement of REQUIRED_CORE_ENCRYPTION_FIELDS) {
+  for (const requirement of FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS) {
     const encryptedFields = await encryption.getEncryptedFieldNames(requirement.entityId, scope.tenantId, scope.organizationId)
     if (!requirement.fields.every((field) => encryptedFields.includes(field))) {
       throw new Error('core_field_encryption_required')

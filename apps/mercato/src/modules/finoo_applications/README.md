@@ -41,6 +41,10 @@ The canonical consent payload mirrors the current `finoo.pl/apply` UI: `contactC
 - Resolve consent text/code from the server-side version registry, not browser-provided arbitrary strings.
 - Never log the body, signature, NIP, PESEL, identity document, contact values, consent text, or client IP.
 
+## Existing-tenant encryption rollout
+
+Before enabling intake on an existing tenant, run `finoo_applications prepare-encryption` first with `--dry-run`, then with `--apply --confirm <tenant-id>`, and finally repeat the dry run. The command authenticates any existing ciphertext, encrypts plaintext in the exact required core, audit, intake, and custom-field destinations, and only then enables the exact encryption maps. The final dry run must report `plaintextRows: 0`, `coreRowsToEncrypt: 0`, `definitionsToEnable: 0`, `coreMapsToEnable: 0`, no missing definitions, and no identity collisions. A database backup and raw-ciphertext plus decrypted application read-back are required deployment evidence.
+
 ## Synthetic fixture
 
 ```json

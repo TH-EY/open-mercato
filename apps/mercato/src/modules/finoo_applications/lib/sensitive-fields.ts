@@ -21,3 +21,15 @@ export const FINOO_APPLICATION_SENSITIVE_FIELD_SPECS = [
   ...sensitiveSpecs('customers:customer_deal', 'multiline', ['submission_history']),
   ...sensitiveSpecs('customers:customer_deal', 'text', ['nova_lend_status_reason', 'initial_referrer', 'last_referrer', 'landing_page']),
 ] as const
+
+export const FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS = [
+  { entityId: 'customers:customer_entity', fields: ['display_name', 'primary_email', 'primary_phone'] },
+  { entityId: 'customers:customer_person_profile', fields: ['first_name', 'last_name'] },
+  { entityId: 'customers:customer_company_profile', fields: ['legal_name'] },
+  { entityId: 'customers:customer_deal', fields: ['title', 'description'] },
+  {
+    entityId: 'audit_logs:action_log',
+    fields: ['command_id', 'action_label', 'command_payload', 'snapshot_before', 'snapshot_after', 'changes_json', 'context_json'],
+  },
+  { entityId: 'finoo_applications:finoo_application_intake', fields: ['payload_json'] },
+] as const

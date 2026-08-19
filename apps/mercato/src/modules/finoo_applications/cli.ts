@@ -2,17 +2,151 @@ import type { EntityManager } from '@mikro-orm/postgresql'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { encryptCustomFieldValue } from '@open-mercato/shared/lib/encryption/customFieldValues'
-import { decryptWithAesGcm, decryptWithAesGcmStrict, hashForLookup } from '@open-mercato/shared/lib/encryption/aes'
+import { decryptWithAesGcm, decryptWithAesGcmStrict, encryptWithAesGcm, hashForLookup } from '@open-mercato/shared/lib/encryption/aes'
 import type { TenantDataEncryptionService } from '@open-mercato/shared/lib/encryption/tenantDataEncryptionService'
 import type { ModuleCli } from '@open-mercato/shared/modules/registry'
-import { CustomFieldDef, CustomFieldValue } from '@open-mercato/core/modules/entities/data/entities'
+import { CustomFieldDef, CustomFieldValue, EncryptionMap } from '@open-mercato/core/modules/entities/data/entities'
 import { CustomerCompanyProfile, CustomerEntity, CustomerPersonProfile } from '@open-mercato/core/modules/customers/data/entities'
 import { FinooApplicationIdentityBinding, FinooApplicationIntake } from './data/entities'
 import { getFinooApplicationQueue } from './lib/queue'
 import { hasConfiguredLookupHashPepper } from './lib/security'
-import { FINOO_APPLICATION_SENSITIVE_FIELD_SPECS } from './lib/sensitive-fields'
+import { FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS, FINOO_APPLICATION_SENSITIVE_FIELD_SPECS } from './lib/sensitive-fields'
 
 const ENCRYPTED_VALUE_PATTERN = /^[^:]+:[^:]+:[^:]+:v1$/
+
+type RequiredTableSpec = {
+  entityId: string
+  table: string
+  deletedAt: boolean
+  fields: Array<{ column: string; json?: boolean }>
+}
+
+const REQUIRED_TABLE_SPECS: RequiredTableSpec[] = [
+  {
+    entityId: 'customers:customer_entity', table: 'customer_entities', deletedAt: true,
+    fields: [{ column: 'display_name' }, { column: 'primary_email' }, { column: 'primary_phone' }],
+  },
+  {
+    entityId: 'customers:customer_person_profile', table: 'customer_people', deletedAt: false,
+    fields: [{ column: 'first_name' }, { column: 'last_name' }],
+  },
+  {
+    entityId: 'customers:customer_company_profile', table: 'customer_companies', deletedAt: false,
+    fields: [{ column: 'legal_name' }],
+  },
+  {
+    entityId: 'customers:customer_deal', table: 'customer_deals', deletedAt: true,
+    fields: [{ column: 'title' }, { column: 'description' }],
+  },
+  {
+    entityId: 'audit_logs:action_log', table: 'action_logs', deletedAt: true,
+    fields: [
+      { column: 'command_id' }, { column: 'action_label' },
+      { column: 'command_payload', json: true }, { column: 'snapshot_before', json: true },
+      { column: 'snapshot_after', json: true }, { column: 'changes_json', json: true },
+      { column: 'context_json', json: true },
+    ],
+  },
+  {
+    entityId: 'finoo_applications:finoo_application_intake', table: 'finoo_application_intakes', deletedAt: false,
+    fields: [{ column: 'payload_json', json: true }],
+  },
+]
+
+type SqlConnection = { execute: (query: string, params?: unknown[]) => Promise<unknown> }
+
+function requiredMapFields(entityId: string): Array<{ field: string }> {
+  const spec = FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS.find((candidate) => candidate.entityId === entityId)
+  if (!spec) throw new Error('[internal] FINOO required encryption map is missing')
+  return spec.fields.map((field) => ({ field }))
+}
+
+function encryptedValue(value: unknown, dek: string, json: boolean): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'string' && ENCRYPTED_VALUE_PATTERN.test(value)) {
+    try {
+      decryptWithAesGcmStrict(value, dek)
+      return null
+    } catch {
+      throw new Error('[internal] Existing FINOO mapped-field ciphertext failed authentication')
+    }
+  }
+  const serialized = typeof value === 'string' ? value : JSON.stringify(value)
+  const ciphertext = encryptWithAesGcm(serialized, dek).value
+  if (!ciphertext) throw new Error('[internal] FINOO mapped-field encryption failed closed')
+  return json ? JSON.stringify(ciphertext) : ciphertext
+}
+
+async function prepareRequiredMappedFields(
+  em: EntityManager,
+  scope: { tenantId: string; organizationId: string },
+  dek: string,
+  apply: boolean,
+): Promise<number> {
+  const connection = em.getConnection() as unknown as SqlConnection
+  let rowsToEncrypt = 0
+  for (const spec of REQUIRED_TABLE_SPECS) {
+    const columns = spec.fields.map(({ column }) => `"${column}"`).join(', ')
+    const deletedClause = spec.deletedAt ? ' and deleted_at is null' : ''
+    const result = await connection.execute(
+      `select "id", ${columns} from "${spec.table}" where tenant_id = ? and organization_id = ?${deletedClause}`,
+      [scope.tenantId, scope.organizationId],
+    )
+    const rows = Array.isArray(result) ? result as Array<Record<string, unknown>> : []
+    for (const row of rows) {
+      const updates: Array<{ column: string; value: string }> = []
+      for (const field of spec.fields) {
+        const next = encryptedValue(row[field.column], dek, field.json === true)
+        if (next !== null) updates.push({ column: field.column, value: next })
+      }
+      if (!updates.length) continue
+      rowsToEncrypt += 1
+      if (!apply) continue
+      await connection.execute(
+        `update "${spec.table}" set ${updates.map(({ column }) => `"${column}" = ?`).join(', ')} where "id" = ?`,
+        [...updates.map(({ value }) => value), row.id],
+      )
+    }
+  }
+  return rowsToEncrypt
+}
+
+async function requiredMapsToEnable(
+  em: EntityManager,
+  scope: { tenantId: string; organizationId: string },
+): Promise<number> {
+  const existing = await em.find(EncryptionMap, {
+    ...scope,
+    entityId: { $in: FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS.map(({ entityId }) => entityId) },
+    deletedAt: null,
+  })
+  return FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS.filter((spec) => {
+    const current = existing.find((candidate) => candidate.entityId === spec.entityId)
+    const currentFields = Array.isArray(current?.fieldsJson)
+      ? current.fieldsJson.map((field) => field.field).sort()
+      : []
+    return !current?.isActive || currentFields.join(',') !== [...spec.fields].sort().join(',')
+  }).length
+}
+
+async function enableRequiredMaps(
+  em: EntityManager,
+  scope: { tenantId: string; organizationId: string },
+): Promise<void> {
+  for (const spec of FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS) {
+    const fieldsJson = requiredMapFields(spec.entityId)
+    const current = await em.findOne(EncryptionMap, { ...scope, entityId: spec.entityId, deletedAt: null })
+    if (current) {
+      current.fieldsJson = fieldsJson
+      current.isActive = true
+      em.persist(current)
+      continue
+    }
+    em.persist(em.create(EncryptionMap, {
+      ...scope, entityId: spec.entityId, fieldsJson, isActive: true, createdAt: new Date(), updatedAt: new Date(),
+    }))
+  }
+}
 
 function option(args: string[], name: string): string | null {
   const index = args.indexOf(`--${name}`)
@@ -81,6 +215,8 @@ const prepareEncryption: ModuleCli = {
       if (!hasConfiguredLookupHashPepper()) {
         throw new Error('[internal] Lookup-hash pepper is unavailable')
       }
+      const coreRowsToEncrypt = await prepareRequiredMappedFields(em, scope, dek.key, false)
+      const coreMapsToEnable = await requiredMapsToEnable(em, scope)
       const definitionsWhere = FINOO_APPLICATION_SENSITIVE_FIELD_SPECS.map(({ entityId, key, kind }) => ({ entityId, key, kind }))
       const valuesWhere = FINOO_APPLICATION_SENSITIVE_FIELD_SPECS.map(({ entityId, key }) => ({ entityId, fieldKey: key }))
       const defs = await em.find(CustomFieldDef, { ...scope, $or: definitionsWhere, isActive: true, deletedAt: null })
@@ -143,6 +279,8 @@ const prepareEncryption: ModuleCli = {
         missingDefinitions: missing,
         definitionsToEnable: defs.filter((def) => (def.configJson as Record<string, unknown> | null)?.encrypted !== true).length,
         plaintextRows: plaintextRows.length,
+        coreRowsToEncrypt,
+        coreMapsToEnable,
         identityCollisions,
       }
       if (missing.length) throw new Error(`[internal] Missing FINOO custom-field definitions: ${missing.join(',')}`)
@@ -154,6 +292,8 @@ const prepareEncryption: ModuleCli = {
         throw new Error(`[internal] FINOO identity collisions require manual resolution: ${identityCollisions.length}`)
       }
       await em.transactional(async (transactionalEm) => {
+        await prepareRequiredMappedFields(transactionalEm, scope, dek.key, true)
+        await enableRequiredMaps(transactionalEm, scope)
         for (const { row, raw } of plaintextRows) {
           const encrypted = await encryptCustomFieldValue(raw, tenantId, encryption)
           if (typeof encrypted !== 'string' || decryptWithAesGcm(encrypted, dek.key) === null) {
@@ -191,6 +331,9 @@ const prepareEncryption: ModuleCli = {
         }
         await transactionalEm.flush()
       })
+      for (const { entityId } of FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS) {
+        await encryption.invalidateMap(entityId, tenantId, organizationId)
+      }
       console.log(JSON.stringify({ ok: true, ...result }))
     } finally {
       await (container as unknown as { dispose?: () => Promise<void> }).dispose?.()
