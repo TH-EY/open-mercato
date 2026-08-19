@@ -238,6 +238,8 @@ jobs:
           OM_AI_CUSTOMERS_MODEL=meta-llama/llama-3.3-70b-instruct
           OM_AI_CATALOG_PROVIDER=openrouter
           OM_AI_CATALOG_MODEL=meta-llama/llama-3.3-70b-instruct
+          OM_GMAIL_PUBSUB_TOPIC=projects/crm-they-dev/topics/gmail
+          OM_GMAIL_PUBSUB_AUDIENCE=https://crm.they.dev/api/communication_channels/webhooks/gmail
           ENV_CRM
 
           echo "Prepared checkout:"
