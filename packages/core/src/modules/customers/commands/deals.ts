@@ -46,8 +46,10 @@ import { E } from '#generated/entities.ids.generated'
 import { findWithDecryption, findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { isMissingDealStageTransitionTable, warnMissingDealStageTransitionTable } from '../lib/dealStageTransitionTable'
 import { createLogger } from '@open-mercato/shared/lib/logger'
+import { z } from 'zod'
 
 const logger = createLogger('customers')
+const dealSystemCreateSchema = dealCreateSchema.extend({ systemDealId: z.string().uuid().optional() })
 
 const DEAL_ENTITY_ID = 'customers:customer_deal'
 const dealCrudIndexer: CrudIndexerConfig<CustomerDeal> = {
@@ -453,9 +455,12 @@ async function syncDealCompanies(
 const createDealCommand: CommandHandler<DealCreateInput, { dealId: string }> = {
   id: 'customers.deals.create',
   async execute(rawInput, ctx) {
-    const { parsed, custom } = parseWithCustomFields(dealCreateSchema, rawInput)
+    const { parsed, custom } = parseWithCustomFields(dealSystemCreateSchema, rawInput)
     ensureTenantScope(ctx, parsed.tenantId)
     ensureOrganizationScope(ctx, parsed.organizationId)
+    if (parsed.systemDealId && !ctx.systemActor) {
+      throw new Error('[internal] Explicit Deal IDs are restricted to system commands')
+    }
 
     const em = (ctx.container.resolve('em') as EntityManager).fork()
     const normalizedTransitionAuthorUserId = normalizeAuthorUserId(null, ctx.auth)
@@ -487,6 +492,7 @@ const createDealCommand: CommandHandler<DealCreateInput, { dealId: string }> = {
       },
       async () => {
         deal = em.create(CustomerDeal, {
+          ...(parsed.systemDealId ? { id: parsed.systemDealId } : {}),
           organizationId: parsed.organizationId,
           tenantId: parsed.tenantId,
           title: parsed.title,

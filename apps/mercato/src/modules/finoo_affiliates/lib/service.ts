@@ -123,6 +123,16 @@ export function createFinooAffiliateService(em: EntityManager) {
     return findOneWithDecryption(em, FinooAffiliateLink, { code, isActive: true, deletedAt: null }, undefined, {})
   }
 
+  async function findActiveLinkByCodeInScope(code: string, scope: FinooScope): Promise<FinooAffiliateLink | null> {
+    return findOneWithDecryption(
+      em,
+      FinooAffiliateLink,
+      { code, tenantId: scope.tenantId, organizationId: scope.organizationId, isActive: true, deletedAt: null },
+      undefined,
+      scope,
+    )
+  }
+
   async function recordUniqueVisit(link: FinooAffiliateLink, visitorHash: string, now: Date): Promise<boolean> {
     return em.transactional(async (transactionalEm) => {
       await transactionalEm.getConnection().execute(
@@ -197,10 +207,15 @@ export function createFinooAffiliateService(em: EntityManager) {
     getDefaultCommissionStatus,
     requireAllowedDestination,
     findActiveLinkByCode,
+    findActiveLinkByCodeInScope,
     recordUniqueVisit,
     listCommissionStatuses,
     withAvailableAffiliateCode,
   }
 }
 
-export type FinooAffiliateService = ReturnType<typeof createFinooAffiliateService>
+type FinooAffiliateServiceImplementation = ReturnType<typeof createFinooAffiliateService>
+
+export type FinooAffiliateService = Omit<FinooAffiliateServiceImplementation, 'findActiveLinkByCodeInScope'> & {
+  findActiveLinkByCodeInScope?: FinooAffiliateServiceImplementation['findActiveLinkByCodeInScope']
+}
