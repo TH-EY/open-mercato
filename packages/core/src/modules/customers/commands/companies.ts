@@ -55,9 +55,14 @@ import { CUSTOMER_ENTITY_ID, resolveCompanyCustomFieldRouting } from '../lib/cus
 import { CustomFieldValue } from '@open-mercato/core/modules/entities/data/entities'
 import { withAtomicFlush } from '@open-mercato/shared/lib/commands/flush'
 import { resolveRedoSnapshot } from '@open-mercato/shared/lib/commands/redo'
+import { z } from 'zod'
 
 const COMPANY_ENTITY_ID = 'customers:customer_company_profile'
 const INTERACTION_ENTITY_ID = 'customers:customer_interaction'
+const companySystemCreateSchema = companyCreateSchema.extend({
+  systemEntityId: z.string().uuid().optional(),
+  systemProfileId: z.string().uuid().optional(),
+})
 
 const companyCrudIndexer: CrudIndexerConfig<CustomerEntity> = {
   entityType: E.customers.customer_company_profile,
@@ -476,9 +481,12 @@ function normalizeHexColor(value: string | null | undefined): string | null {
 const createCompanyCommand: CommandHandler<CompanyCreateInput, { entityId: string; companyId: string }> = {
   id: 'customers.companies.create',
   async execute(rawInput, ctx) {
-    const { parsed, custom } = parseWithCustomFields(companyCreateSchema, rawInput)
+    const { parsed, custom } = parseWithCustomFields(companySystemCreateSchema, rawInput)
     ensureTenantScope(ctx, parsed.tenantId)
     ensureOrganizationScope(ctx, parsed.organizationId)
+    if ((parsed.systemEntityId || parsed.systemProfileId) && !ctx.systemActor) {
+      throw new Error('[internal] Explicit Company IDs are restricted to system commands')
+    }
 
     const em = (ctx.container.resolve('em') as EntityManager).fork()
     const nextInteractionName = parsed.nextInteraction?.name ? parsed.nextInteraction.name.trim() : null
@@ -487,6 +495,7 @@ const createCompanyCommand: CommandHandler<CompanyCreateInput, { entityId: strin
     const nextInteractionColor = normalizeHexColor(parsed.nextInteraction?.color)
     const primaryPhone = normalizeOptionalString(parsed.primaryPhone)
     const entity = em.create(CustomerEntity, {
+      ...(parsed.systemEntityId ? { id: parsed.systemEntityId } : {}),
       organizationId: parsed.organizationId,
       tenantId: parsed.tenantId,
       kind: 'company',
@@ -509,6 +518,7 @@ const createCompanyCommand: CommandHandler<CompanyCreateInput, { entityId: strin
     })
 
     const profile = em.create(CustomerCompanyProfile, {
+      ...(parsed.systemProfileId ? { id: parsed.systemProfileId } : {}),
       organizationId: parsed.organizationId,
       tenantId: parsed.tenantId,
       entity,

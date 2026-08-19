@@ -61,8 +61,13 @@ import {
   summarizePersonCompanies,
   syncLegacyPrimaryCompanyLink,
 } from '../lib/personCompanies'
+import { z } from 'zod'
 
 const INTERACTION_ENTITY_ID = 'customers:customer_interaction'
+const personSystemCreateSchema = personCreateSchema.extend({
+  systemEntityId: z.string().uuid().optional(),
+  systemProfileId: z.string().uuid().optional(),
+})
 
 type PersonAddressSnapshot = {
   id: string
@@ -610,9 +615,12 @@ function buildPersonGraph(
 const createPersonCommand: CommandHandler<PersonCreateInput, { entityId: string; personId: string }> = {
   id: 'customers.people.create',
   async execute(rawInput, ctx) {
-    const { parsed, custom } = parseWithCustomFields(personCreateSchema, rawInput)
+    const { parsed, custom } = parseWithCustomFields(personSystemCreateSchema, rawInput)
     ensureTenantScope(ctx, parsed.tenantId)
     ensureOrganizationScope(ctx, parsed.organizationId)
+    if ((parsed.systemEntityId || parsed.systemProfileId) && !ctx.systemActor) {
+      throw new Error('[internal] Explicit Person IDs are restricted to system commands')
+    }
 
     const em = (ctx.container.resolve('em') as EntityManager).fork()
     const firstName = parsed.firstName?.trim() ?? ''
@@ -650,6 +658,8 @@ const createPersonCommand: CommandHandler<PersonCreateInput, { entityId: string;
     await withAtomicFlush(em, [
       () => {
         const graph = buildPersonGraph(em, {
+          entityId: parsed.systemEntityId,
+          profileId: parsed.systemProfileId,
           organizationId: parsed.organizationId,
           tenantId: parsed.tenantId,
           displayName,
