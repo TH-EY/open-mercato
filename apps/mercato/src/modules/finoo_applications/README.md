@@ -21,7 +21,9 @@ The receiver must run behind the configured trusted proxy chain and obtain a syn
 
 `leadId` must be a stable server-generated string matching `^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$`. Draft and final submissions reuse the same `leadId` but use a new message ID. Never send a numeric `leadId`.
 
-Every final submission must include the exact current consent registry version in `consentVersion`. The current value is `finoo-apply-2026-08-18-44a3f0bb`. A missing or stale version is rejected with `400`; update the caller only after the receiver's immutable registry has been deployed for the new version.
+Every final submission must include the exact current consent registry version in `consentVersion`. The current value is `finoo-apply-2026-08-19-7e72cbeb`. A missing or stale version is rejected with `400`; update the caller only after the receiver's immutable registry has been deployed for the new version.
+
+The canonical consent payload mirrors the current `finoo.pl/apply` UI: `contactConsent` plus `contactEmail` / `contactSms` / `contactPhone` for application contact, `emailConsent` / `smsConsent` / `telefonConsent` for optional FINOO.PL marketing, `emailConsent2` / `smsConsent2` / `telefonConsent2` for optional Hill Capital partner marketing, `jdgConsent.jdg1..jdg3` for JDG, and `legalConsent.legal1..legal2` for a company. The caller sends only `selected`; arbitrary text, timestamps, usernames and browser IP are rejected or stripped.
 
 ## Retry
 
@@ -44,7 +46,7 @@ Every final submission must include the exact current consent registry version i
 ```json
 {
   "leadId": "synthetic_104_0001",
-  "consentVersion": "finoo-apply-2026-08-18-44a3f0bb",
+  "consentVersion": "finoo-apply-2026-08-19-7e72cbeb",
   "przeszedl_caly_wniosek": "Tak",
   "leadType": "business",
   "name": "Test",
@@ -56,6 +58,14 @@ Every final submission must include the exact current consent registry version i
   "amount": "100000",
   "months": "12",
   "acceptTerms": true,
+  "contactConsent": true,
+  "contactEmail": true,
+  "contactSms": true,
+  "contactPhone": true,
+  "legalConsent": {
+    "legal1": { "selected": true },
+    "legal2": { "selected": true }
+  },
   "kontomatikCompleted": false
 }
 ```

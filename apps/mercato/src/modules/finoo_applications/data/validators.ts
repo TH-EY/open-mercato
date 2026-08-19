@@ -77,6 +77,10 @@ const rawApplicationObjectSchema = z.object({
   country: optionalText(2),
   businessType: z.enum(['jdg', 'company']).optional(),
   arrearsUsZus: formBooleanSchema.optional(),
+  contactConsent: formBooleanSchema.optional(),
+  contactEmail: formBooleanSchema.optional(),
+  contactSms: formBooleanSchema.optional(),
+  contactPhone: formBooleanSchema.optional(),
   emailConsent: formBooleanSchema.optional(),
   smsConsent: formBooleanSchema.optional(),
   telefonConsent: formBooleanSchema.optional(),
@@ -85,14 +89,14 @@ const rawApplicationObjectSchema = z.object({
   smsConsent2: formBooleanSchema.optional(),
   telefonConsent2: formBooleanSchema.optional(),
   jdgConsent: z.object({
-    jdg: consentClauseSchema.optional(),
     jdg1: consentClauseSchema.optional(),
     jdg2: consentClauseSchema.optional(),
-  }).optional(),
+    jdg3: consentClauseSchema.optional(),
+  }).strict().optional(),
   legalConsent: z.object({
-    legal: consentClauseSchema.optional(),
     legal1: consentClauseSchema.optional(),
-  }).optional(),
+    legal2: consentClauseSchema.optional(),
+  }).strict().optional(),
   'NovaLend-propertyCommunity': formBooleanSchema.optional(),
   representatives: representativesInputSchema.optional(),
   kontomatikCompleted: formBooleanSchema.optional(),
@@ -132,6 +136,10 @@ function validateFinalSubmission(
     value.smsConsent,
     value.telefonConsent,
     value.acceptTerms,
+    value.contactConsent,
+    value.contactEmail,
+    value.contactSms,
+    value.contactPhone,
     value.emailConsent2,
     value.smsConsent2,
     value.telefonConsent2,
@@ -182,11 +190,11 @@ export function parseAndSanitizeFinooApplicationPayload(
   const source = input && typeof input === 'object' ? input as Record<string, unknown> : {}
   const jdg = source.jdgConsent && typeof source.jdgConsent === 'object' ? source.jdgConsent as Record<string, unknown> : {}
   const legal = source.legalConsent && typeof source.legalConsent === 'object' ? source.legalConsent as Record<string, unknown> : {}
-  if (!consentClauseMatchesRegistry('jdg', jdg.jdg)
-    || !consentClauseMatchesRegistry('jdg1', jdg.jdg1)
+  if (!consentClauseMatchesRegistry('jdg1', jdg.jdg1)
     || !consentClauseMatchesRegistry('jdg2', jdg.jdg2)
-    || !consentClauseMatchesRegistry('legal', legal.legal)
-    || !consentClauseMatchesRegistry('legal1', legal.legal1)) {
+    || !consentClauseMatchesRegistry('jdg3', jdg.jdg3)
+    || !consentClauseMatchesRegistry('legal1', legal.legal1)
+    || !consentClauseMatchesRegistry('legal2', legal.legal2)) {
     throw new Error('consent_registry_mismatch')
   }
   const parsed = finooApplicationPayloadSchema.parse(input)

@@ -214,8 +214,8 @@ function consentFields(payload: SanitizedFinooApplicationPayload): Record<string
       FINOO_CONSENT_REGISTRY.dataSharingSms,
       FINOO_CONSENT_REGISTRY.dataSharingPhone,
     ]),
-    ...group('jdg_consent', jdgAccepted, [FINOO_CONSENT_REGISTRY.jdg, FINOO_CONSENT_REGISTRY.jdg1, FINOO_CONSENT_REGISTRY.jdg2]),
-    ...group('legal_consent', legalAccepted, [FINOO_CONSENT_REGISTRY.legal, FINOO_CONSENT_REGISTRY.legal1]),
+    ...group('jdg_consent', jdgAccepted, [FINOO_CONSENT_REGISTRY.jdg1, FINOO_CONSENT_REGISTRY.jdg2, FINOO_CONSENT_REGISTRY.jdg3]),
+    ...group('legal_consent', legalAccepted, [FINOO_CONSENT_REGISTRY.legal1, FINOO_CONSENT_REGISTRY.legal2]),
     ...group('nova_lend_property_community_consent', payload['NovaLend-propertyCommunity'], [FINOO_CONSENT_REGISTRY.propertyCommunity]),
   }
 }
@@ -230,17 +230,21 @@ async function recordConsentEvidence(
   if (payload.consentVersion !== FINOO_CONSENT_REGISTRY_VERSION) return
   const decisions: Array<[keyof typeof FINOO_CONSENT_REGISTRY, boolean | undefined]> = [
     ['acceptTerms', payload.acceptTerms],
+    ['contactConsent', payload.contactConsent],
+    ['contactEmail', payload.contactEmail],
+    ['contactSms', payload.contactSms],
+    ['contactPhone', payload.contactPhone],
     ['emailConsent', payload.emailConsent],
     ['smsConsent', payload.smsConsent],
     ['phoneConsent', payload.telefonConsent],
     ['dataSharingEmail', payload.emailConsent2],
     ['dataSharingSms', payload.smsConsent2],
     ['dataSharingPhone', payload.telefonConsent2],
-    ['jdg', payload.jdgConsent?.jdg?.selected],
     ['jdg1', payload.jdgConsent?.jdg1?.selected],
     ['jdg2', payload.jdgConsent?.jdg2?.selected],
-    ['legal', payload.legalConsent?.legal?.selected],
+    ['jdg3', payload.jdgConsent?.jdg3?.selected],
     ['legal1', payload.legalConsent?.legal1?.selected],
+    ['legal2', payload.legalConsent?.legal2?.selected],
     ['propertyCommunity', payload['NovaLend-propertyCommunity']],
   ]
   const acceptedAt = new Date(payload.ingestionMeta.receivedAt)

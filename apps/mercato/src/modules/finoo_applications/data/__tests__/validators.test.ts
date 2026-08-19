@@ -1,4 +1,5 @@
-import { FINOO_CONSENT_REGISTRY, FINOO_CONSENT_REGISTRY_VERSION } from '../../lib/consents'
+import { createHash } from 'node:crypto'
+import { FINOO_CONSENT_REGISTRY, FINOO_CONSENT_REGISTRY_SOURCE, FINOO_CONSENT_REGISTRY_VERSION } from '../../lib/consents'
 import { parseAndSanitizeFinooApplicationPayload } from '../validators'
 
 const metadata = {
@@ -9,6 +10,11 @@ const metadata = {
 }
 
 describe('FINOO application payload sanitization', () => {
+  it('pins the ordered server registry to the reviewed source fingerprint', () => {
+    expect(createHash('sha256').update(JSON.stringify(FINOO_CONSENT_REGISTRY)).digest('hex'))
+      .toBe(FINOO_CONSENT_REGISTRY_SOURCE.registrySha256)
+  })
+
   it('accepts the current consent registry, strips raw evidence/token and keeps only unknown names', () => {
     const parsed = parseAndSanitizeFinooApplicationPayload({
       leadId: 'lead_12345678',
@@ -20,10 +26,12 @@ describe('FINOO application payload sanitization', () => {
       surname: 'Kowalski',
       pesel: '12345678901',
       acceptTerms: '1',
+      contactConsent: '1',
+      contactEmail: true,
       jdgConsent: {
-        jdg: {
+        jdg1: {
           selected: '1',
-          text: FINOO_CONSENT_REGISTRY.jdg.content,
+          text: FINOO_CONSENT_REGISTRY.jdg1.content,
           timestamp: '1999-01-01T00:00:00.000Z',
           username: 'UNTRUSTED_NAME',
         },
@@ -35,7 +43,8 @@ describe('FINOO application payload sanitization', () => {
     expect(JSON.stringify(parsed)).not.toContain('TOKEN_CANARY')
     expect(JSON.stringify(parsed)).not.toContain('SECRET_CANARY')
     expect(JSON.stringify(parsed)).not.toContain('UNTRUSTED_NAME')
-    expect(parsed.jdgConsent?.jdg).toEqual({ selected: true })
+    expect(parsed.jdgConsent?.jdg1).toEqual({ selected: true })
+    expect(parsed).toMatchObject({ contactConsent: true, contactEmail: true })
     expect(parsed.ingestionMeta).toMatchObject({
       receivedAt: metadata.receivedAt,
       sourceIp: metadata.sourceIp,
@@ -47,8 +56,26 @@ describe('FINOO application payload sanitization', () => {
   it('rejects consent text that does not match the signed registry version', () => {
     expect(() => parseAndSanitizeFinooApplicationPayload({
       leadId: 'lead_12345678',
-      jdgConsent: { jdg: { selected: true, text: 'changed text' } },
+      jdgConsent: { jdg1: { selected: true, text: 'changed text' } },
     }, metadata)).toThrow('consent_registry_mismatch')
+  })
+
+  it('accepts current clause decisions without caller-supplied legal text', () => {
+    const parsed = parseAndSanitizeFinooApplicationPayload({
+      leadId: 'lead_12345678',
+      consentVersion: FINOO_CONSENT_REGISTRY_VERSION,
+      legalConsent: { legal1: { selected: true }, legal2: { selected: false } },
+    }, metadata)
+
+    expect(parsed.legalConsent).toEqual({ legal1: { selected: true }, legal2: { selected: false } })
+  })
+
+  it('rejects superseded consent clause names instead of dropping a decision', () => {
+    expect(() => parseAndSanitizeFinooApplicationPayload({
+      leadId: 'lead_12345678',
+      consentVersion: FINOO_CONSENT_REGISTRY_VERSION,
+      jdgConsent: { jdg: { selected: true } },
+    }, metadata)).toThrow()
   })
 
   it('rejects invalid final NIP and PESEL lengths', () => {

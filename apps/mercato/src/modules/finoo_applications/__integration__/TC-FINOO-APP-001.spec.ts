@@ -368,6 +368,14 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
       businessType: 'company',
       amount: '100000',
       acceptTerms: true,
+      contactConsent: true,
+      contactEmail: true,
+      contactSms: false,
+      contactPhone: false,
+      legalConsent: {
+        legal1: { selected: true },
+        legal2: { selected: true },
+      },
       kontomatikToken: 'KONTOMATIK_INTEGRATION_CANARY',
     }
     const draftMessageId = `msg_${randomUUID()}`
@@ -597,7 +605,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
        from finoo_application_consent_evidence where tenant_id=$1 and organization_id=$2`,
       [scenario.tenantId, scenario.organizationId],
     )
-    expect(evidence[0]).toMatchObject({ count: '5', distinct_intakes: '5' })
+    expect(evidence[0]).toMatchObject({ count: '35', distinct_intakes: '5' })
 
     const rejectedLeadId = `rejected_${randomUUID().replace(/-/g, '')}`
     const rejected = await submit(scenario, {
