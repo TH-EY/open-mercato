@@ -1938,7 +1938,6 @@ function buildReusableEnvironment(
   captureScreenshots: boolean,
 ): NodeJS.ProcessEnv {
   const enterpriseModulesFlag = process.env.OM_ENABLE_ENTERPRISE_MODULES ?? 'false'
-  const emailCapturePath = path.resolve(queueBaseDir, '..', 'test-email-capture.jsonl')
   const privateAttachmentsRoot = resolvePrivateAttachmentsRootForQueueBaseDir(queueBaseDir)
   return buildEnvironment({
     DATABASE_URL: databaseUrl,
@@ -1976,12 +1975,10 @@ function buildReusableEnvironment(
     OM_ENABLE_CORS_VALIDATION: 'false',
     OM_DISABLE_EMAIL_DELIVERY: '0',
     OM_ENABLE_TEST_CHANNEL_SEEDING: 'true',
-    OM_TEST_EMAIL_CAPTURE_PATH: process.env.OM_TEST_EMAIL_CAPTURE_PATH ?? emailCapturePath,
     SYSTEM_EMAIL_PROVIDER: '__test_seed__',
     EMAIL_FROM: process.env.EMAIL_FROM ?? 'system@test-seed.local',
     NOTIFICATIONS_EMAIL_FROM: process.env.NOTIFICATIONS_EMAIL_FROM ?? 'notifications@test-seed.local',
     ADMIN_EMAIL: process.env.ADMIN_EMAIL ?? 'admin@test-seed.local',
-    SELF_SERVICE_ONBOARDING_ENABLED: 'true',
     // Register the test-only `push_stub` channel adapter in the reused Playwright
     // process (and any drain/worker child it spawns) so push integration specs can
     // drive real delivery. Production-safe + inert unless a delivery row carries
@@ -3357,12 +3354,10 @@ export async function startEphemeralEnvironment(options: EphemeralRuntimeOptions
       OM_ENABLE_CORS_VALIDATION: 'false',
       OM_DISABLE_EMAIL_DELIVERY: '0',
       OM_ENABLE_TEST_CHANNEL_SEEDING: 'true',
-      OM_TEST_EMAIL_CAPTURE_PATH: process.env.OM_TEST_EMAIL_CAPTURE_PATH ?? path.resolve(EPHEMERAL_QUEUE_BASE_DIR, '..', 'test-email-capture.jsonl'),
       SYSTEM_EMAIL_PROVIDER: '__test_seed__',
       EMAIL_FROM: process.env.EMAIL_FROM ?? 'system@test-seed.local',
       NOTIFICATIONS_EMAIL_FROM: process.env.NOTIFICATIONS_EMAIL_FROM ?? 'notifications@test-seed.local',
       ADMIN_EMAIL: process.env.ADMIN_EMAIL ?? 'admin@test-seed.local',
-      SELF_SERVICE_ONBOARDING_ENABLED: 'true',
       // Register the network-free `push_stub` channel adapter so push integration
       // specs (TC-PUSH-003) can drive the strategy → delivery-row → send-push worker
       // → sendMessage chain end-to-end without a real FCM/APNs/Expo provider. The
@@ -3381,7 +3376,6 @@ export async function startEphemeralEnvironment(options: EphemeralRuntimeOptions
       // Expo's receipt reaper ignores rows younger than 15 minutes by default (it polls a real
       // provider's async receipts). No integration test can wait that out — poll immediately.
       OM_PUSH_RECEIPT_MIN_AGE_MINUTES: process.env.OM_PUSH_RECEIPT_MIN_AGE_MINUTES ?? '0',
-      OM_DISABLE_EMAIL_DELIVERY: '1',
       OM_WEBHOOKS_ALLOW_PRIVATE_URLS: process.env.OM_WEBHOOKS_ALLOW_PRIVATE_URLS ?? '1',
       // Read at build time as well as at runtime, so this block has to carry it:
       // the app build and `yarn start` both run with this environment. See the

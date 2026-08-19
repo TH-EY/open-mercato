@@ -3,7 +3,7 @@
 import { signAudienceJwt } from '@open-mercato/shared/lib/auth/jwt'
 
 const mockCookies = jest.fn()
-const mockFindActiveSessionById = jest.fn()
+const mockFindActiveSessionForClaims = jest.fn()
 const mockValidateUserState = jest.fn()
 
 jest.mock('next/headers', () => ({
@@ -14,7 +14,7 @@ jest.mock('@open-mercato/shared/lib/di/container', () => ({
   createRequestContainer: jest.fn(async () => ({
     resolve: (name: string) => {
       if (name === 'customerSessionService') {
-        return { findActiveSessionById: mockFindActiveSessionById }
+        return { findActiveSessionForClaims: mockFindActiveSessionForClaims }
       }
       return null
     },
@@ -50,7 +50,7 @@ describe('getCustomerAuthFromCookies', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
-    mockFindActiveSessionById.mockResolvedValue({ id: sessionId })
+    mockFindActiveSessionForClaims.mockResolvedValue({ id: sessionId })
     mockValidateUserState.mockResolvedValue({ valid: true, resolvedFeatures: ['portal.dashboard.view'] })
   })
 
@@ -66,7 +66,7 @@ describe('getCustomerAuthFromCookies', () => {
     })
 
     expect(auth).toBeNull()
-    expect(mockFindActiveSessionById).not.toHaveBeenCalled()
+    expect(mockFindActiveSessionForClaims).not.toHaveBeenCalled()
     expect(mockValidateUserState).not.toHaveBeenCalled()
   })
 
@@ -86,7 +86,12 @@ describe('getCustomerAuthFromCookies', () => {
       tenantId,
       orgId: orgA,
     })
-    expect(mockFindActiveSessionById).toHaveBeenCalledWith(sessionId)
+    expect(mockFindActiveSessionForClaims).toHaveBeenCalledWith({
+      sessionId,
+      userId,
+      tenantId,
+      organizationId: orgA,
+    })
     expect(mockValidateUserState).toHaveBeenCalledWith(userId, tenantId, orgA, expect.anything())
   })
 })

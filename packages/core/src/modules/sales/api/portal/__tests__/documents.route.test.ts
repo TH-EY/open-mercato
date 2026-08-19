@@ -9,6 +9,7 @@ const mockEmFindOne = jest.fn()
 const mockEmFind = jest.fn()
 const mockCommandExecute = jest.fn()
 const mockActionLogList = jest.fn()
+const mockEmitEvent = jest.fn(async () => undefined)
 
 const mockEm = {
   findAndCount: mockEmFindAndCount,
@@ -27,6 +28,9 @@ const mockContainer = {
     if (token === 'em') return mockEm
     if (token === 'commandBus') return { execute: mockCommandExecute }
     if (token === 'actionLogService') return { list: mockActionLogList }
+    // fork-only: portal acceptance runs through the shared quoteAcceptance helper,
+    // which publishes the status-change event and notifies the admin.
+    if (token === 'eventBus') return { emitEvent: mockEmitEvent }
     return null
   }),
 }
@@ -134,8 +138,10 @@ function makeQuote(overrides: Partial<SalesQuote> = {}): SalesQuote {
     organizationId: orgId,
     quoteNumber: 'SQ-1',
     status: 'sent',
-    validFrom: new Date('2026-06-01T00:00:00Z'),
-    validUntil: new Date('2026-06-30T00:00:00Z'),
+    // Relative, not absolute: a hardcoded validUntil turns this fixture into a time
+    // bomb that silently flips every acceptance assertion to `expired` once it passes.
+    validFrom: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
     convertedOrderId: null,
     lineItemCount: 1,
     grandTotalGrossAmount: '99.00',

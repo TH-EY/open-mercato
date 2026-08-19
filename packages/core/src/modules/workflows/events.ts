@@ -32,9 +32,6 @@ const events = [
   { id: 'workflows.activity.failed', label: 'Activity Failed', category: 'lifecycle' },
   { id: 'workflows.task.assigned', label: 'Task Assigned', entity: 'task', category: 'lifecycle' },
 
-  // User Tasks
-  { id: 'workflows.task.assigned', label: 'Workflow Task Assigned', entity: 'task', category: 'lifecycle' },
-
   // Event Triggers
   { id: 'workflows.trigger.created', label: 'Trigger Created', entity: 'trigger', category: 'crud' },
   { id: 'workflows.trigger.updated', label: 'Trigger Updated', entity: 'trigger', category: 'crud' },

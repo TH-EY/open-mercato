@@ -31,6 +31,7 @@ export const searchConfig: SearchModuleConfig = {
   entities: [
     {
       entityId: 'projects:project',
+      aclFeatures: ['projects.view'],
       enabled: true,
       priority: 8,
       buildSource: async (ctx) => {
@@ -50,6 +51,7 @@ export const searchConfig: SearchModuleConfig = {
     },
     {
       entityId: 'projects:project_task',
+      aclFeatures: ['projects.view'],
       enabled: true,
       priority: 7,
       buildSource: async (ctx) => {
@@ -70,6 +72,7 @@ export const searchConfig: SearchModuleConfig = {
     },
     {
       entityId: 'projects:project_task_template',
+      aclFeatures: ['projects.templates.manage'],
       enabled: true,
       priority: 6,
       buildSource: async (ctx) => {
@@ -90,6 +93,7 @@ export const searchConfig: SearchModuleConfig = {
     },
     {
       entityId: 'projects:project_template',
+      aclFeatures: ['projects.templates.manage'],
       enabled: true,
       priority: 6,
       buildSource: async (ctx) => {
@@ -108,6 +112,7 @@ export const searchConfig: SearchModuleConfig = {
     },
     {
       entityId: 'projects:project_template_task',
+      aclFeatures: ['projects.templates.manage'],
       enabled: true,
       priority: 5,
       buildSource: async (ctx) => {

@@ -25,7 +25,16 @@ const mockContainer = {
   resolve: jest.fn((token: string) => {
     if (token === 'rbacService') return { userHasAllFeatures: mockUserHasAllFeatures }
     if (token === 'customerInvitationService') return { createInvitation: mockCreateInvitation }
-    if (token === 'em') return {}
+    // fork-only: this fork's admin invite route validates the requested customer
+    // roles up front (scoped to the caller's tenant/organization) before creating
+    // the invitation, so the EM mock must answer that lookup.
+    if (token === 'em') {
+      return {
+        find: jest.fn(async (_entity: unknown, where: Record<string, any>) =>
+          ((where?.id?.$in ?? []) as string[]).map((id) => ({ id })),
+        ),
+      }
+    }
     return null
   }),
 }

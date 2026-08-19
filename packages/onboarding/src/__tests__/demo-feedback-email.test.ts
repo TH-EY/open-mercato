@@ -5,6 +5,14 @@ jest.mock('@open-mercato/shared/lib/email/send', () => ({
   sendEmail: jest.fn((args: unknown) => sendEmailMock(args)),
 }))
 
+// fork-only: this fork's route awaits createRequestContainer() so channel-provider
+// email transports are registered before sendEmail runs (commit "Refactor outbound
+// email through channel providers"). This suite asserts only the outbound email, so
+// the container is stubbed rather than bootstrapped.
+jest.mock('@open-mercato/shared/lib/di/container', () => ({
+  createRequestContainer: jest.fn(async () => ({ resolve: jest.fn() })),
+}))
+
 jest.mock('@open-mercato/core/modules/auth/lib/rateLimitCheck', () => ({
   checkAuthRateLimit: jest.fn((args: unknown) => checkAuthRateLimitMock(args)),
 }))

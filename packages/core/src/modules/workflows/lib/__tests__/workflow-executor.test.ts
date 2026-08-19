@@ -500,7 +500,10 @@ describe('Workflow Executor (Unit Tests)', () => {
         mockInstance,
         'start',
         'end',
-        expect.objectContaining({ userId: 'user-from-metadata' })
+        expect.objectContaining({ userId: 'user-from-metadata' }),
+        // fork-only: the executor forwards the transition id so correlated waits and
+        // rollback errors can name the exact transition.
+        'start-to-end',
       )
     })
 

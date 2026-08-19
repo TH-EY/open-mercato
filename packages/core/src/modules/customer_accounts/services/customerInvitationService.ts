@@ -145,6 +145,9 @@ export class CustomerInvitationService {
     attemptTokenHash: string,
   ): Promise<void> {
     const restoredRoleIds = Array.isArray(snapshot.roleIdsJson) ? [...snapshot.roleIdsJson] : snapshot.roleIdsJson ?? null
+    // Encrypted-at-rest columns are deliberately excluded from this native write —
+    // nativeUpdate bypasses the encryption layer. They are restored through the
+    // managed entity plus flush after the conditional guard below succeeds.
     const affected = await this.em.nativeUpdate(
       CustomerUserInvitation,
       {
@@ -157,7 +160,6 @@ export class CustomerInvitationService {
         expiresAt: { $gt: new Date() },
       } as any,
       {
-        email: snapshot.email,
         emailHash: snapshot.emailHash,
         token: snapshot.token,
         customerEntityId: snapshot.customerEntityId ?? null,
@@ -165,7 +167,6 @@ export class CustomerInvitationService {
         roleIdsJson: restoredRoleIds,
         invitedByUserId: snapshot.invitedByUserId ?? null,
         invitedByCustomerUserId: snapshot.invitedByCustomerUserId ?? null,
-        displayName: snapshot.displayName ?? null,
         expiresAt: new Date(snapshot.expiresAt),
       } as any,
     )
@@ -183,6 +184,7 @@ export class CustomerInvitationService {
     invitation.invitedByCustomerUserId = snapshot.invitedByCustomerUserId ?? null
     invitation.displayName = snapshot.displayName ?? null
     invitation.expiresAt = new Date(snapshot.expiresAt)
+    await this.em.flush()
   }
 
   async cancelInvitationAttempt(invitation: CustomerUserInvitation, attemptTokenHash: string): Promise<boolean> {

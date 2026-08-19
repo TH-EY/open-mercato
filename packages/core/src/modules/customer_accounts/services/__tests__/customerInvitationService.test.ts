@@ -147,7 +147,12 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
     })
 
     const result = await service.acceptInvitation('raw-token', 'Secret123!', 'New User')
-    expect(result).not.toBeNull()
+
+    // fork-only: this fork fails the whole acceptance closed when any invited role
+    // is not resolvable inside the invitation's own organization, rather than
+    // silently dropping it. The #4032 guarantee — a cross-organization role is
+    // never linked — holds a fortiori: no user and no role link is created.
+    expect(result).toBeNull()
 
     const roleFinds = (mockEm.find as jest.Mock).mock.calls.filter((call) => call[0] === CustomerRole)
     expect(roleFinds).toHaveLength(1)
@@ -158,8 +163,7 @@ describe('CustomerInvitationService.acceptInvitation — role lookup batching', 
     })
 
     const linkCreates = (mockEm.create as jest.Mock).mock.calls.filter((call) => call[0] === CustomerUserRole)
-    expect(linkCreates).toHaveLength(1)
-    expect((linkCreates[0][1] as { role: { id: string } }).role.id).toBe(localRoleId)
+    expect(linkCreates).toHaveLength(0)
   })
 
   it('carries personEntityId from the invitation onto the new CustomerUser', async () => {
@@ -501,8 +505,14 @@ describe('CustomerInvitationService.createInvitation — pending-invitation dedu
         acceptedAt: null,
         cancelledAt: null,
       }),
+      // `email` and `displayName` are encrypted at rest and are restored through the
+      // managed entity + flush, never through this native write.
+      expect.not.objectContaining({ email: expect.anything() }),
+    )
+    expect(mockEm.nativeUpdate).toHaveBeenCalledWith(
+      CustomerUserInvitation,
+      expect.anything(),
       expect.objectContaining({
-        email: 'old@example.com',
         emailHash: 'old-email-hash',
         token: 'old-hashed-token',
       }),
@@ -516,7 +526,9 @@ describe('CustomerInvitationService.createInvitation — pending-invitation dedu
     expect(invitation.invitedByCustomerUserId).toBe('old-portal-user')
     expect(invitation.displayName).toBe('Old Name')
     expect(invitation.expiresAt.toISOString()).toBe('2026-06-17T12:00:00.000Z')
-    expect(mockEm.flush).not.toHaveBeenCalled()
+    // The encrypted-at-rest columns (email, displayName) are restored through the
+    // managed entity, so exactly one flush is expected after the conditional guard.
+    expect(mockEm.flush).toHaveBeenCalledTimes(1)
   })
 
   it('fails a stale fresh-delete when another invite attempt already reused the row', async () => {

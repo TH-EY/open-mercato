@@ -26,7 +26,17 @@ const mockContainer = {
     if (token === 'customerInvitationService') {
       return { acceptInvitation: mockAcceptInvitation, findByToken: mockFindByToken }
     }
-    if (token === 'customerRbacService') return { loadAcl: mockLoadAcl }
+    // fork-only: this fork's accept route resolves the post-accept session features
+    // through getEffectiveFeatures scoped to the accepted user's organization.
+    if (token === 'customerRbacService') {
+      return {
+        loadAcl: mockLoadAcl,
+        getEffectiveFeatures: jest.fn(async (userId: string, scope: unknown) => {
+          const acl = (await mockLoadAcl(userId, scope)) as { features?: string[] } | null
+          return acl?.features ?? []
+        }),
+      }
+    }
     if (token === 'customerSessionService') return { createSession: mockCreateSession }
     if (token === 'em') return { findOne: mockEmFindOne }
     return null

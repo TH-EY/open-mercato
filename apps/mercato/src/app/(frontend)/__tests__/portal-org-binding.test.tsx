@@ -30,6 +30,8 @@ jest.mock('@open-mercato/shared/modules/registry', () => ({
   })),
   getFrontendRouteManifests: jest.fn(() => []),
   registerFrontendRouteManifests: jest.fn(),
+  // The generated frontend-routes module calls this at import time.
+  resolvePageRouteMetadata: jest.fn(() => ({})),
 }))
 
 const headerStore = { get: jest.fn() }

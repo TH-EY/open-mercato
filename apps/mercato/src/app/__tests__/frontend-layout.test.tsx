@@ -29,7 +29,10 @@ jest.mock('@open-mercato/shared/lib/di/container', () => ({
 }))
 
 jest.mock('@open-mercato/shared/lib/i18n/server', () => ({
-  resolveTranslations: jest.fn(async () => ({ t: (_key: string, fallback: string) => fallback })),
+  resolveTranslations: jest.fn(async () => ({
+    t: (_key: string, fallback: string) => fallback,
+    translate: (_key: string, fallback: string) => fallback,
+  })),
 }))
 
 function findElementByType(node: ReactNode, targetType: unknown): ReactElement | null {
@@ -83,12 +86,23 @@ describe('FrontendLayout portal auth scope', () => {
     const tree = await FrontendLayout({ children: 'child' })
     const shell = findElementByType(tree, PortalLayoutShell)
 
-    expect(mockGetCustomerAuthFromCookies).toHaveBeenCalledWith({
-      expectedTenantId: '11111111-1111-4111-8111-111111111111',
-      expectedOrganizationId: '22222222-2222-4222-8222-222222222222',
-    })
     expect(shell).not.toBeNull()
     expect(shell?.props.authenticated).toBe(false)
     expect(shell?.props.customerAuth).toBeNull()
+  })
+  it('denies portal access when the customer JWT belongs to another organization', async () => {
+    mockGetCustomerAuthFromCookies.mockResolvedValue({
+      sub: '33333333-3333-4333-8333-333333333333',
+      orgId: '44444444-4444-4444-8444-444444444444',
+      tenantId: '11111111-1111-4111-8111-111111111111',
+      email: 'someone@example.com',
+      displayName: 'Someone',
+    })
+    const { default: FrontendLayout } = await import('../(frontend)/layout')
+    const { PortalLayoutShell } = await import('@open-mercato/ui/portal/PortalLayoutShell')
+
+    const tree = await FrontendLayout({ children: 'child' })
+
+    expect(findElementByType(tree, PortalLayoutShell)).toBeNull()
   })
 })

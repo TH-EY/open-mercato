@@ -6,6 +6,7 @@ import * as React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import { createTranslator } from '@open-mercato/shared/lib/i18n/translate'
 import { SalesDocumentItemsSection } from '../ItemsSection'
+import { formatMoney } from '../lineItemUtils'
 
 const mockApiCall = jest.fn()
 const mockTranslate = createTranslator({})
@@ -92,7 +93,9 @@ async function discountColumnIndex(): Promise<number> {
 }
 
 function money(value: number): string {
-  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(value)
+  // Mirror the component's own formatter: this fork renders the currency CODE
+  // (`USD 4.50`), not the symbol, so the expectation must not hardcode `$`.
+  return formatMoney(value, 'USD')
 }
 
 function lineFixture(overrides: LinePayload = {}): LinePayload {

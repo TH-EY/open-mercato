@@ -694,6 +694,8 @@ function pickInputPatch(input: Record<string, unknown>, keys: readonly string[])
     }
   }
   return patch;
+}
+
 /**
  * Persists document-level custom fields supplied on a create input.
  *

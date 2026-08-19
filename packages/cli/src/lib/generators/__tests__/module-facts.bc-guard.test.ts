@@ -158,7 +158,11 @@ describe('module-facts BC resolve guard (T2)', () => {
     // provenance entries and override targets to every render. The
     // `warranty_claims` module (see above) lands alongside it, so the cap
     // absorbs both additions.
-    expect(Buffer.byteLength(completeJson)).toBeLessThan(4_000_000)
+    //
+    // Fork-only raise: this fork ships modules upstream does not (projects,
+    // epc_demo, catalog services, sales invoices) plus extra channel provider
+    // packages, so its rendered facts are ~4.1MB. Upstream's cap is 4_000_000.
+    expect(Buffer.byteLength(completeJson)).toBeLessThan(4_500_000)
     expect(Buffer.byteLength(completeJson) - Buffer.byteLength(legacyJson)).toBeLessThan(1_800_000)
     // Markdown cap raised with the source-link contract: entities, events, ACL
     // features, DI tokens, search entities, notifications, UMES hosts and UMES

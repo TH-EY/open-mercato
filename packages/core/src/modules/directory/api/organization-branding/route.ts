@@ -34,7 +34,6 @@ const brandingResponseSchema = z.object({
   logoUrl: z.string().nullable(),
   logoPreserveAspectRatio: z.boolean(),
   updatedAt: z.string().nullable(),
-  logoPreserveAspectRatio: z.boolean(),
 })
 
 const brandingUpdateSchema = z.object({
@@ -137,7 +136,6 @@ function toResponsePayload(organization: Organization, tenantId: string) {
     logoUrl: organization.logoUrl ?? null,
     logoPreserveAspectRatio: !!organization.logoPreserveAspectRatio,
     updatedAt: toIsoOrNull(organization.updatedAt),
-    logoPreserveAspectRatio: !!organization.logoPreserveAspectRatio,
   }
 }
 

@@ -45,16 +45,6 @@ function formatFallback(template: string, params?: Record<string, string | numbe
   })
 }
 
-function formatFallback(template: string, params?: Record<string, string | number>) {
-  if (!params) return template
-  return template.replace(/\{\{(\w+)\}\}|\{(\w+)\}/g, (match, doubleKey, singleKey) => {
-    const key = doubleKey ?? singleKey
-    if (!key) return match
-    const value = params[key]
-    return value === undefined ? match : String(value)
-  })
-}
-
 export type FieldDefinition = {
   key: string
   kind: string

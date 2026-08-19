@@ -7,7 +7,7 @@ export const metadata: ModuleInfo = {
   version: '0.1.0',
   description: 'Project tracking with tasks and Kanban boards.',
   author: 'Open Mercato Team',
-  license: 'Proprietary',
+  license: 'MIT',
   requires: ['auth', 'sales', 'attachments'],
   ejectable: true,
 }

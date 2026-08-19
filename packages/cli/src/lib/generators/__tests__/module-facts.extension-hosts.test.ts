@@ -28,6 +28,8 @@ describe('module-facts extension host extraction', () => {
         'catalog:catalog_product',
         'catalog:catalog_product_variant',
         'catalog:catalog_product_price',
+        // fork-only: EPC catalog services
+        'catalog:catalog_service',
       ],
       sales: [
         'sales:sales_order',
@@ -100,9 +102,12 @@ describe('module-facts extension host extraction', () => {
     expect(catalog.hostTokens.tableIds).toEqual([
       'catalog.categories.list',
       'catalog.products.list',
+      // fork-only: EPC catalog services
+      'catalog.services.list',
     ])
 
     const sales = extractModuleFacts({ moduleId: 'sales', coreSrcRoot })
-    expect(sales.hostTokens.tableIds).toEqual(['sales.orders', 'sales.quotes'])
+    // fork-only: EPC sales invoices UI adds 'sales.invoices'
+    expect(sales.hostTokens.tableIds).toEqual(['sales.invoices', 'sales.orders', 'sales.quotes'])
   })
 })

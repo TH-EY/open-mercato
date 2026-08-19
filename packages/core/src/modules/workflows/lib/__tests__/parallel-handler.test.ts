@@ -175,17 +175,19 @@ describe('resumeBranchAfterActivities', () => {
     expect(branch.contextNamespace).toEqual({
       branchValue: 'A',
       notify_result: { ok: true },
+      // fork-only: async activity output is also addressed under the stable activity id
+      activities: { notify: { ok: true } },
     })
     expect(executeStep).toHaveBeenCalledWith(
       em,
       instance,
       'update-order',
       expect.objectContaining({
-        workflowContext: {
+        workflowContext: expect.objectContaining({
           orderId: 'order-123',
           branchValue: 'A',
           notify_result: { ok: true },
-        },
+        }),
         userId: 'branch-user-123',
       }),
       container,

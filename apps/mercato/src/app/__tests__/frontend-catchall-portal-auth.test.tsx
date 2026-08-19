@@ -53,6 +53,14 @@ jest.mock('@/lib/metadata', () => ({
   resolveLocalizedTitleMetadata: jest.fn(async () => ({})),
 }))
 
+function containsElementType(node: unknown, targetType: string): boolean {
+  if (!node || typeof node !== 'object') return false
+  if (Array.isArray(node)) return node.some((child) => containsElementType(child, targetType))
+  const element = node as { type?: unknown; props?: { children?: unknown } }
+  if (element.type === targetType) return true
+  return containsElementType(element.props?.children, targetType)
+}
+
 describe('SiteCatchAll portal auth scope', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -88,10 +96,21 @@ describe('SiteCatchAll portal auth scope', () => {
       SiteCatchAll({ params: Promise.resolve({ slug: ['org-a', 'portal', 'dashboard'] }) }),
     ).rejects.toThrow('NEXT_REDIRECT:/org-a/portal/login')
 
-    expect(mockGetCustomerAuthFromCookies).toHaveBeenCalledWith({
-      expectedTenantId: '11111111-1111-4111-8111-111111111111',
-      expectedOrganizationId: '22222222-2222-4222-8222-222222222222',
-    })
     expect(mockRedirect).toHaveBeenCalledWith('/org-a/portal/login')
+  })
+
+  it('denies access instead of rendering when the customer JWT belongs to another organization', async () => {
+    mockGetCustomerAuthFromCookies.mockResolvedValue({
+      sub: '33333333-3333-4333-8333-333333333333',
+      orgId: '44444444-4444-4444-8444-444444444444',
+      tenantId: '11111111-1111-4111-8111-111111111111',
+      email: 'someone@example.com',
+    })
+    const { default: SiteCatchAll } = await import('../(frontend)/[...slug]/page')
+
+    const tree = await SiteCatchAll({ params: Promise.resolve({ slug: ['org-a', 'portal', 'dashboard'] }) })
+
+    expect(containsElementType(tree, 'protected-portal-page')).toBe(false)
+    expect(mockRedirect).not.toHaveBeenCalled()
   })
 })

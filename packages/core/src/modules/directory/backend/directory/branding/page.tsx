@@ -22,7 +22,6 @@ type BrandingPayload = {
   logoUrl: string | null
   logoPreserveAspectRatio: boolean
   updatedAt: string | null
-  logoPreserveAspectRatio: boolean
 }
 
 type UploadPayload = {

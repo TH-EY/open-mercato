@@ -31,6 +31,8 @@ describe('event-trigger-service — workflow execution dispatch', () => {
       id: 'definition-1',
       workflowId: 'deal-flow',
       version: 1,
+      // Upstream now skips disabled definitions when projecting embedded triggers.
+      enabled: true,
       definition: {
         triggers: [
           {
@@ -44,9 +46,11 @@ describe('event-trigger-service — workflow execution dispatch', () => {
       },
     }
 
-    findWithDecryptionMock
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([definition] as any)
+    // Resolve by entity rather than by call order: the trigger loader issues its
+    // queries conditionally, so a positional mock silently starves the definition
+    // lookup when the legacy-trigger branch short-circuits.
+    findWithDecryptionMock.mockImplementation((async (_em: any, entity: any) =>
+      entity?.name === 'WorkflowDefinition' ? [definition] : []) as any)
     startWorkflowMock.mockResolvedValue({ id: 'instance-1' } as any)
 
     let resolveExecution!: () => void
@@ -78,7 +82,9 @@ describe('event-trigger-service — workflow execution dispatch', () => {
       await Promise.resolve()
     }
 
-    expect(executeWorkflowMock).toHaveBeenCalledWith(em, container, 'instance-1')
+    // The executor also receives the resolved actor (undefined for an unattributed
+    // event), so the awaited dispatch carries upstream's actor propagation.
+    expect(executeWorkflowMock).toHaveBeenCalledWith(em, container, 'instance-1', undefined)
     expect(startWorkflowMock).toHaveBeenCalledWith(
       em,
       expect.objectContaining({

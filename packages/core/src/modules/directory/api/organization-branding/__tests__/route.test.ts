@@ -163,44 +163,6 @@ describe('/api/directory/organization-branding', () => {
     })
   })
 
-  it('updates the aspect-ratio preference through the organization command', async () => {
-    commandBusExecute.mockResolvedValue({
-      result: makeOrganization({
-        logoUrl: 'https://example.com/logo.svg',
-        logoPreserveAspectRatio: true,
-      }),
-    })
-
-    const response = await PUT(new Request('http://localhost/api/directory/organization-branding', {
-      method: 'PUT',
-      body: JSON.stringify({
-        logoUrl: 'https://example.com/logo.svg',
-        logoPreserveAspectRatio: true,
-      }),
-    }))
-
-    expect(response.status).toBe(200)
-    expect(commandBusExecute).toHaveBeenCalledWith(
-      'directory.organizations.update',
-      expect.objectContaining({
-        input: {
-          id: organizationId,
-          tenantId,
-          logoUrl: 'https://example.com/logo.svg',
-          logoPreserveAspectRatio: true,
-        },
-      }),
-    )
-    await expect(response.json()).resolves.toEqual({
-      organizationId,
-      organizationName: 'Acme',
-      tenantId,
-      logoUrl: 'https://example.com/logo.svg',
-      logoPreserveAspectRatio: true,
-      updatedAt: currentUpdatedAt,
-      logoPreserveAspectRatio: false,
-    })
-  })
 
   it('updates the aspect-ratio preference through the organization command', async () => {
     commandBusExecute.mockResolvedValue({

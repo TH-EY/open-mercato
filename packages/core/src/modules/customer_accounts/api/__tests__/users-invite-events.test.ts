@@ -8,7 +8,6 @@ const inviteCompoundConfig: RateLimitConfig = { points: 5, duration: 60, blockDu
 
 const mockCheckAuthRateLimit = jest.fn()
 const mockCreateInvitation = jest.fn()
-const mockRollbackInvitation = jest.fn()
 const mockUserHasAllFeatures = jest.fn()
 const mockGetAuthFromRequest = jest.fn()
 const mockGetCustomerAuthFromRequest = jest.fn()
@@ -121,7 +120,6 @@ describe('customer invitation endpoints — invitation-created event', () => {
       attemptTokenHash: 'hashed-raw-secret-token',
       reused: false,
     })
-    mockRollbackInvitation.mockResolvedValue(undefined)
     mockEmit.mockResolvedValue(undefined)
     mockSendCustomerInvitationEmail.mockResolvedValue(undefined)
     mockRemoveInvitation.mockResolvedValue(undefined)
@@ -178,7 +176,7 @@ describe('customer invitation endpoints — invitation-created event', () => {
 
     expect(res.status).toBe(502)
     expect(invitedEvents()).toHaveLength(0)
-    expect(mockRollbackInvitation).toHaveBeenCalledTimes(1)
+    expect(mockRemoveInvitation).toHaveBeenCalledTimes(1)
     consoleErrorSpy.mockRestore()
   })
 
@@ -193,7 +191,7 @@ describe('customer invitation endpoints — invitation-created event', () => {
 
     expect(res.status).toBe(502)
     expect(invitedEvents()).toHaveLength(0)
-    expect(mockRollbackInvitation).toHaveBeenCalledTimes(1)
+    expect(mockRemoveInvitation).toHaveBeenCalledTimes(1)
     consoleErrorSpy.mockRestore()
   })
 
