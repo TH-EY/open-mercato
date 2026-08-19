@@ -1,176 +1,95 @@
 import { expect, test } from '@playwright/test'
-import { apiRequest, getAuthToken } from '@open-mercato/core/helpers/integration/api'
-import { createCompanyFixture, deleteEntityIfExists } from '@open-mercato/core/helpers/integration/crmFixtures'
-import { readJsonSafe } from '@open-mercato/core/helpers/integration/generalFixtures'
 import {
-  cancelWorkflowInstanceIfExists,
-  createWorkflowDefinitionFixture,
-  deleteWorkflowDefinitionIfExists,
-  pollWorkflowInstance,
-  startWorkflowInstanceFixture,
-} from '@open-mercato/core/helpers/integration/workflowsFixtures'
+  deleteWorkflowDefinitions,
+  isWorkflowDefinitionSoftDeleted,
+  runRetireSeededCheckoutDemo,
+  seedWorkflowDefinition,
+} from './helpers/db'
 
-export const integrationMeta = {
-  dependsOnModules: ['workflows', 'customers'],
+/**
+ * TC-WF-032: retire the shadowing checkout-demo seed rows (#4211).
+ *
+ * `Migration20260716120000` soft-deletes the persisted `workflows.checkout-demo`
+ * seed rows so runtime falls through to the maintained code definition (the only
+ * one that forwards cart line items + shipping/tax adjustments to the sales-order
+ * API). The repair is deliberately name/body-agnostic: it must retire every
+ * historical seed variant — including the earlier `Simple Checkout Flow` name a
+ * body/name fingerprint would have missed — while never touching a user's
+ * customization of the code definition (`code_workflow_id` set).
+ *
+ * ENVIRONMENT: DB-level fixtures (raw `pg` against `DATABASE_URL`). Run under a
+ * coherent app+DB stack (`yarn test:integration`).
+ */
+
+function checkoutSeed(overrides?: { withoutLines?: boolean }): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    customerEntityId: '{{context.customer.id}}',
+    currencyCode: '{{context.cart.currency}}',
+    placedAt: '{{now}}',
+  }
+  if (!overrides?.withoutLines) body.lines = '{{context.cart.orderLines}}'
+  return {
+    steps: [],
+    transitions: [
+      {
+        transitionId: 'confirmation_to_end',
+        activities: [
+          { activityId: 'create_order', activityType: 'CALL_API', config: { endpoint: '/api/sales/orders', method: 'POST', body } },
+        ],
+      },
+    ],
+  }
 }
 
-type ActivityOutput = {
-  body?: { id?: string }
-}
-
-test.describe('TC-WF-032: correlated customer-task wait', () => {
-  test('only completion of the task created by the workflow resumes its exact wait', async ({ request }) => {
-    test.slow()
-
-    const token = await getAuthToken(request, 'admin')
-    const stamp = Date.now()
-    const workflowId = `qa-wf-correlated-customer-task-${stamp}`
-    let companyId: string | null = null
-    let definitionId: string | null = null
-    let instanceId: string | null = null
-    let workflowTaskId: string | null = null
-    let controlTaskId: string | null = null
-
+test.describe('TC-WF-032: retire shadowing checkout-demo seed rows', () => {
+  test('soft-deletes seeded rows of any name, never customizations, idempotently', async () => {
+    const seededIds: Array<string | null> = []
     try {
-      companyId = await createCompanyFixture(request, token, `QA Correlated Wait ${stamp}`)
-      definitionId = await createWorkflowDefinitionFixture(request, token, {
-        workflowId,
-        workflowName: `QA Correlated Customer Task ${stamp}`,
-        version: 1,
-        enabled: true,
-        definition: {
-          steps: [
-            { stepId: 'start', stepName: 'Start', stepType: 'START' },
-            {
-              stepId: 'wait_for_customer_task',
-              stepName: 'Wait for customer task',
-              stepType: 'WAIT_FOR_SIGNAL',
-              signalConfig: {
-                signalName: 'customers.interaction.completed',
-                correlation: {
-                  contextPath: 'activities.create_customer_task.body.id',
-                  payloadPath: 'id',
-                },
-              },
-            },
-            { stepId: 'end', stepName: 'End', stepType: 'END' },
-          ],
-          transitions: [
-            {
-              transitionId: 'start-to-wait',
-              fromStepId: 'start',
-              toStepId: 'wait_for_customer_task',
-              trigger: 'auto',
-              activities: [
-                {
-                  activityId: 'create_customer_task',
-                  activityName: 'Create customer task',
-                  activityType: 'CALL_API',
-                  config: {
-                    endpoint: '/api/customers/interactions',
-                    method: 'POST',
-                    body: {
-                      entityId: '{{context.companyId}}',
-                      interactionType: 'task',
-                      title: `QA Workflow Task ${stamp}`,
-                      status: 'planned',
-                    },
-                  },
-                },
-              ],
-            },
-            {
-              transitionId: 'wait-to-end',
-              fromStepId: 'wait_for_customer_task',
-              toStepId: 'end',
-              trigger: 'auto',
-            },
-          ],
-        },
+      // Two historical seed variants that both shadow the code definition — the
+      // early name is exactly the cohort a `workflow_name` fingerprint missed.
+      const legacyNamed = await seedWorkflowDefinition({
+        workflowName: 'Checkout with Payment Webhook',
+        definition: checkoutSeed({ withoutLines: true }),
       })
-
-      instanceId = await startWorkflowInstanceFixture(request, token, {
-        workflowId,
-        initialContext: { companyId },
+      const earlyNamed = await seedWorkflowDefinition({
+        workflowName: 'Simple Checkout Flow',
+        definition: checkoutSeed({ withoutLines: true }),
       })
-      const paused = await pollWorkflowInstance(
-        request,
-        token,
-        instanceId,
-        (instance) => instance.status === 'PAUSED' && instance.currentStepId === 'wait_for_customer_task',
-        { timeoutMs: 30_000 },
-      )
-      expect(paused?.status, 'workflow should reach its correlated signal wait').toBe('PAUSED')
-      const activityOutput = (paused?.context?.activities as Record<string, ActivityOutput> | undefined)
-        ?.create_customer_task
-      workflowTaskId = activityOutput?.body?.id ?? null
-      expect(workflowTaskId, 'CALL_API output should be available under activities.create_customer_task').toBeTruthy()
-
-      const controlCreate = await apiRequest(request, 'POST', '/api/customers/interactions', {
-        token,
-        data: {
-          entityId: companyId,
-          interactionType: 'task',
-          title: `QA Control Task ${stamp}`,
-          status: 'planned',
-        },
+      // A user customization of the code definition — MUST be preserved.
+      const customization = await seedWorkflowDefinition({
+        codeWorkflowId: 'workflows.checkout-demo',
+        definition: checkoutSeed(),
       })
-      const controlBody = await readJsonSafe<{ id?: string }>(controlCreate)
-      expect(controlCreate.status(), `control task create failed: ${JSON.stringify(controlBody)}`).toBe(201)
-      controlTaskId = controlBody?.id ?? null
-      expect(controlTaskId).toBeTruthy()
-
-      const controlComplete = await apiRequest(request, 'POST', '/api/customers/interactions/complete', {
-        token,
-        data: { id: controlTaskId },
+      // An unrelated workflow — MUST be preserved.
+      const unrelated = await seedWorkflowDefinition({
+        workflowId: 'workflows.simple-approval',
+        workflowName: 'Simple Approval',
+        definition: checkoutSeed(),
       })
-      expect(controlComplete.status()).toBe(200)
-      const afterControl = await pollWorkflowInstance(
-        request,
-        token,
-        instanceId,
-        (instance) => instance.status !== 'PAUSED',
-        { timeoutMs: 2_000 },
-      )
-      expect(afterControl?.status, 'unrelated customer task must not resume the workflow').toBe('PAUSED')
-      expect(afterControl?.currentStepId).toBe('wait_for_customer_task')
-
-      const matchingComplete = await apiRequest(request, 'POST', '/api/customers/interactions/complete', {
-        token,
-        data: { id: workflowTaskId },
+      // An already-retired seed — idempotency guard.
+      const alreadyRetired = await seedWorkflowDefinition({
+        softDeleted: true,
+        definition: checkoutSeed({ withoutLines: true }),
       })
-      expect(matchingComplete.status()).toBe(200)
-      const completed = await pollWorkflowInstance(
-        request,
-        token,
-        instanceId,
-        (instance) => instance.status === 'COMPLETED',
-        { timeoutMs: 30_000 },
-      )
-      expect(completed?.status, 'matching completion event should resume the exact wait').toBe('COMPLETED')
+      seededIds.push(legacyNamed.id, earlyNamed.id, customization.id, unrelated.id, alreadyRetired.id)
 
-      const retry = await apiRequest(request, 'POST', '/api/customers/interactions/complete', {
-        token,
-        data: { id: workflowTaskId },
-      })
-      expect([200, 400, 409], 'a duplicate completion may be accepted or rejected by the domain command').toContain(retry.status())
+      await runRetireSeededCheckoutDemo()
 
-      const eventsResponse = await apiRequest(
-        request,
-        'GET',
-        `/api/workflows/instances/${encodeURIComponent(instanceId)}/events?eventType=SIGNAL_RECEIVED`,
-        { token },
-      )
-      const eventsBody = await readJsonSafe<{ data?: Array<{ eventType?: string }> }>(eventsResponse)
-      expect(eventsResponse.status()).toBe(200)
-      expect(eventsBody?.data ?? [], 'the wait should be consumed exactly once').toHaveLength(1)
-      instanceId = null
+      // Both seeded checkout-demo rows are retired regardless of their name.
+      expect(await isWorkflowDefinitionSoftDeleted(legacyNamed.id), 'legacy-named seed retired').toBe(true)
+      expect(await isWorkflowDefinitionSoftDeleted(earlyNamed.id), 'early-named seed retired').toBe(true)
+
+      // Guards not crossed: customization and unrelated workflow untouched.
+      expect(await isWorkflowDefinitionSoftDeleted(customization.id), 'code customization preserved').toBe(false)
+      expect(await isWorkflowDefinitionSoftDeleted(unrelated.id), 'unrelated workflow preserved').toBe(false)
+
+      // Idempotency: re-running changes nothing.
+      await runRetireSeededCheckoutDemo()
+      expect(await isWorkflowDefinitionSoftDeleted(legacyNamed.id), 'still retired after replay').toBe(true)
+      expect(await isWorkflowDefinitionSoftDeleted(customization.id), 'still preserved after replay').toBe(false)
+      expect(await isWorkflowDefinitionSoftDeleted(alreadyRetired.id), 'pre-retired row still retired').toBe(true)
     } finally {
-      await cancelWorkflowInstanceIfExists(request, token, instanceId)
-      await deleteEntityIfExists(request, token, '/api/customers/interactions', workflowTaskId)
-      await deleteEntityIfExists(request, token, '/api/customers/interactions', controlTaskId)
-      await deleteWorkflowDefinitionIfExists(request, token, definitionId)
-      await deleteEntityIfExists(request, token, '/api/customers/companies', companyId)
+      await deleteWorkflowDefinitions(seededIds).catch(() => undefined)
     }
   })
 })

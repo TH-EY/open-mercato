@@ -216,32 +216,31 @@ describe('quote send + accept flow', () => {
     )
   })
 
-  test('accept falls back to raw token lookup for quotes sent before hashing rollout', async () => {
-    const LEGACY_RAW_TOKEN = '77777777-7777-4777-8777-777777777777'
-    const legacyQuote = {
+  test('accept never matches a raw (unhashed) stored token — hashed lookup only (#2929)', async () => {
+    const RAW_STORED_TOKEN = '77777777-7777-4777-8777-777777777777'
+    const rawStoredQuote = {
       id: '66666666-6666-4666-8666-666666666666',
       tenantId: '00000000-0000-4000-8000-000000000000',
       organizationId: '11111111-1111-4111-8111-111111111111',
-      quoteNumber: 'SQ-LEGACY',
+      quoteNumber: 'SQ-RAW',
       status: 'sent',
       statusEntryId: null,
       validUntil: new Date(Date.now() + 60_000),
       updatedAt: new Date(),
-      acceptanceToken: LEGACY_RAW_TOKEN,
+      acceptanceToken: RAW_STORED_TOKEN,
     }
 
     const seenWhereTokens: Array<string | undefined> = []
     mockEm.findOne.mockImplementation(async (cls: any, where: any) => {
       if (cls === SalesQuote) {
         seenWhereTokens.push(where?.acceptanceToken)
-        return where?.acceptanceToken === LEGACY_RAW_TOKEN ? legacyQuote : null
+        return where?.acceptanceToken === RAW_STORED_TOKEN ? rawStoredQuote : null
       }
       if (cls === Dictionary) return { id: 'dict-1' }
       if (cls === DictionaryEntry) return { id: 'entry-confirmed' }
-      if (cls === SalesOrder) return { id: 'order-legacy', orderNumber: 'SO-LEGACY', deletedAt: null }
+      if (cls === SalesOrder) return { id: 'order-raw', orderNumber: 'SO-RAW', deletedAt: null }
       return null
     })
-    mockCommandBus.execute.mockResolvedValue({ result: { orderId: 'order-legacy' } })
 
     const res = await acceptQuote(makeAcceptRequest({ token: LEGACY_RAW_TOKEN }))
     expect(res.status).toBe(200)
@@ -491,11 +490,11 @@ describe('accept - tenant isolation (fix: tenantId scoped in lookup + encryption
       validUntil: new Date(Date.now() + 60_000),
       updatedAt: new Date(),
     }
-    // Simulate DB: honour tenantId in where clause (cross-tenant lookup returns null)
+    // Simulate DB: token stored hashed at rest; honour tenantId in where clause (cross-tenant lookup returns null)
     mockEm.findOne.mockImplementation(async (cls: any, where: any) => {
       if (cls === SalesQuote) {
         if (where?.tenantId && where.tenantId !== TENANT_ID) return null
-        return where?.acceptanceToken === ACCEPTANCE_TOKEN ? quote : null
+        return where?.acceptanceToken === hashAuthToken(ACCEPTANCE_TOKEN) ? quote : null
       }
       if (cls === Dictionary) return { id: 'dict-1' }
       if (cls === DictionaryEntry) return { id: 'entry-confirmed' }
@@ -541,7 +540,7 @@ describe('accept - tenant isolation (fix: tenantId scoped in lookup + encryption
     mockEm.findOne.mockImplementation(async (cls: any, where: any) => {
       if (cls === SalesQuote) {
         capturedWhere = where
-        return where?.acceptanceToken === ACCEPTANCE_TOKEN ? quote : null
+        return where?.acceptanceToken === hashAuthToken(ACCEPTANCE_TOKEN) ? quote : null
       }
       if (cls === Dictionary) return { id: 'dict-1' }
       if (cls === DictionaryEntry) return { id: 'entry-confirmed' }

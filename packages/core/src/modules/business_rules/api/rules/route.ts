@@ -23,6 +23,9 @@ import {
 } from '../../lib/rule-engine'
 import { validateOpenMercatoCallActions } from '../../lib/openmercato-call-options'
 import type { RbacService } from '../../../auth/services/rbacService'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('business_rules').child({ component: 'rules-api' })
 
 const querySchema = z.looseObject({
   id: z.uuid().optional(),
@@ -322,7 +325,7 @@ export async function POST(req: Request) {
     await em.persist(rule).flush()
     await invalidateBusinessRuleDiscoveryCache(cache, rule.tenantId, rule.organizationId)
   } catch (error) {
-    console.error('[business_rules.rules] Failed to persist new rule:', error)
+    logger.error('Failed to persist new rule', { err: error })
     return NextResponse.json(
       { error: t('business_rules.errors.createFailed') },
       { status: 500 },
@@ -452,7 +455,7 @@ export async function PUT(req: Request) {
     await em.persist(rule).flush()
     await invalidateBusinessRuleDiscoveryCache(cache, rule.tenantId, rule.organizationId)
   } catch (error) {
-    console.error('[business_rules.rules] Failed to persist rule update:', error)
+    logger.error('Failed to persist rule update', { err: error })
     return NextResponse.json(
       { error: t('business_rules.errors.updateFailed') },
       { status: 500 },

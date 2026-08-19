@@ -22,6 +22,9 @@ import {
   executeCallWebhook,
   executeFunction,
 } from '../lib/activity-executor'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('workflows').child({ component: 'activity-worker' })
 
 // Worker metadata for auto-discovery.
 // NOTE: `queue` MUST be a string literal (or locally-declared const) so the
@@ -86,9 +89,7 @@ export default async function handle(
   // Timer jobs (kind: 'timer') are a distinct flow — they resume a paused
   // workflow at a WAIT_FOR_TIMER step rather than running an activity.
   if (payload.kind === 'timer') {
-    console.log(
-      `[workflows:activity-worker] Firing timer for instance ${payload.workflowInstanceId} (job ${ctx.jobId})`
-    )
+    logger.debug('Firing timer for instance', { instanceId: payload.workflowInstanceId, jobId: ctx.jobId })
     const { fireTimer } = await import('../lib/timer-handler')
     await fireTimer(em, container, {
       instanceId: payload.workflowInstanceId,
@@ -101,9 +102,13 @@ export default async function handle(
     return
   }
 
-  console.log(
-    `[workflows:activity-worker] Processing activity ${payload.activityId} (${payload.activityType}) for workflow instance ${payload.workflowInstanceId} (job ${ctx.jobId}, attempt ${ctx.attemptNumber})`
-  )
+  logger.debug('Processing activity', {
+    activityId: payload.activityId,
+    activityType: payload.activityType,
+    instanceId: payload.workflowInstanceId,
+    jobId: ctx.jobId,
+    attemptNumber: ctx.attemptNumber,
+  })
 
   try {
     // Fetch workflow instance with tenant/org scoping
@@ -212,19 +217,25 @@ export default async function handle(
       organizationId: payload.organizationId,
     })
 
-    console.log(
-      `[workflows:activity-worker] Activity ${payload.activityId} (${payload.activityType}) completed successfully for workflow instance ${payload.workflowInstanceId} in ${executionTimeMs}ms`
-    )
+    logger.debug('Activity completed', {
+      activityId: payload.activityId,
+      activityType: payload.activityType,
+      instanceId: payload.workflowInstanceId,
+      executionTimeMs,
+    })
 
     // Attempt to resume workflow if all activities complete
     await checkAndResumeWorkflow(em, ctx, payload.workflowInstanceId, payload.branchInstanceId)
   } catch (error: any) {
     const executionTimeMs = Date.now() - startTime
 
-    console.error(
-      `[workflows:activity-worker] Activity ${payload.activityId} (${payload.activityType}) failed for workflow instance ${payload.workflowInstanceId} (attempt ${ctx.attemptNumber}):`,
-      error.message
-    )
+    logger.error('Activity failed', {
+      activityId: payload.activityId,
+      activityType: payload.activityType,
+      instanceId: payload.workflowInstanceId,
+      attemptNumber: ctx.attemptNumber,
+      err: error,
+    })
 
     // Log failure event to workflow event log
     await logWorkflowEvent(em, {
@@ -251,9 +262,12 @@ export default async function handle(
     // Check if this was final attempt (BullMQ handles retries automatically)
     const maxAttempts = payload.retryPolicy?.maxAttempts || 1
     if (ctx.attemptNumber >= maxAttempts) {
-      console.error(
-        `[workflows:activity-worker] Activity ${payload.activityId} (${payload.activityType}) failed after ${maxAttempts} attempts for workflow instance ${payload.workflowInstanceId} - triggering workflow failure handling`
-      )
+      logger.error('Activity failed after all attempts - triggering workflow failure handling', {
+        activityId: payload.activityId,
+        activityType: payload.activityType,
+        maxAttempts,
+        instanceId: payload.workflowInstanceId,
+      })
       // Final failure - attempt to resume workflow (may transition to FAILED state)
       await checkAndResumeWorkflow(em, ctx, payload.workflowInstanceId, payload.branchInstanceId)
     }
@@ -297,10 +311,11 @@ async function checkAndResumeWorkflow(
       }
 
       if (shouldLogResumeFailure(error)) {
-        console.error(
-          `[workflows:activity-worker] Failed to resume workflow instance ${workflowInstanceId}:`,
-          error.message
-        )
+        logger.error('Failed to resume workflow instance', {
+          instanceId: workflowInstanceId,
+          branchInstanceId,
+          err: error,
+        })
       }
       return
     }

@@ -5,13 +5,12 @@ import { addDays } from 'date-fns/addDays'
 import { format } from 'date-fns/format'
 import { isSameMonth } from 'date-fns/isSameMonth'
 import { isToday } from 'date-fns/isToday'
-import { CalendarDays } from 'lucide-react'
-import { useT } from '@open-mercato/shared/lib/i18n/context'
+import { useLocale, useT } from '@open-mercato/shared/lib/i18n/context'
 import { cn } from '@open-mercato/shared/lib/utils'
 import { Button } from '@open-mercato/ui/primitives/button'
-import { EmptyState } from '@open-mercato/ui/primitives/empty-state'
 import { getVisibleRange } from '../../lib/calendar/range'
 import { eventDisplayTitle } from '../../lib/calendar/labels'
+import { formatTimeRangeLabel } from '../../lib/calendar/format'
 import type { CalendarItem, MonthGridProps } from './types'
 
 const MAX_PILLS_PER_DAY = 2
@@ -21,12 +20,8 @@ function dayKeyOf(date: Date): string {
   return format(date, 'yyyy-MM-dd')
 }
 
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-}
-
-function fullDateLabel(date: Date): string {
-  return date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+function fullDateLabel(locale: string, date: Date): string {
+  return date.toLocaleDateString(locale, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
 }
 
 function isWeekend(date: Date): boolean {
@@ -63,9 +58,10 @@ function groupItemsByDay(items: CalendarItem[]): Map<string, CalendarItem[]> {
 
 function MonthPill({ item, onItemClick }: { item: CalendarItem; onItemClick: (item: CalendarItem) => void }) {
   const t = useT()
+  const locale = useLocale()
   const canceled = item.status === 'canceled'
   const title = eventDisplayTitle(item.title, t('customers.calendar.grid.untitled', 'Untitled'))
-  const timeLabel = item.allDay ? '' : ` · ${formatTime(item.start)} – ${formatTime(item.end)}`
+  const timeLabel = item.allDay ? '' : ` · ${formatTimeRangeLabel(locale, item.start, item.end)}`
   const tintStyle = item.color
     ? { backgroundColor: `${item.color}${SOFT_TINT_ALPHA}`, color: item.color }
     : undefined
@@ -117,11 +113,12 @@ function MonthDayCell({
   onDayOpen: (date: Date) => void
 }) {
   const t = useT()
+  const locale = useLocale()
   const inMonth = isSameMonth(day, anchor)
   const today = isToday(day)
   const visibleItems = items.slice(0, MAX_PILLS_PER_DAY)
   const hiddenCount = items.length - visibleItems.length
-  const dayLabel = fullDateLabel(day)
+  const dayLabel = fullDateLabel(locale, day)
   return (
     <div
       className={cn(
@@ -188,13 +185,14 @@ function MonthDayCell({
 
 export function MonthGrid({ anchor, items, onItemClick, onDayOpen }: MonthGridProps) {
   const t = useT()
+  const locale = useLocale()
   const weeks = React.useMemo(() => buildWeeks(anchor), [anchor])
   const itemsByDay = React.useMemo(() => groupItemsByDay(items), [items])
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden border border-border bg-background">
       <div className="flex h-9 w-full shrink-0 border-b border-border">
         {weeks[0]?.map((day) => {
-          const label = day.toLocaleDateString(undefined, { weekday: 'short' }).toUpperCase()
+          const label = day.toLocaleDateString(locale, { weekday: 'short' }).toLocaleUpperCase(locale)
           return (
             <div
               key={dayKeyOf(day)}
@@ -225,15 +223,6 @@ export function MonthGrid({ anchor, items, onItemClick, onDayOpen }: MonthGridPr
           ))}
         </div>
       ))}
-      {items.length === 0 ? (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6">
-          <EmptyState
-            icon={<CalendarDays className="h-6 w-6" aria-hidden="true" />}
-            title={t('customers.calendar.empty.month', 'Nothing scheduled this month')}
-            className="bg-background/90"
-          />
-        </div>
-      ) : null}
     </div>
   )
 }

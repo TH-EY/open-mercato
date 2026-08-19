@@ -15,6 +15,10 @@ import type * as transitionHandlerModule from './transition-handler'
 import type * as workflowExecutorModule from './workflow-executor'
 import { branchToken, mergeTokenContext, rootToken, tokenReadContext } from './execution-token'
 import { readCorrelationScalar } from './signal-correlation'
+import { resolveCodeDefinitionForInstance } from './find-definition'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('workflows')
 
 export interface SendSignalOptions {
   /**
@@ -154,13 +158,13 @@ export async function sendSignal(
   // Branch-scoped signal: a FORKED instance routes the signal to the branch
   // paused at a matching WAIT_FOR_SIGNAL step.
   if (instance.status === 'FORKED') {
-    const branchDefinition = await findOneWithDecryption(
+    const branchDefinition = (await findOneWithDecryption(
       em as PostgreSqlEntityManager,
       WorkflowDefinition,
       { id: instance.definitionId, tenantId: instance.tenantId, organizationId: instance.organizationId, deletedAt: null },
       undefined,
       { tenantId: instance.tenantId, organizationId: instance.organizationId },
-    )
+    )) ?? resolveCodeDefinitionForInstance(instance)
     if (!branchDefinition) {
       throw new SignalError('Workflow definition not found', 'DEFINITION_NOT_FOUND', { definitionId: instance.definitionId })
     }
@@ -269,7 +273,7 @@ export async function sendSignal(
   }
 
   // Load workflow definition with tenant/org scope to check current step
-  const definition = await findOneWithDecryption(
+  const definition = (await findOneWithDecryption(
     em as PostgreSqlEntityManager,
     WorkflowDefinition,
     {
@@ -280,7 +284,7 @@ export async function sendSignal(
     },
     undefined,
     { tenantId: instance.tenantId, organizationId: instance.organizationId },
-  )
+  )) ?? resolveCodeDefinitionForInstance(instance)
   if (!definition) {
     throw new SignalError(
       'Workflow definition not found',
@@ -465,7 +469,7 @@ export async function sendSignalByCorrelationKey(
       signalsProcessed++
     } catch (error) {
       // Log error but continue processing other instances
-      console.error(`Failed to send signal to instance ${instance.id}:`, error)
+      logger.error('Failed to send signal to instance', { instanceId: instance.id, err: error })
     }
   }
 

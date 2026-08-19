@@ -4,7 +4,7 @@ import type { ApiRouteManifestEntry, HttpMethod } from '@open-mercato/shared/mod
 import type { RbacService } from '@open-mercato/core/modules/auth/services/rbacService'
 
 // Mock bootstrap to prevent it from running during tests
-jest.mock('@/bootstrap', () => ({
+jest.mock('@/bootstrap-api', () => ({
   bootstrap: jest.fn(),
   isBootstrapped: jest.fn(() => true),
 }))
@@ -139,8 +139,8 @@ function getMockedApiRoutes(): ApiRouteManifestEntry[] {
 }
 
 // Mock manifest-based API routing
-jest.mock('@/.mercato/generated/api-routes.generated', () => ({
-  apiRoutes: getMockedApiRoutes(),
+jest.mock('@/.mercato/generated/api-route-shards.generated', () => ({
+  apiRouteFacades: getMockedApiRoutes(),
 }))
 
 jest.mock('@/.mercato/generated/backend-routes.generated', () => ({
@@ -509,6 +509,19 @@ describe('API Route Authorization', () => {
       const setCookie = response.headers.get('set-cookie') || ''
       expect(setCookie).toContain('auth_token=;')
       expect(setCookie).toContain('session_token=;')
+    })
+
+    it('should return a retryable 503 and preserve cookies on a transient auth-resolution failure (issue #4176 — no mass logout)', async () => {
+      mockResolveAuthFromRequestDetailed.mockResolvedValue({ auth: null, status: 'error' })
+
+      const request = new NextRequest('http://localhost:3001/api/example/test')
+      const response = await GET(request, { params: Promise.resolve({ slug: ['example', 'test'] }) })
+
+      expect(response.status).toBe(503)
+      expect(response.headers.get('retry-after')).toBe('2')
+      const setCookie = response.headers.get('set-cookie') || ''
+      expect(setCookie).not.toContain('auth_token=;')
+      expect(setCookie).not.toContain('session_token=;')
     })
   })
 

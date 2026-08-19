@@ -3,7 +3,8 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import type { ColumnDef, SortingState } from '@tanstack/react-table'
+import type { LegacyColumnDef as ColumnDef } from '@tanstack/react-table/legacy'
+import type { SortingState } from '@tanstack/react-table'
 import { DataTable } from '@open-mercato/ui/backend/DataTable'
 import { RowActions } from '@open-mercato/ui/backend/RowActions'
 import { Button } from '@open-mercato/ui/primitives/button'
@@ -16,6 +17,9 @@ import { surfaceRecordConflict } from '@open-mercato/ui/backend/conflicts'
 import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { mapOfferRow, renderOfferPriceSummary, type OfferRow } from './offerTableUtils'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('sales')
 
 type OffersResponse = {
   items?: Array<Record<string, unknown>>
@@ -131,7 +135,7 @@ export function SalesChannelOffersPanel({ channelId, channelName }: { channelId:
       setTotal(typeof payload.total === 'number' ? payload.total : items.length)
       setTotalPages(typeof payload.totalPages === 'number' ? payload.totalPages : Math.max(1, Math.ceil(items.length / PAGE_SIZE)))
     } catch (err) {
-      console.error('sales.channels.offers', err)
+      logger.error('sales.channels.offers', { err })
       flash(t('sales.channels.offers.errors.load', 'Failed to load offers.'), 'error')
     } finally {
       setLoading(false)
@@ -158,7 +162,7 @@ export function SalesChannelOffersPanel({ channelId, channelName }: { channelId:
       setReloadToken((token) => token + 1)
     } catch (err) {
       if (surfaceRecordConflict(err, t)) return
-      console.error('sales.channels.offers.delete', err)
+      logger.error('sales.channels.offers.delete', { err })
       flash(t('sales.channels.offers.errors.delete', 'Failed to delete offer.'), 'error')
     }
   }, [mutationContext, runMutation, t])

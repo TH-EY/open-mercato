@@ -4,6 +4,9 @@ import type { ModuleSetupConfig } from '@open-mercato/shared/modules/setup'
 import { CommunicationChannel } from './data/entities'
 import { COMMUNICATION_CHANNELS_QUEUES } from './lib/queue'
 import { isTestChannelSeedingEnabled, TEST_SEED_PROVIDER_KEY } from './lib/test-seed'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('communication_channels')
 
 type SchedulerServiceLike = {
   register: (registration: {
@@ -57,6 +60,7 @@ export const setup: ModuleSetupConfig = {
       'communication_channels.react',
       'communication_channels.assign',
       'communication_channels.connect_user_channel',
+      'communication_channels.connect_tenant_channel',
       'communication_channels.admin',
       'communication_channels.channel.import_history',
       'communication_channels.channel.push.manage',
@@ -67,6 +71,7 @@ export const setup: ModuleSetupConfig = {
       'communication_channels.react',
       'communication_channels.assign',
       'communication_channels.connect_user_channel',
+      'communication_channels.connect_tenant_channel',
       'communication_channels.admin',
       'communication_channels.channel.import_history',
       'communication_channels.channel.push.manage',
@@ -177,10 +182,7 @@ export const setup: ModuleSetupConfig = {
         isEnabled: true,
       })
     } catch (error) {
-      console.warn(
-        '[communication_channels] Failed to register module schedules:',
-        error instanceof Error ? error.message : error,
-      )
+      logger.warn('Failed to register module schedules', { err: error })
     }
   },
 }

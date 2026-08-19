@@ -47,6 +47,9 @@ import type { ProductMediaItem } from '@open-mercato/core/modules/catalog/compon
 import { buildAttachmentImageUrl, slugifyAttachmentFileName } from '@open-mercato/core/modules/attachments/lib/imageUrls'
 import { fetchOptionSchemaTemplate } from '../../../optionSchemaClient'
 import CreateVariantPage from '../create/page'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('catalog')
 
 type VariantResponse = {
   items?: Array<Record<string, unknown>>
@@ -164,7 +167,7 @@ export default function EditVariantPage({ params }: { params?: { productId?: str
           setPriceKinds(items.map((item) => normalizePriceKindSummary(item)).filter((item): item is PriceKindSummary => !!item))
         }
       } catch (err) {
-        console.error('catalog.price-kinds.fetch failed', err)
+        logger.error('catalog.price-kinds.fetch failed', { err })
         if (!cancelled) setPriceKinds([])
       } finally {
         if (!cancelled) setPriceKindsLoaded(true)
@@ -189,7 +192,7 @@ export default function EditVariantPage({ params }: { params?: { productId?: str
             .filter((item): item is TaxRateSummary => item !== null),
         )
       } catch (err) {
-        console.error('sales.tax-rates.fetch failed', err)
+        logger.error('sales.tax-rates.fetch failed', { err })
         setTaxRates([])
       }
     }
@@ -393,7 +396,7 @@ export default function EditVariantPage({ params }: { params?: { productId?: str
           })
         }
       } catch (err) {
-        console.error('catalog.variants.load.failed', err)
+        logger.error('catalog.variants.load.failed', { err })
         if (!cancelled) {
           const message = err instanceof Error && err.message ? err.message : t('catalog.variants.form.errors.load', 'Failed to load variant.')
           setError(message)
@@ -748,7 +751,7 @@ async function fetchVariantAttachments(variantId: string): Promise<ProductMediaI
     if (!res.ok) return []
     return Array.isArray(res.result?.items) ? res.result?.items ?? [] : []
   } catch (err) {
-    console.error('catalog.variants.attachments.load', err)
+    logger.error('catalog.variants.attachments.load', { err })
     return []
   }
 }
@@ -773,7 +776,7 @@ async function loadVariantPrices(variantId: string, priceKinds: PriceKindSummary
       page += 1
     }
   } catch (err) {
-    console.error('catalog.variants.prices.load', err)
+    logger.error('catalog.variants.prices.load', { err })
   }
   return drafts
 }
@@ -827,7 +830,7 @@ async function syncVariantPricesUpdate({
             () => deleteCrud('catalog/prices', existingId),
           )
         } catch (err) {
-          console.error('catalog.prices.delete', err)
+          logger.error('catalog.prices.delete', { err })
         }
       }
       continue

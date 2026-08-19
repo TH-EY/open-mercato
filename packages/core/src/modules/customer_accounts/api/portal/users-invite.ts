@@ -18,6 +18,9 @@ import {
 import { readNormalizedEmailFromJsonRequest } from '@open-mercato/core/modules/customer_accounts/lib/rateLimitIdentifier'
 import { sendCustomerInvitationEmail } from '@open-mercato/core/modules/customer_accounts/lib/invitationEmail'
 import { isOwnedCompanyEntity } from '@open-mercato/core/modules/customer_accounts/lib/customerEntityOwnership'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('customer_accounts').child({ component: 'portal-users-invite' })
 
 export const metadata: { path?: string; requireAuth?: boolean } = { requireAuth: false }
 
@@ -76,10 +79,15 @@ export async function POST(req: Request) {
   const roles = requestedRoleIds.length > 0
     ? await findWithDecryption(
         em,
-          CustomerRole,
-          { id: { $in: requestedRoleIds }, tenantId: auth.tenantId, organizationId: auth.orgId, deletedAt: null } as any,
-          undefined,
-          { tenantId: auth.tenantId, organizationId: auth.orgId },
+        CustomerRole,
+        {
+          id: { $in: requestedRoleIds },
+          tenantId: auth.tenantId,
+          organizationId: auth.orgId,
+          deletedAt: null,
+        } as any,
+        undefined,
+        { tenantId: auth.tenantId, organizationId: auth.orgId },
       )
     : []
   const rolesById = new Map(roles.map((role) => [role.id, role]))
@@ -114,7 +122,7 @@ export async function POST(req: Request) {
       rawToken,
     })
   } catch (error) {
-    console.error('[customer_accounts.portal.users-invite] invitation email failed', error)
+    logger.error('Invitation email failed', { err: error })
     try {
       if (reused && rollbackSnapshot) {
         await customerInvitationService.restoreInvitation(invitation, rollbackSnapshot, attemptTokenHash)
@@ -122,16 +130,18 @@ export async function POST(req: Request) {
         await customerInvitationService.removeInvitation(invitation, attemptTokenHash)
       }
     } catch (rollbackError) {
-      console.error('[customer_accounts.portal.users-invite] invitation rollback failed', rollbackError)
+      logger.error('Invitation rollback failed', { err: rollbackError })
       try {
         await customerInvitationService.cancelInvitationAttempt(invitation, attemptTokenHash)
       } catch (cancelError) {
-        console.error('[customer_accounts.portal.users-invite] invitation rollback cancellation failed', cancelError)
+        logger.error('Invitation rollback cancellation failed', { err: cancelError })
       }
     }
     return NextResponse.json({ ok: false, error: 'Invitation email could not be sent' }, { status: 502 })
   }
 
+  // Emit only after the email is sent, so a subscriber observing "invited" can
+  // assume the recipient was actually notified (no event fires on the 502 path).
   void emitCustomerAccountsEvent('customer_accounts.user.invited', {
     invitationId: invitation.id,
     email: invitation.email,

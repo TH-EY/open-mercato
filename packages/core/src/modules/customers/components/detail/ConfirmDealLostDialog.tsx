@@ -9,6 +9,9 @@ import { Button } from '@open-mercato/ui/primitives/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@open-mercato/ui/primitives/dialog'
 import { Textarea } from '@open-mercato/ui/primitives/textarea'
 import { useDialogKeyHandler } from '@open-mercato/ui/hooks/useDialogKeyHandler'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('customers')
 
 type LossReasonOption = {
   id: string
@@ -54,7 +57,7 @@ export function ConfirmDealLostDialog({
         if (!cancelled) setLossReasons(items)
       })
       .catch((loadError) => {
-        console.error('customers.deals.detail.lossReasons failed', loadError)
+        logger.error('customers.deals.detail.lossReasons failed', { loadError })
         if (!cancelled) {
           setLossReasons([])
           setDictionaryLoadFailed(true)
@@ -127,8 +130,11 @@ export function ConfirmDealLostDialog({
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose() }}>
-      <DialogContent className="overflow-hidden p-0 sm:max-w-[560px]" onKeyDown={handleKeyDown}>
-        <div className="overflow-hidden rounded-lg bg-card">
+      <DialogContent
+        className="flex max-h-[min(90vh,720px)] flex-col overflow-hidden p-0 sm:max-w-[560px]"
+        onKeyDown={handleKeyDown}
+      >
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-card">
           <DialogHeader className="border-b border-border/70 px-7 py-5">
             <div className="flex items-start gap-4">
               <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-destructive/10 text-destructive">
@@ -147,8 +153,8 @@ export function ConfirmDealLostDialog({
             </div>
           </DialogHeader>
 
-          <div className="space-y-6 px-7 py-6">
-            <Alert variant="warning" className="rounded-md">
+          <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-7 py-6">
+            <Alert status="warning" className="rounded-md">
               <AlertTitle>
                 {t('customers.deals.detail.lost.warningTitle', 'This action closes the deal')}
               </AlertTitle>
@@ -250,7 +256,7 @@ export function ConfirmDealLostDialog({
             </Button>
             <Button
               type="button"
-              variant="destructive"
+              variant="destructive-solid"
               disabled={confirmDisabled}
               onClick={() => { void handleConfirm() }}
             >

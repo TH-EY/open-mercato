@@ -14,6 +14,9 @@ import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { useOrganizationScopeVersion } from '@open-mercato/shared/lib/frontend/useOrganizationScope'
 import { InjectionSpot } from '../injection/InjectionSpot'
 import { WidgetDataBatchProvider } from './widgetData'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('ui').child({ component: 'DashboardScreen' })
 
 type DashboardWidgetSize = 'sm' | 'md' | 'lg'
 
@@ -93,6 +96,8 @@ function generateId(): string {
 
 export function DashboardScreen() {
   const t = useT()
+  const tRef = React.useRef(t)
+  tRef.current = t
   const organizationScopeVersion = useOrganizationScopeVersion()
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -107,6 +112,8 @@ export function DashboardScreen() {
   const [settingsId, setSettingsId] = React.useState<string | null>(null)
   const pendingOpsRef = React.useRef(0)
   const saveQueueRef = React.useRef(Promise.resolve())
+  const layoutRevisionRef = React.useRef(0)
+  const pendingLayoutRevisionsRef = React.useRef(new Set<number>())
   const draggingIdRef = React.useRef<string | null>(null)
 
   const adjustSaving = React.useCallback((delta: number) => {
@@ -115,6 +122,8 @@ export function DashboardScreen() {
   }, [])
 
   const load = React.useCallback(async () => {
+    const layoutRevisionAtStart = layoutRevisionRef.current
+    const hadPendingLayoutMutationAtStart = pendingLayoutRevisionsRef.current.size > 0
     setLoading(true)
     setError(null)
     try {
@@ -125,7 +134,12 @@ export function DashboardScreen() {
       const data = call.result
       const registeredWidgetCount = getDashboardWidgets().length
       const normalizedLayout = sortLayout(data.layout?.items ?? [])
-      setLayout(normalizedLayout)
+      if (
+        !hadPendingLayoutMutationAtStart
+        && layoutRevisionAtStart === layoutRevisionRef.current
+      ) {
+        setLayout(normalizedLayout)
+      }
       setWidgetCatalog(data.widgets ?? [])
       setHasRegisteredWidgets(registeredWidgetCount > 0 || (data.widgets ?? []).length > 0)
       setAllowedWidgetIds(data.allowedWidgetIds ?? [])
@@ -147,7 +161,7 @@ export function DashboardScreen() {
         setSettingsId(null)
       }
     } catch (err) {
-      console.error('Failed to load dashboard layout', err)
+      logger.error('Failed to load dashboard layout', { err })
       if (getDashboardWidgets().length === 0) {
         setHasRegisteredWidgets(false)
         setLayout([])
@@ -159,11 +173,11 @@ export function DashboardScreen() {
         setSettingsId(null)
         return
       }
-      setError(t('dashboard.loadError'))
+      setError(tRef.current('dashboard.loadError'))
     } finally {
       setLoading(false)
     }
-  }, [t])
+  }, [])
 
   React.useEffect(() => {
     load()
@@ -216,6 +230,8 @@ export function DashboardScreen() {
   }, [t])
 
   const queueLayoutSave = React.useCallback((items: LayoutItem[]) => {
+    const layoutRevision = ++layoutRevisionRef.current
+    pendingLayoutRevisionsRef.current.add(layoutRevision)
     saveQueueRef.current = saveQueueRef.current.then(async () => {
       adjustSaving(1)
       try {
@@ -237,15 +253,20 @@ export function DashboardScreen() {
         if (!call.ok) throw new Error(`Failed with status ${call.status}`)
         setError(null)
       } catch (err) {
-        console.error('Failed to save layout', err)
+        logger.error('Failed to save layout', { err })
         setError(t('dashboard.saveError'))
       } finally {
+        pendingLayoutRevisionsRef.current.delete(layoutRevision)
         adjustSaving(-1)
       }
     })
   }, [adjustSaving, t])
 
-  const patchWidgetSettings = React.useCallback(async (itemId: string, nextSettings: unknown) => {
+  const patchWidgetSettings = React.useCallback(async (
+    itemId: string,
+    nextSettings: unknown,
+    layoutRevision: number,
+  ) => {
     adjustSaving(1)
     try {
       const call = await apiCall(`/api/dashboards/layout/${encodeURIComponent(itemId)}`, {
@@ -256,9 +277,10 @@ export function DashboardScreen() {
       if (!call.ok) throw new Error(`Failed with status ${call.status}`)
       setError(null)
     } catch (err) {
-      console.error('Failed to update widget settings', err)
+      logger.error('Failed to update widget settings', { err })
       setError(t('dashboard.saveError'))
     } finally {
+      pendingLayoutRevisionsRef.current.delete(layoutRevision)
       adjustSaving(-1)
     }
   }, [adjustSaving, t])
@@ -313,8 +335,10 @@ export function DashboardScreen() {
   }, [queueLayoutSave])
 
   const handleSettingsChange = React.useCallback((itemId: string, nextSettings: unknown) => {
+    const layoutRevision = ++layoutRevisionRef.current
+    pendingLayoutRevisionsRef.current.add(layoutRevision)
     setLayout((prev) => prev.map((item) => (item.id === itemId ? { ...item, settings: nextSettings } : item)))
-    void patchWidgetSettings(itemId, nextSettings)
+    void patchWidgetSettings(itemId, nextSettings, layoutRevision)
   }, [patchWidgetSettings])
 
   const toggleEditing = React.useCallback(() => {
@@ -354,7 +378,7 @@ export function DashboardScreen() {
 
   if (error && layout.length === 0) {
     return (
-      <Alert variant="destructive">
+      <Alert status="error">
         <AlertTitle>{t('dashboard.unavailable')}</AlertTitle>
         <AlertDescription>{error}</AlertDescription>
         <div className="mt-2"><Button variant="outline" onClick={handleRefresh}>{t('dashboard.retry')}</Button></div>
@@ -364,7 +388,7 @@ export function DashboardScreen() {
 
   if (!hasRegisteredWidgets && layout.length === 0) {
     return (
-      <Alert variant="info">
+      <Alert status="information">
         <AlertTitle>{t('dashboard.empty.noWidgets.title', 'No dashboard widgets yet')}</AlertTitle>
         <AlertDescription>
           {t(
@@ -400,7 +424,7 @@ export function DashboardScreen() {
       </div>
 
       {error && layout.length > 0 && (
-        <Alert variant="destructive">
+        <Alert status="error">
           <AlertTitle>{t('dashboard.error.partial')}</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
           <div className="mt-2"><Button variant="ghost" onClick={handleRefresh}>{t('dashboard.error.reload')}</Button></div>
@@ -574,7 +598,7 @@ function DashboardWidgetCard({
       })
       .catch((err) => {
         if (cancelled) return
-        console.error('Failed to load widget module', err)
+        logger.error('Failed to load widget module', { err })
         setLoadError(t('dashboard.widget.loadError'))
         setLoading(false)
       })
@@ -615,7 +639,7 @@ function DashboardWidgetCard({
       try {
         return module.hydrateSettings(raw)
       } catch (err) {
-        console.warn('Failed to hydrate widget settings', err)
+        logger.warn('Failed to hydrate widget settings', { err })
         return raw
       }
     }
@@ -628,7 +652,7 @@ function DashboardWidgetCard({
       try {
         raw = module.dehydrateSettings(next as never)
       } catch (err) {
-        console.warn('Failed to dehydrate widget settings', err)
+        logger.warn('Failed to dehydrate widget settings', { err })
       }
     }
     onSettingsChange(raw)

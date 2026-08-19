@@ -28,35 +28,32 @@ import { WorkflowActivityJob, WORKFLOW_ACTIVITIES_QUEUE_NAME } from './activity-
 import { CALL_API_IDENTITY_ERROR_MARKER } from './call-api-identity-error'
 import { logWorkflowEvent } from './event-logger'
 import { parseDuration } from './duration'
+import { resolveActivityTimeoutMs } from './activityTimeoutFields'
+import { getWorkflowSafeCommand } from './workflow-safe-commands'
 
 export { isPrivateUrl } from '@open-mercato/shared/lib/network'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('workflows')
 
 function isAllowPrivateWorkflowWebhookUrlsEnabled(): boolean {
   if (parseBooleanWithDefault(process.env.OM_WORKFLOWS_ALLOW_PRIVATE_URLS, false)) {
     if (process.env.NODE_ENV === 'production') {
-      console.warn(
-        '[CALL_WEBHOOK] OM_WORKFLOWS_ALLOW_PRIVATE_URLS is set but ignored in production. SSRF protection remains enabled.'
-      )
+      logger.warn('OM_WORKFLOWS_ALLOW_PRIVATE_URLS is set but ignored in production. SSRF protection remains enabled.', { component: 'CALL_WEBHOOK' })
       return false
     }
 
-    console.warn(
-      '[CALL_WEBHOOK] OM_WORKFLOWS_ALLOW_PRIVATE_URLS is enabled. SSRF protection is bypassed for workflow webhooks; use only in development.'
-    )
+    logger.warn('OM_WORKFLOWS_ALLOW_PRIVATE_URLS is enabled. SSRF protection is bypassed for workflow webhooks; use only in development.', { component: 'CALL_WEBHOOK' })
     return true
   }
 
   if (parseBooleanWithDefault(process.env.WORKFLOW_WEBHOOK_ALLOW_PRIVATE_URLS, false)) {
     if (process.env.NODE_ENV === 'production') {
-      console.warn(
-        '[CALL_WEBHOOK] WORKFLOW_WEBHOOK_ALLOW_PRIVATE_URLS is deprecated and ignored in production. Use OM_WORKFLOWS_ALLOW_PRIVATE_URLS for development only. SSRF protection remains enabled.'
-      )
+      logger.warn('WORKFLOW_WEBHOOK_ALLOW_PRIVATE_URLS is deprecated and ignored in production. Use OM_WORKFLOWS_ALLOW_PRIVATE_URLS for development only. SSRF protection remains enabled.', { component: 'CALL_WEBHOOK' })
       return false
     }
 
-    console.warn(
-      '[CALL_WEBHOOK] WORKFLOW_WEBHOOK_ALLOW_PRIVATE_URLS is deprecated. Use OM_WORKFLOWS_ALLOW_PRIVATE_URLS instead. SSRF protection is bypassed.'
-    )
+    logger.warn('WORKFLOW_WEBHOOK_ALLOW_PRIVATE_URLS is deprecated. Use OM_WORKFLOWS_ALLOW_PRIVATE_URLS instead. SSRF protection is bypassed.', { component: 'CALL_WEBHOOK' })
     return true
   }
 
@@ -112,8 +109,15 @@ export interface ActivityDefinition {
   async?: boolean // Flag to execute activity asynchronously via queue
   retryPolicy?: RetryPolicy
   timeoutMs?: number
+  /**
+   * @deprecated Use `timeoutMs`. Legacy ISO 8601 duration string accepted by
+   * the definition schema before #4424; normalized by `resolveActivityTimeoutMs`.
+   */
+  timeout?: string
   compensate?: boolean // Flag to execute compensation on failure
 }
+
+export { resolveActivityTimeoutMs }
 
 export interface RetryPolicy {
   maxAttempts: number
@@ -132,6 +136,32 @@ export interface ActivityContext {
   branchInstanceId?: string | null
   transitionId?: string
   userId?: string
+}
+
+type RbacFeatureResolver = {
+  userHasAllFeatures: (
+    userId: string,
+    required: string[],
+    opts: { tenantId: string | null; organizationId: string | null }
+  ) => Promise<boolean>
+}
+
+async function workflowUserHasAllFeatures(
+  container: AwilixContainer,
+  userId: string,
+  required: readonly string[],
+  tenantId: string | null,
+  organizationId: string | null
+): Promise<boolean> {
+  try {
+    const rbac = container.resolve('rbacService') as RbacFeatureResolver | undefined
+    if (rbac?.userHasAllFeatures) {
+      return await rbac.userHasAllFeatures(userId, [...required], { tenantId, organizationId })
+    }
+  } catch {
+    // Fail closed below when the workflow executor cannot prove the actor's grants.
+  }
+  return false
 }
 
 export interface ActivityExecutionResult {
@@ -366,11 +396,13 @@ export async function executeActivity(
     try {
       const startTime = Date.now()
 
-      // Execute with timeout if specified
-      const result = activity.timeoutMs
+      // Execute with timeout if specified (timeoutMs, or a legacy ISO 8601
+      // `timeout` string normalized to ms — see resolveActivityTimeoutMs).
+      const timeoutMs = resolveActivityTimeoutMs(activity)
+      const result = timeoutMs
         ? await executeWithTimeout(
-            () => executeActivityByType(em, container, activity, context),
-            activity.timeoutMs
+            (signal) => executeActivityByType(em, container, activity, context, signal),
+            timeoutMs
           )
         : await executeActivityByType(em, container, activity, context)
 
@@ -392,7 +424,14 @@ export async function executeActivity(
 
       // Log activity retry attempt with context
       if (attempt < retryPolicy.maxAttempts - 1) {
-        console.error(`[WORKFLOW] Activity ${activity.activityId} (${activity.activityType}) failed on attempt ${attempt + 1}/${retryPolicy.maxAttempts} (instance: ${context.workflowInstance.id}):`, error instanceof Error ? error.message : error)
+        logger.error('Activity failed; will retry', {
+          activityId: activity.activityId,
+          activityType: activity.activityType,
+          attempt: attempt + 1,
+          maxAttempts: retryPolicy.maxAttempts,
+          instanceId: context.workflowInstance.id,
+          err: error,
+        })
       }
 
       // If not the last attempt, apply backoff and retry
@@ -411,10 +450,13 @@ export async function executeActivity(
 
   // All retries exhausted
   const errorMessage = lastError instanceof Error ? lastError.message : String(lastError)
-  console.error(`[WORKFLOW] Activity ${activity.activityId} (${activity.activityType}) failed after ${retryCount} attempts (instance: ${context.workflowInstance.id}): ${errorMessage}`)
-  if (lastError instanceof Error && lastError.stack) {
-    console.error('[WORKFLOW] Activity error stack:', lastError.stack)
-  }
+  logger.error('Activity failed after all attempts', {
+    activityId: activity.activityId,
+    activityType: activity.activityType,
+    attempts: retryCount,
+    instanceId: context.workflowInstance.id,
+    err: lastError,
+  })
 
   return {
     activityId: activity.activityId,
@@ -498,7 +540,8 @@ async function executeActivityByType(
   em: EntityManager,
   container: AwilixContainer,
   activity: ActivityDefinition,
-  context: ActivityContext
+  context: ActivityContext,
+  signal?: AbortSignal
 ): Promise<any> {
   // Interpolate config variables from context (including workflow metadata)
   const interpolatedConfig = interpolateVariables(activity.config, context.workflowContext, context.workflowInstance)
@@ -508,7 +551,7 @@ async function executeActivityByType(
       return await executeSendEmail(interpolatedConfig, context, container)
 
     case 'CALL_API':
-      return await executeCallApi(em, interpolatedConfig, context, container)
+      return await executeCallApi(em, interpolatedConfig, context, container, signal)
 
     case 'EMIT_EVENT':
       return await executeEmitEvent(interpolatedConfig, context, container)
@@ -517,7 +560,7 @@ async function executeActivityByType(
       return await executeUpdateEntity(em, interpolatedConfig, context, container)
 
     case 'CALL_WEBHOOK':
-      return await executeCallWebhook(interpolatedConfig, context)
+      return await executeCallWebhook(interpolatedConfig, context, { signal })
 
     case 'EXECUTE_FUNCTION':
       return await executeFunction(interpolatedConfig, context, container)
@@ -598,6 +641,17 @@ export async function executeEmitEvent(
     throw new Error('EMIT_EVENT requires "eventName" field')
   }
 
+  // Emissions are fire-and-forget and no subscriber validates the payload shape,
+  // so an unresolved `{{context.x}}` here is even quieter than on the command
+  // path — it ships the literal template to every consumer. Fail loudly instead.
+  const unresolvedPayloadKeys = findUnresolvedTemplateKeys(payload)
+  if (unresolvedPayloadKeys.length > 0) {
+    throw new Error(
+      `EMIT_EVENT payload contains unresolved template variables for: ${unresolvedPayloadKeys.join(', ')}. ` +
+        `Check that the workflow context provides these keys.`
+    )
+  }
+
   // Get event bus from container
   const eventBus = container.resolve<{ emitEvent: (event: string, payload: unknown, options?: unknown) => Promise<unknown> | unknown }>('eventBus')
 
@@ -624,6 +678,23 @@ export async function executeEmitEvent(
   return { emitted: true, eventName, payload: enrichedPayload }
 }
 
+const UNRESOLVED_TEMPLATE_PATTERN = /\{\{[^}]+\}\}/
+
+function findUnresolvedTemplateKeys(value: unknown, path = ''): string[] {
+  if (typeof value === 'string') {
+    return UNRESOLVED_TEMPLATE_PATTERN.test(value) ? [path] : []
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => findUnresolvedTemplateKeys(item, `${path}[${index}]`))
+  }
+  if (value && typeof value === 'object') {
+    return Object.entries(value).flatMap(([key, nested]) =>
+      findUnresolvedTemplateKeys(nested, path ? `${path}.${key}` : key)
+    )
+  }
+  return []
+}
+
 /**
  * UPDATE_ENTITY activity handler
  *
@@ -646,11 +717,14 @@ export async function executeEmitEvent(
  *   "commandId": "sales.orders.update",
  *   "statusDictionary": "sales.order_status",
  *   "input": {
- *     "id": "{{context.id}}",
+ *     "id": "{{context.orderId}}",
  *     "statusValue": "pending_approval"
  *   }
  * }
  * ```
+ *
+ * Every `{{...}}` reference in `input` must resolve against the workflow context —
+ * an unresolved reference is rejected rather than forwarded to the command bus.
  */
 export async function executeUpdateEntity(
   em: EntityManager,
@@ -664,8 +738,29 @@ export async function executeUpdateEntity(
     throw new Error('UPDATE_ENTITY requires "commandId" field (e.g., "sales.documents.update")')
   }
 
+  const workflowSafeCommand = getWorkflowSafeCommand(commandId)
+  if (!workflowSafeCommand) {
+    throw new Error('UPDATE_ENTITY command is not allowed')
+  }
+
   if (!input || typeof input !== 'object') {
     throw new Error('UPDATE_ENTITY requires "input" object with entity data')
+  }
+
+  const actorUserId = typeof context.userId === 'string' ? context.userId.trim() : ''
+  if (!actorUserId) {
+    throw new Error('UPDATE_ENTITY requires an authenticated workflow user')
+  }
+
+  const authorized = await workflowUserHasAllFeatures(
+    container,
+    actorUserId,
+    workflowSafeCommand.requiredFeatures,
+    context.workflowInstance.tenantId,
+    context.workflowInstance.organizationId
+  )
+  if (!authorized) {
+    throw new Error('UPDATE_ENTITY command is not authorized')
   }
 
   // Resolve CommandBus from container
@@ -673,6 +768,14 @@ export async function executeUpdateEntity(
 
   if (!commandBus || typeof commandBus.execute !== 'function') {
     throw new Error('CommandBus not available in container')
+  }
+
+  const unresolvedKeys = findUnresolvedTemplateKeys(input)
+  if (unresolvedKeys.length > 0) {
+    throw new Error(
+      `UPDATE_ENTITY input contains unresolved template variables for: ${unresolvedKeys.join(', ')}. ` +
+        `Check that the workflow context provides these keys.`
+    )
   }
 
   // Prepare final input, resolving statusValue if provided
@@ -694,12 +797,10 @@ export async function executeUpdateEntity(
   }
 
   // Build synthetic CommandRuntimeContext for workflow execution
-  // Use nil UUID for system actions when no user context is available
-  const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000'
   const ctx = {
     container,
     auth: {
-      sub: context.userId || SYSTEM_USER_ID,
+      sub: actorUserId,
       tenantId: context.workflowInstance.tenantId,
       orgId: context.workflowInstance.organizationId,
       isSuperAdmin: false,
@@ -748,7 +849,7 @@ async function resolveDictionaryEntryId(
     })
 
     if (!dictionary) {
-      console.warn(`[UPDATE_ENTITY] Dictionary not found: ${dictionaryKey}`)
+      logger.warn('Dictionary not found', { component: 'UPDATE_ENTITY', dictionaryKey })
       return null
     }
 
@@ -762,13 +863,13 @@ async function resolveDictionaryEntryId(
     })
 
     if (!entry) {
-      console.warn(`[UPDATE_ENTITY] Dictionary entry not found: ${dictionaryKey}/${value}`)
+      logger.warn('Dictionary entry not found', { component: 'UPDATE_ENTITY', dictionaryKey, value })
       return null
     }
 
     return entry.id
   } catch (error) {
-    console.error(`[UPDATE_ENTITY] Error resolving dictionary entry:`, error)
+    logger.error('Error resolving dictionary entry', { component: 'UPDATE_ENTITY', err: error })
     return null
   }
 }
@@ -1436,21 +1537,28 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Execute a promise with timeout
+ *
+ * Only CALL_API and CALL_WEBHOOK honour the abort signal today — they forward
+ * it to `fetch`. SEND_EMAIL, EMIT_EVENT, UPDATE_ENTITY and EXECUTE_FUNCTION
+ * still run to completion after the timeout has been recorded. Tracked in
+ * #5148.
  */
 async function executeWithTimeout<T>(
-  executor: () => Promise<T>,
+  executor: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number
 ): Promise<T> {
   let timeoutId: NodeJS.Timeout
+  const abortController = new AbortController()
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
+      abortController.abort()
       reject(new Error(`Activity execution timeout after ${timeoutMs}ms`))
     }, timeoutMs)
   })
 
   try {
-    return await Promise.race([executor(), timeoutPromise])
+    return await Promise.race([executor(abortController.signal), timeoutPromise])
   } finally {
     clearTimeout(timeoutId!)
   }

@@ -48,7 +48,7 @@ type BackendChromePayload = {
 
 `AppShell` prefers `payload.brand.logo` over the static `logo` prop. If no custom organization logo exists, the current Open Mercato logo behavior is unchanged. Custom organization logos use the existing rounded/cropped icon treatment unless `brand.logo.preserveAspectRatio` is true, in which case they render with contained object fit so uploaded wordmarks are not cropped.
 
-The settings page uploads files via `/api/attachments` using `entityId=directory.organization` and `recordId=<organizationId>`, then stores the returned image URL through `/api/directory/organization-branding`. External URLs are validated and stored directly.
+The settings page uploads files via `/api/attachments` using `entityId=directory.organization` and `recordId=<organizationId>`, then stores the returned original file URL through `/api/directory/organization-branding`. External URLs are validated and stored directly.
 
 The branding endpoint resolves organization scope with the same directory scope utilities used elsewhere. It rejects ambiguous "all organizations" scope because a branding write needs a concrete target organization. Writes execute `directory.organizations.update` through the command bus so the standard directory command behavior remains the single write path.
 
@@ -108,13 +108,12 @@ No existing `BackendChromePayload` fields are removed or narrowed.
 
 - Requires `directory.organizations.view`.
 - Requires a concrete selected organization.
-- Returns `{ organizationId, organizationName, tenantId, logoUrl, logoPreserveAspectRatio, updatedAt }`.
+- Returns `{ organizationId, organizationName, tenantId, logoUrl }`.
 
 `PUT /api/directory/organization-branding`
 
 - Requires `directory.organizations.manage`.
 - Validates `logoUrl` as an external URL, internal attachment image/file URL, or `null`.
-- Accepts the optional `logoPreserveAspectRatio` preference and enforces optimistic locking through `updatedAt`.
 - Updates the organization through `directory.organizations.update` so audit, undo, indexing, and events remain consistent.
 
 `GET /api/auth/admin/nav`
@@ -170,8 +169,8 @@ Unit/API and UI smoke coverage:
   - reset to default,
   - default-off and enabled keep-aspect-ratio preference saves,
   - upload flow through `/api/attachments` before branding save,
-  - uploaded PNG/JPEG/WebP logos persist original attachment file URLs instead of square thumbnails,
-  - external SVG logo URLs remain supported through the URL field,
+- uploaded PNG/JPEG/WebP logos persist original attachment file URLs instead of square thumbnails,
+  while external SVG logo URLs remain supported through the URL field,
   - file picker cancel keeps the pending selected-file preview.
 - `packages/ui/src/backend/__tests__/AppShell.test.tsx`
   - sidebar logo fallback and custom brand rendering,

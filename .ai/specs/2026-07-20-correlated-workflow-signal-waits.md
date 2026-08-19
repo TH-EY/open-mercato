@@ -2,374 +2,410 @@
 
 ## TLDR
 
-Extend the existing `WAIT_FOR_SIGNAL` step with additive, persisted correlation so a workflow can pause for a domain event concerning the exact record created earlier in the same execution. The first scoped event that matches the routing data and a valid outgoing transition resumes the root token or parallel branch atomically; duplicates are idempotent, while routing matches rejected by transition conditions leave the wait active.
+Extend the existing `WAIT_FOR_SIGNAL` step with optional event correlation. When a wait opens, the executor resolves an expected scalar from the effective workflow context, persists the subscription on the active `StepInstance`, and resumes only when a trusted persistent domain event has the same signal name, tenant, organization, payload path, and normalized value.
 
-The MVP reuses `StepInstance`, the persistent event bus, existing transition conditions, and the current workflow executor. It does not add a new wait step type, polling retries, a separate condition DSL, early-event replay, or new timeout semantics.
+The runtime remains generic. It does not add a new wait type, poll external state, require the customers module, define a customer event, or change current timeout behavior. Manual signals and uncorrelated waits remain compatible.
 
 ## Overview
 
-A transition activity can create an external or cross-module record through `CALL_API`, but the workflow cannot currently persist a subscription to a later domain event for that newly created record. Existing instance-level `correlationKey` is fixed at workflow start and cannot represent a correlation key produced mid-run.
+Open Mercato already has durable workflow pauses through `WAIT_FOR_SIGNAL`, manual signal delivery, persistent events, transition conditions, and parallel branch execution. The missing capability is an exact runtime subscription when the identifier to await becomes known only after execution starts.
 
-This feature adds a stable activity-result namespace, resolves the wait correlation when the step is entered, persists the resolved subscription on the active `StepInstance`, and routes persistent domain events through an idempotent workflows subscriber.
+The proposal follows the message-subscription model described by [Camunda 8](https://docs.camunda.io/docs/components/concepts/messages/): a message name and correlation key select an open process subscription. Unlike Camunda's buffered-message options, this MVP consumes only events delivered after the wait is durably registered.
 
 ## Problem Statement
 
-The current `WAIT_FOR_SIGNAL` pauses an instance or branch by signal name only. Signal handling completes the active step before confirming an outgoing transition, and a rejected condition can leave the workflow running on the same wait step. The persistent event worker already forwards trusted event name, tenant, and organization metadata to wildcard subscribers, but customer lifecycle emits do not currently populate that trusted scope in event options.
+`WAIT_FOR_SIGNAL` can pause a workflow and receive a manual signal by workflow instance identity or existing instance correlation. It cannot persist a record-specific value resolved from the current root or branch context and automatically match a later domain event against that value.
 
-The engine therefore cannot safely express: create a customer interaction task, wait for that exact task to be completed, then continue exactly once.
+Using activity retry for this purpose would model an idle business wait as repeated execution failure, consume worker capacity, and couple the workflow to polling. Matching only by signal name would allow an unrelated record completion to advance the wrong workflow. Instance-start correlation is also insufficient because the awaited record may be created later or differ per parallel branch.
+
+## Goals
+
+- Add optional correlation configuration to `WAIT_FOR_SIGNAL`.
+- Resolve the expected value when the root or branch enters the wait.
+- Persist trusted routing data on the active step execution.
+- Route persistent events within exact tenant and organization scope.
+- Resume only the matching root token or parallel branch.
+- Evaluate outgoing transition conditions before consuming the wait.
+- Make repeated and concurrent event delivery idempotent.
+- Preserve manual signal APIs and uncorrelated definitions.
+- Round-trip the optional configuration through existing definition APIs and editors.
+
+## Non-Goals
+
+- Adding `WAIT_FOR_PROPERTY`, `WAIT_FOR_TASK`, or another step type.
+- Polling APIs, database records, or context values.
+- Replaying or buffering events emitted before wait registration.
+- Adding or enforcing signal deadlines or timeout transitions.
+- Defining or changing customer, sales, or other domain events.
+- Adding a stable activity-output namespace; that is specified independently in `2026-07-20-stable-workflow-activity-outputs.md`.
+- Starting workflow instances from events; the current event-trigger subscriber remains separate.
+- Creating direct ORM relationships between modules.
+
+## User Stories and Use Cases
+
+- A workflow pauses for a later domain event about the exact record ID already present in its context.
+- Two workflow instances waiting for the same event name but different record IDs advance independently.
+- Two parallel branches can wait on distinct IDs without changing sibling or join state.
+- A module emits an ordinary scoped persistent event without importing workflow internals.
+- Existing callers continue to deliver manual signals unchanged.
 
 ## Proposed Solution
 
-- Add optional `signalConfig.correlation.contextPath` and `payloadPath` fields.
-- Preserve legacy activity output keys and additionally store outputs at `activities.<activityId>`.
-- Persist resolved signal routing fields on the active `StepInstance` with a scoped lookup index.
-- Add a persistent wildcard workflows subscriber that resolves matching active waits from trusted event metadata.
-- Evaluate outgoing transitions against a namespaced candidate signal payload before consuming the wait.
-- Consume and resume under a transaction and pessimistic locks, including parallel-branch targeting.
-- Preserve existing uncorrelated manual signal APIs and current timeout behavior.
+### Definition contract
 
-## Goals / Non-Goals
-
-### Goals
-
-- Let a workflow activity create a record and let a later `WAIT_FOR_SIGNAL` subscribe to an event for that exact record.
-- Resolve the expected correlation value from the effective token context when the wait step is entered.
-- Deliver persistent events to matching root or parallel-branch waits with tenant and organization isolation.
-- Evaluate outgoing transition conditions with the candidate signal payload before consuming the wait.
-- Make repeated delivery of the same persistent event safe and idempotent.
-- Preserve current definitions and manual signal clients that do not use correlation.
-- Expose correlation configuration in both workflow node-editing paths.
-
-### Non-Goals
-
-- A new workflow step type or a second workflow runtime.
-- Polling a remote API with retry policy while a workflow is paused.
-- Replacing the existing transition condition and pre-condition mechanisms.
-- Replaying domain events emitted before the wait subscription was persisted.
-- Implementing or changing timeout/deadline enforcement for `WAIT_FOR_SIGNAL`.
-- Changing the instance-level `correlationKey` start/resume APIs.
-- Adding direct ORM relationships between workflows and customers.
-
-## Resolved Design Decisions
-
-1. **Keep `WAIT_FOR_SIGNAL`.** Correlation is optional configuration on the existing step. A separate `WAIT_FOR_PROPERTY`, `WAIT_FOR_TASK`, or CRM-specific step would duplicate pause/resume behavior and couple workflows to another module.
-2. **Use domain events, not polling.** The customer interaction completion event already exists and persistent delivery provides the correct reliability boundary. Retry policy remains an activity execution concern, not a waiting mechanism.
-3. **Persist a resolved subscription on `StepInstance`.** One active wait maps to one active step instance, so a separate subscription entity would add lifecycle and consistency work without a current need.
-4. **Use trusted subscriber context for scope.** `tenantId`, `organizationId`, and `eventName` come only from persistent event metadata. Matching never trusts similarly named payload fields.
-5. **Deliver to every exact scoped match.** Separate workflow instances may intentionally wait for the same event, path, and correlation value. Each matched active step is processed independently and exactly once.
-6. **Keep early events out of scope.** The guaranteed sequence is activity result committed to context, wait subscription persisted, then matching event received.
-7. **Keep timeout behavior unchanged.** The existing timeout remains definition metadata parsed and logged by the step handler; this feature does not introduce a scheduler or deadline field.
-
-## Definition Contract
-
-Correlation is an additive optional object:
+Add an optional pair to the existing signal configuration:
 
 ```ts
 signalConfig: {
-  signalName: 'customers.interaction.completed',
+  signalName: 'domain.record.completed',
   timeout?: 'PT5M',
   correlation?: {
-    contextPath: 'activities.create_customer_task.body.id',
+    contextPath: 'record.id',
     payloadPath: 'id',
   },
 }
 ```
 
-- `contextPath` reads the expected value from the effective token context when `WAIT_FOR_SIGNAL` is entered.
-- `payloadPath` reads the observed value from the later event payload.
-- Both fields are required when `correlation` is present. Neither may be configured alone.
-- Paths use dot-separated object keys. Each segment accepts letters, digits, `_`, and `-`; empty segments, array indexes, wildcards, and prototype keys are rejected.
-- The resolved values must be non-empty scalar strings, numbers, or booleans. Values are normalized with `String(value)` before comparison. Objects, arrays, `null`, `undefined`, and empty strings fail wait entry with a clear step execution error.
-- A definition without `correlation` retains the legacy manual-signal behavior and is not auto-resumed by the domain-event subscriber.
+- `contextPath` reads the expected value from the effective root or branch context when the wait opens.
+- `payloadPath` reads the observed value from a later event payload.
+- Both fields are required when `correlation` exists.
+- Paths are dot-separated object keys. Empty segments, array syntax, wildcards, and prototype keys are invalid.
+- Resolved values must be scalar strings, numbers, or booleans. Normalize with `String(value).trim()` and require 1–255 Unicode code points and at most 1,020 UTF-8 bytes before persistence. Apply the same normalization and limits to expected and observed values so oversized input is rejected in application code rather than by the database.
+- Missing, empty, object, or array context values fail wait entry instead of creating a broad subscription.
+- Definitions without `correlation` use the existing uncorrelated/manual behavior.
 
-The customer-task use case is configured as:
+The context may come from any existing definition-owned path. If a preceding activity creates the awaited record, the independently specified stable activity-output contract provides the recommended path `activities.<activityId>...`; it is not required by this runtime design.
+
+## Data Models
+
+Add nullable routing properties to `StepInstance`:
+
+| Property | Column | Type | Purpose |
+| --- | --- | --- | --- |
+| `waitSignalName` | `wait_signal_name` | `varchar(255)` | Trusted event name expected by the active wait |
+| `waitCorrelationKey` | `wait_correlation_key` | `varchar(255)` | Expected scalar resolved and normalized at wait entry |
+| `waitPayloadPath` | `wait_payload_path` | `varchar(500)` | Validated event payload path used for comparison |
+
+Add a composite candidate-lookup index beginning with tenant, organization, active status, and signal name, followed by correlation key and payload path as required by the final query plan. Confirm the exact column order through the generated SQL and query-plan test before implementation is finalized.
+
+Existing rows retain `NULL` values and need no backfill. The workflow definition remains the source for declarative paths; the step execution stores only resolved routing data needed for delivery and audit.
+
+Correlation values are limited by documentation and validation to opaque stable identifiers, not secrets, credentials, contact fields, or free text. `varchar(255)` matches the 255-code-point contract; the explicit 1,020-byte ceiling covers the maximum four-byte UTF-8 representation deterministically. No encryption map is added, and values are not copied into application logs.
+
+## Architecture
 
 ```text
-CALL_API activity create_customer_task
-  -> result at activities.create_customer_task.body.id
-WAIT_FOR_SIGNAL customers.interaction.completed
-  -> expected value from activities.create_customer_task.body.id
-  -> observed value from event payload id
+root or branch enters correlated WAIT_FOR_SIGNAL
+  -> resolve contextPath from effective context
+  -> persist active StepInstance routing fields
+  -> pause token
+
+trusted persistent event
+  -> generic workflows subscriber
+  -> exact scoped candidate lookup
+  -> lock and re-check candidate token
+  -> evaluate transition with candidate signal context
+  -> consume and resume once, or remain paused
 ```
 
-## Activity Output Contract
+The workflows module owns registration, routing, and execution. Domain modules only emit their declared persistent events. The new subscriber is distinct from the current event-trigger subscriber because starting an instance and resuming an active wait are separate side effects and idempotency boundaries.
 
-Every successful activity result is additionally written below a stable activity-ID namespace:
+### Wait registration
 
-```ts
-context.activities[activityId] = output
-```
+When a root or branch token enters a correlated wait:
 
-This applies to synchronous transition activities, synchronous step activities, and completed asynchronous activities. Existing observable keys remain unchanged:
+1. Resolve `contextPath` against that token's effective context.
+2. Validate and normalize the scalar result.
+3. Persist signal name, key, and payload path on the active `StepInstance` in the same transaction as the paused token state.
+4. Record the existing workflow wait audit event without copying full context or event payload into logs.
+5. Pause the root instance or exact branch through the current state transition.
 
-- synchronous outputs still remain under `activityName || activityType`;
-- asynchronous outputs still remain under `${activityId}_result`;
-- existing context values outside `activities` are not renamed or removed.
+If resolution fails, wait entry fails through the existing workflow failure path. No partially registered broad subscription is stored.
 
-Merging a new output preserves other entries already present under `context.activities`.
+### Persistent event routing
 
-## Data Model
+Add one focused auto-discovered persistent workflows subscriber:
 
-Add nullable routing columns to `step_instances`:
+1. Require trusted `eventName`, `tenantId`, and `organizationId` from subscriber metadata.
+2. Never derive tenant or organization from event payload fields.
+3. Treat payload metadata, including the existing `_workflow` object, as untrusted application data that cannot set or override scope.
+4. Accept `EMIT_EVENT` as a legitimate source when the event bus attaches trusted tenant and organization options. Authoring such an emission already requires workflow-definition mutation permission; this feature does not create a stronger event-authority tier.
+5. Read the distinct payload paths used by active waits for the scoped signal name.
+6. Resolve each path once against the payload and query exact candidates by trusted scope, signal name, payload path, and normalized key.
+7. Process each exact active match independently; multiple workflows may intentionally await the same domain event.
 
-| Property | Column | Type | Meaning |
-|---|---|---|---|
-| `waitSignalName` | `wait_signal_name` | varchar(255), nullable | Trusted event name expected by this active wait |
-| `waitCorrelationKey` | `wait_correlation_key` | varchar(255), nullable | Expected scalar resolved from token context |
-| `waitPayloadPath` | `wait_payload_path` | varchar(500), nullable | Definition path used to extract the event value |
+The subscriber does not import domain entities, commands, or module-specific event payload types.
 
-Add a composite lookup index covering tenant, organization, active status, signal name, and correlation key. Existing rows receive `NULL` for all three fields. The fields are set only for correlated `WAIT_FOR_SIGNAL` steps and cease to be routable when the step status leaves `ACTIVE`; no cleanup mutation is required for historical step records.
+### Atomic condition-before-consumption
 
-The definition keeps the declarative paths. The active `StepInstance` keeps only the resolved routing data needed to deliver and audit that particular wait.
+Handle every candidate in a transaction:
 
-## Runtime Architecture
+1. Lock the workflow instance and active step, then re-check status, scope, signal name, payload path, and key.
+2. For a branch wait, lock and verify the exact `WorkflowBranchInstance` and token cursor.
+3. Build candidate context under `signals.<stepId>` with signal name, payload, and receipt time while preserving current compatible flat aliases.
+4. Evaluate outgoing automatic transitions, including inline conditions and preconditions, against the candidate context.
+5. If no transition is valid, leave the wait active and paused and do not persist the candidate payload.
+6. If a transition is valid, merge namespaced signal context, complete the active step, record signal receipt, and execute the selected transition for the exact token.
+7. Execute the selected transition through the existing token-aware transition handler using the subscriber-owned transactional entity manager.
+8. If transition execution fails before commit, roll back the active-step exit, signal context, cursor, workflow event log, and ORM writes performed through that transaction. Do not claim rollback for HTTP calls, emitted events, accepted queue jobs, or other external activity side effects; those retain their existing activity idempotency and retry contract.
 
-### Registering the wait
+The persistent subscriber creates one database transaction per exact candidate and passes that transaction through locks, condition evaluation, step exit, event logging, and token-aware transition execution. Automatic continuation after the selected transition runs through the existing executor after commit. A continuation failure leaves the consumed wait exited and records the workflow through the existing durable failure path; it does not recreate the wait.
 
-When a root or branch token enters `WAIT_FOR_SIGNAL`:
-
-1. Resolve the configured `contextPath` against the token's effective context (`instance.context` for root, token read context for a branch).
-2. Validate and normalize the resolved scalar.
-3. Persist `waitSignalName`, `waitCorrelationKey`, and `waitPayloadPath` on the already-created active `StepInstance` in the same transaction as the paused token state.
-4. Log `SIGNAL_AWAITING` with routing metadata but not the full source context.
-5. Mark the root `PAUSED` or branch `PAUSED`, retaining current behavior.
-
-If correlation is absent, the three columns remain `NULL` and the wait is reachable through the existing manual signal API only.
-
-### Routing a persistent event
-
-Add a focused persistent wildcard subscriber under the workflows module. It is separate from the existing event-trigger subscriber because starting a workflow and resuming an active wait are different side effects.
-
-The subscriber:
-
-1. Rejects delivery when trusted `eventName`, `tenantId`, or `organizationId` is missing.
-2. Rejects events carrying the platform-owned `_workflow.workflowInstanceId` provenance added by user-authored `EMIT_EVENT` activities. Such events remain available for ordinary workflow choreography but cannot impersonate an authoritative domain mutation and consume a correlated wait.
-3. Reads only the distinct configured payload paths for active subscriptions scoped by trusted tenant, organization, and signal name.
-4. Resolves each distinct path once, then queries exact candidates by scope, signal name, payload path, and normalized correlation key so the composite routing index can narrow the working set.
-5. Calls the signal delivery service for every exact match. A match in one workflow never suppresses another legitimate match.
-
-The subscriber does not import customer code and does not interpret customer-specific fields. `customers.interaction.completed` is simply the first concrete event using the generic contract.
-
-### Atomic candidate delivery
-
-Each exact candidate is consumed in a transaction:
-
-1. Lock the `StepInstance` pessimistically and re-check `ACTIVE`, scope, signal name, payload path, and correlation key.
-2. Lock its `WorkflowInstance`; for a branch wait, also lock the exact `WorkflowBranchInstance` and verify it remains `PAUSED` on the same step.
-3. Build candidate signal context at:
-
-   ```ts
-   signals[stepId] = {
-     name: eventName,
-     payload,
-     receivedAt,
-   }
-   ```
-
-4. Evaluate only outgoing `trigger: 'auto'` transitions, including inline conditions and pre-conditions, using the candidate token context.
-5. If no transition is valid, log `SIGNAL_IGNORED` with a reason and leave the step and token paused. Do not persist the candidate signal payload.
-6. If a transition is valid, merge the namespaced signal context into the root or branch namespace, mark the token resumable, exit the active step, log `SIGNAL_RECEIVED`, and execute the selected transition for the exact execution token. Here, executing the selected transition includes its conditions and activities, advancing the token cursor, and entering the destination step through `executeTransitionForToken`.
-7. If that in-transaction transition reports failure, throw so the transaction rolls back the signal context, wait exit, cursor change, and destination-step effects.
-8. Commit only after the selected transition and destination-step entry succeed. Then invoke the normal workflow executor to continue any later automatic transitions. A failure in this post-commit continuation does not resurrect the legitimately consumed wait; it marks the parent instance `FAILED` with a recovery marker while retaining the root or branch cursor at the durable destination. The existing retry endpoint restores `RUNNING` for a root token or `FORKED` for a branch token and continues from that cursor.
-
-The pre-lock discovery query is only a candidate list. The locked re-check is the idempotency boundary: a redelivered event or concurrent handler finds that the step is no longer active and becomes a no-op.
+The locked active-step re-check is the database idempotency boundary. A concurrent or repeated delivery observes the step as inactive after the first successful commit and becomes a no-op. If transition execution rolls back before commit, the wait remains active and persistent delivery may retry; any external transition activity that completed before the rollback follows its existing idempotency requirements and is not made exactly-once by this feature.
 
 ### Manual signal compatibility
 
-The existing instance-ID and instance-correlation APIs remain supported with their current request and response contracts. Their consume order is corrected to use the same invariant: build candidate context, evaluate a valid automatic transition, then exit the active wait and resume. This intentionally corrects one invalid legacy behavior: a condition rejection now keeps the root or branch paused instead of leaving it running on an already exited wait.
-
-Legacy manual payload aliases and flat payload merge remain available to existing definitions. The new `signals.<stepId>` namespace is added for correlated event delivery and may also be populated by the refactored manual path without removing old keys.
-
-## Customer Event Scope
-
-`customers.interaction.completed` already carries the interaction `id` required by `payloadPath: 'id'`. Update the customer lifecycle emitter to pass trusted `tenantId` and `organizationId` in event options together with `persistent: true`. Completion-event enqueue errors are no longer swallowed. A hidden nullable `CustomerInteraction.completionEventEmittedAt` delivery marker is checked under a pessimistic row lock: the durable event is enqueued once, then the marker is persisted in the same database transaction. If enqueue fails, the marker remains `NULL`, so retrying completion republishes without repeating the domain mutation; after success, repeated completion calls are no-ops for event delivery.
-
-Every lifecycle-event call site must supply scope from command arguments or persisted entity state. The event payload remains a domain contract, but its tenant and organization properties are not authorization or routing inputs.
-
-No existing event ID or payload field is changed.
-
-## UI/UX and Internationalization
-
-Both current node-editing implementations must expose the same optional fields for `WAIT_FOR_SIGNAL`:
-
-- **Correlation context path** — example `activities.create_customer_task.body.id`;
-- **Event payload path** — example `id`.
-
-Saving either field requires the other. Emptying both removes `signalConfig.correlation`. Reopening a saved workflow must restore both values. The editor continues to expose signal name and timeout unchanged.
-
-Labels, help text, validation messages, and examples use workflow translation keys in all existing workflow locales (`en`, `de`, `es`, `pl`). No user-facing strings introduced by this feature are hard-coded.
+Existing instance-ID and instance-correlation signal endpoints keep their routes, request shapes, auth, scope, response contracts, and current consumption semantics. Today manual delivery merges the payload, exits the active wait, and leaves the token `RUNNING` at the current step when no automatic transition exists or qualifies. This specification deliberately preserves that observable status/history behavior even though new event-correlated delivery evaluates conditions before consumption. Aligning manual delivery would be a separate backward-compatibility change.
 
 ## API Contracts
 
-No new HTTP route is required.
+No new HTTP route.
 
-- Workflow definition create/update/read endpoints accept and return the additive `signalConfig.correlation` object through the existing definition schema.
-- Existing `POST /api/workflows/instances/:id/signal` behavior and authorization remain compatible.
-- Existing instance-correlation signal endpoint remains unchanged.
-- Existing `POST /api/customers/interactions/complete` emits the already-declared persistent completion event with trusted scope options after successful completion.
+- Existing workflow definition create, update, and detail APIs accept and return the additive `signalConfig.correlation` object.
+- Existing manual signal endpoint request/response shapes and no-valid-transition status/history behavior remain unchanged.
+- Existing workflow instance-start correlation remains unchanged and distinct from step-level event correlation.
 
-## Migration & Backward Compatibility
+Definition schema validation rejects partial or unsafe correlation configuration with the existing validation response conventions.
 
-### Database migration
+## UI/UX
 
-- Generate a workflows module migration for the three nullable columns and composite index.
-- Generate a customers module migration for the hidden nullable completion-event delivery marker.
-- Update the workflows MikroORM snapshot through the repository generator; do not hand-edit generated registry files.
-- Do not run the migration against a local or shared database as part of implementation without explicit approval.
+Both existing workflow node editors add two optional fields for `WAIT_FOR_SIGNAL`:
 
-### Compatibility surfaces
+- **Correlation context path**, for example `activities.create_record.body.id`;
+- **Event payload path**, for example `id`.
 
-- **Database:** additive nullable columns in workflows and customers; no backfill and no rewrite of existing rows. Existing completed interactions publish at most once when the completion command is next retried.
-- **Definition JSON/schema:** optional nested fields; definitions without correlation validate and execute unchanged.
-- **Workflow status/state:** one intentional bug fix changes behavior—rejected candidates remain paused and active instead of producing an inconsistent running token with an exited wait.
-- **Manual signal API:** route, request shape, success status, scoping, and instance-correlation fan-out remain supported.
-- **Activity context:** new nested aliases are additive; legacy sync and async keys remain present. If the legacy alias itself is named `activities`, object output is merged with the stable namespace; a scalar legacy value remains scalar and the stable alias is omitted for that conflicting batch because both contracts cannot occupy the same JSON path.
-- **Events:** no event ID or payload removal; customer emit options gain trusted scope metadata.
-- **Parallel execution:** only the exact matched branch token resumes; siblings and join accounting are unchanged.
-- **Timeout:** current semantics are unchanged.
-- **UI:** old definitions load with blank correlation fields and save without a correlation object unless configured.
-- **RBAC:** no feature IDs, wildcard behavior, or authorization requirements change.
-- **Encryption and tenant isolation:** existing encrypted/scoped entity helpers remain in use; every lookup includes tenant and organization.
-- **Module decoupling:** workflows consumes the event generically; neither module creates a direct ORM or source dependency on the other.
-- **Generated registries/build exports:** regenerate subscribers after adding the file; no public package export is required unless a real test or call site needs it.
+Saving either field requires the other. Clearing both removes `correlation`. Reopening a saved definition restores both exact values. Signal name and timeout controls remain unchanged.
 
-## Implementation Plan
+Labels, help text, examples, and validation errors use workflow translation keys in every current locale (`en`, `de`, `es`, `pl`). The change reuses existing form fields, keyboard behavior, layout, and accessibility patterns; it adds no page, dialog, provider, status color, or design-system primitive.
 
-### Phase 1 — contracts and failing tests
+## Security, Privacy, Performance, and Cache
 
-- Extend validators and node form transformations with the correlation pair.
-- Add focused tests for schema validation, editor round-trip, path resolution, and additive activity output aliases.
-- Add failing signal tests for condition-first consumption, trusted scope, exact root/branch routing, and duplicate delivery.
+- Trusted subscriber metadata is the only source of tenant and organization scope.
+- Candidate discovery and locked re-checks include both `tenantId` and `organizationId`.
+- ORM queries remain parameterized; payload paths are resolved in application objects and never interpolated as SQL identifiers.
+- Full event payloads and workflow context are not logged.
+- Payload `_workflow`, `tenantId`, and `organizationId` fields cannot establish trust. Only event-bus options propagated into `SubscriberContext` scope routing.
+- Existing definition auth, RBAC features, mutation guards, and manual signal guards remain unchanged.
+- Candidate discovery performs one scoped distinct-path query and one indexed exact lookup per distinct active path. It does not load all active waits before matching.
+- Legitimate fan-out to many workflows sharing one key remains possible and is processed independently.
+- Active execution state is mutable and deliberately uncached.
 
-### Phase 2 — persistence and wait registration
+## Migration and Backward Compatibility
 
-- Add the `StepInstance` routing fields, composite index, migration, and snapshot.
-- Resolve and persist correlation in the wait step handler for root and branch tokens.
-- Keep uncorrelated waits on the legacy path.
+- Add three nullable `step_instances` columns and one scoped lookup index through generated workflows migrations and snapshots.
+- Existing rows require no backfill.
+- Uncorrelated definitions keep routing fields `NULL` and current behavior.
+- Existing definition payloads and manual signal requests remain valid.
+- No event ID, endpoint, RBAC feature, DI key, package export, or timeout behavior is removed or renamed.
+- Parallel execution changes only the exact matched branch; sibling and join behavior is unchanged.
+- Workflows remain decoupled from every event-emitting module.
 
-### Phase 3 — event routing and atomic consume
+## Implementation Approach
 
-- Add the persistent wildcard workflows subscriber and generic correlated delivery function.
-- Lock and re-check step, instance, and branch state; evaluate conditions before exit; resume through execution tokens.
-- Correct the legacy manual consume order without changing its API.
-- Forward trusted scope from customer lifecycle event emission.
-- Run `corepack yarn generate` for subscriber discovery.
+### Phase 1 — Definition and editor contract
 
-### Phase 4 — activity outputs and editor
+1. Extend shared workflow validators with the optional complete correlation pair and safe path grammar.
+2. Round-trip both fields through current form transforms and definition APIs.
+3. Add all locale strings and focused editor tests.
 
-- Add `activities.<activityId>` for sync and async completion paths while preserving legacy aliases.
-- Add the two correlation inputs and pair validation to both node-edit dialog paths.
-- Add and verify workflow translations for all existing locales.
+This phase is testable without enabling automatic event delivery.
 
-### Phase 5 — integration and delivery gates
+### Phase 2 — Persistence and registration
 
-- Add self-contained API integration coverage for definition round-trip and the customer-task flow.
-- Run focused unit/integration checks, build/typecheck as required by touched surfaces, and one fresh primary review.
-- Deploy the private EPC branch to `preview-epc.om.they.dev` through the existing runbook.
-- Run headed `agent-browser` QA, attach durable evidence to the Jira source task, read it back, and obtain an independent release-evidence review.
+1. Add nullable routing fields, composite index, generated migration, and ORM snapshot.
+2. Resolve and persist root and branch subscriptions at wait entry.
+3. Cover missing/non-scalar context, trusted field persistence, and rollback on registration failure.
 
-## Integration & Test Coverage
+This phase produces durable paused subscriptions but does not consume events.
 
-### Unit and module tests
+### Phase 3 — Scoped event delivery
 
-- Validator accepts a complete correlation pair and rejects partial, empty, unsafe, or non-string paths.
-- Node form transforms round-trip both paths and remove correlation when both are cleared.
-- Wait entry persists the resolved value for root and branch contexts.
-- Missing, empty, or non-scalar context values fail the wait step instead of creating a broad subscription.
-- Stable activity output is written for transition activities, step activities, and async completion while legacy keys remain.
-- Subscriber ignores missing trusted scope, wrong event name, wrong tenant/org, wrong payload path/value, and inactive steps.
-- A matching root event resumes only the exact wait.
-- A matching branch event resumes only the exact branch and preserves sibling state.
-- A false outgoing condition logs an ignored candidate and keeps the wait active/paused.
-- Duplicate or concurrent delivery does not execute the transition twice.
-- A selected-transition failure inside delivery rolls back signal context, wait exit, cursor movement, and destination-step effects.
-- A later automatic-continuation failure after commit leaves the token durably at the entered destination step and recoverable by the existing execution path.
-- A workflow-authored `EMIT_EVENT` carrying `_workflow` provenance cannot consume a correlated domain wait.
-- Completion-event enqueue failure is surfaced; an idempotent repeat re-enqueues only while the locked delivery marker remains empty, and successful delivery prevents further replay.
-- Existing manual root and branch signal behavior remains valid; false conditions now preserve the wait.
-- Customer completion emission passes trusted tenant and organization event options.
+1. Add the focused persistent subscriber and indexed candidate discovery.
+2. Implement locked root and branch re-checks and condition-before-consumption.
+3. Preserve manual signal delivery semantics and add explicit regression coverage for no-transition and rejected-transition response/status/history behavior.
+4. Cover exact scope, wrong values, oversized keys, duplicates, concurrency, rejection, database rollback, external-side-effect boundaries, and module-disabled behavior.
 
-### API integration tests
+This phase completes the generic runtime.
 
-`TC-WF-032` — correlated customer-task wait:
+### Phase 4 — Integration and headed verification
 
-1. Create all company and workflow fixtures through APIs; do not rely on seeded data.
-2. Configure a transition `CALL_API` activity with ID `create_customer_task` to create a customer-related task.
-3. Enter a correlated `WAIT_FOR_SIGNAL` for `customers.interaction.completed`, using `activities.create_customer_task.body.id` and payload `id`.
-4. Create a second control task.
-5. Start the workflow and poll until its exact wait is active and paused.
-6. Complete the control task and verify the workflow remains paused.
-7. Complete the task created by `CALL_API` and verify the workflow reaches `COMPLETED`.
-8. Deliver/retry the matching event again where the public test seam permits and verify no duplicate transition/history advancement.
-9. Clean up created records and workflow definition in `finally`.
+1. Add self-contained API integration scenarios using a synthetic declared persistent event.
+2. Verify definition create/read/update round-trip.
+3. Exercise both editor fields, save/reload, and a generic correlated wait in headed QA.
 
-`TC-WF-033` — definition correlation round-trip:
+No domain-specific emitter is added in this phase.
 
-1. Create a workflow definition with both correlation paths.
-2. Read it back and assert exact preservation.
-3. Update both paths, read it back again, and assert the updated values.
-4. Clean up in `finally`.
+## Integration and Test Coverage
 
-Both tests declare `integrationMeta.dependsOnModules = ['workflows', 'customers']` where applicable and use deterministic API polling rather than fixed sleeps.
+### Module coverage
 
-### Headed private QA
+- Validators accept a complete pair and reject partial, empty, non-scalar, unsafe paths, and values outside the 255-code-point/1,020-byte runtime limit.
+- Form transforms round-trip both fields and remove the object when both are empty.
+- Root and branch wait entry persist normalized trusted routing fields.
+- Missing or non-scalar context fails wait entry without a broad subscription.
+- Wrong event, tenant, organization, payload path, value, or inactive status does not resume a wait.
+- Exact matches resume only the intended root or branch.
+- False outgoing conditions leave the wait active and paused.
+- Concurrent and repeated delivery executes at most one transition per wait.
+- Transition failure rolls back wait consumption and destination effects.
+- Payload fields cannot spoof trusted scope; an `EMIT_EVENT` activity with trusted event-bus scope is accepted as an ordinary authorized source.
+- Existing manual root, branch, and instance-correlation signal behavior remains valid, including response, `RUNNING` status, active-step exit, and history when no transition qualifies.
 
-- In the visual editor, configure and save signal name plus both correlation paths; reload and confirm persistence.
-- Start a workflow that creates task A and waits for A.
-- Complete unrelated task B and confirm the workflow visibly remains paused.
-- Complete task A and confirm the workflow advances exactly once and the task is completed.
-- Refresh workflow history/state and verify the final status persists with a single signal/transition consumption.
-- Exercise a user with the intended workflow and customer permissions; verify no cross-organization task can resume the wait.
+### API integration coverage
 
-## Risks & Failure Scenarios
+Create a self-contained workflow and synthetic module event fixture:
 
-| Risk | Mitigation / expected behavior |
-|---|---|
-| Persistent event retry races with the first delivery | Pessimistic lock and active-step re-check make later delivery a no-op |
-| Two branches wait for the same signal | Route by exact `StepInstance` and lock the exact branch; siblings remain untouched |
-| Event payload carries spoofed tenant/org | Ignore payload scope and require trusted subscriber context |
-| User-authored workflow emits a reserved-looking domain event | Reject `_workflow`-provenance events from correlated wait delivery; only the real domain command can produce the accepted completion event |
-| Transition condition rejects the event | Leave wait active and token paused; log only the rejection reason/routing metadata |
-| Correlation path is invalid or missing at wait entry | Fail the step clearly; never create an unscoped subscription |
-| Activity output key change breaks definitions | Add `activities.<id>` while retaining every legacy alias |
-| Event arrives before registration | Not replayed in MVP; document ordering requirement |
-| Many waits use the same event name in one scope | Read projected distinct payload paths, resolve each once, then query exact path/key candidates through the composite routing index rather than materializing every wait |
-| Selected transition fails before commit | Transaction rolls back signal context, wait consumption, token cursor, and destination-step effects |
-| Later automatic continuation fails after commit | Wait remains legitimately consumed; the parent is marked failed with root/branch recovery metadata, and retry resumes from the durable destination cursor |
-| Customer completion commits but durable event enqueue fails | Keep the locked delivery marker empty, surface the failure, and allow the idempotent completion command to retry; successful enqueue records the marker and blocks replay flooding |
-| Customer module is disabled | No completion event is emitted; workflows remains decoupled and manual signal waits still work |
+1. Create a definition with correlated `WAIT_FOR_SIGNAL` and an initial context record ID.
+2. Start two workflow instances with different expected IDs and wait until both are paused.
+3. Emit a trusted persistent event for one ID and verify only its instance completes.
+4. Emit the same event again and verify no duplicate transition or history advancement.
+5. Emit the second event in a wrong organization and verify the remaining instance stays paused.
+6. Emit it in the correct scope and verify completion.
+7. Clean up all fixtures in `finally`.
 
-## Compliance Review
+Separately create, read, update, and re-read a definition to verify both paths round-trip through existing APIs.
 
-- **Scope cohesion:** one generic workflow capability plus the minimum customer event-scope fix required to exercise an existing domain event. No CRM-specific logic enters workflows.
-- **Backward compatibility:** additive definition fields, nullable columns, additive context aliases, unchanged endpoints/event IDs, and explicit legacy signal tests.
-- **Tenant safety:** trusted metadata only; tenant and organization included in discovery and locked re-checks.
-- **Module boundaries:** persistent events are the integration boundary; no cross-module ORM relationship or direct workflows-to-customers import.
-- **Reliability:** persistent subscriber, transactional consume, pessimistic locks, retry-safe no-op, and condition-before-exit invariant.
-- **Observability/privacy:** awaiting/ignored/received lifecycle events contain identifiers and reasons needed for diagnosis without copying full workflow context into logs.
-- **Operational impact:** one additive migration and one auto-discovered persistent subscriber; no new worker, queue, scheduler, dependency, or configuration flag.
+### Key UI path
 
-## Open Follow-ups (Out of Scope)
+Configure a signal name and both paths in the visual editor, save, reload, and verify exact persistence. Run the generic fixture, verify an unrelated event does not advance it, then emit the matching event and confirm one durable advancement.
 
-- Deadline enforcement and timeout transitions for signal waits.
-- Durable inbox/replay for events that predate wait registration.
-- UI path pickers or expression builders instead of text paths.
-- Operational metrics for correlated-wait backlog and delivery latency.
+## Risks and Impact Review
 
-## Implementation Status
+### Cross-tenant delivery
 
-- [x] Architecture and compatibility design
-- [x] Pre-implementation audit
-- [x] Contract and regression tests
-- [x] Runtime, migration, output namespace, and UI implementation
-- [x] Focused verification and primary/security review
-- [ ] Private deployment, headed QA, durable Jira evidence, and release-evidence review
-- [ ] Upstream contribution gates and public implementation
+- **Scenario**: An event payload contains an ID matching another tenant's wait.
+- **Severity**: Critical
+- **Affected area**: Workflow instances and branches.
+- **Mitigation**: Discovery and locked re-check use trusted subscriber tenant and organization; payload scope fields are ignored.
+- **Residual risk**: Future routing changes must retain explicit cross-scope tests.
+
+### Duplicate or concurrent delivery
+
+- **Scenario**: Persistent retries or workers process the same event more than once.
+- **Severity**: High
+- **Affected area**: Transitions and downstream activities.
+- **Mitigation**: Transactional locks and active-step re-check make only the first commit consumptive.
+- **Residual risk**: Duplicate jobs still consume worker time.
+
+### Condition rejection or transition failure
+
+- **Scenario**: Correlation matches but no condition passes, or destination execution fails.
+- **Severity**: High
+- **Affected area**: Wait consistency and recovery.
+- **Mitigation**: Conditions run before correlated consumption. A subscriber-owned transaction rolls back workflow database state written through its entity manager when selected-transition execution fails before commit. Continuation after commit uses the existing durable failure path.
+- **Residual risk**: External activity effects cannot be rolled back. If an external effect succeeds before a later pre-commit failure, persistent redelivery may invoke it again; activity implementations retain their existing idempotency, retry, and compensation responsibilities.
+
+### Early event arrival
+
+- **Scenario**: The event is emitted before the wait subscription commits.
+- **Severity**: Medium
+- **Affected area**: Workflows whose domain action can race wait registration.
+- **Mitigation**: Document create-then-register ordering and make registration transactional.
+- **Residual risk**: The MVP has no event inbox, TTL, or replay and therefore cannot recover an early event.
+
+### Fan-out and payload-path cardinality
+
+- **Scenario**: Many active paths or waits share one signal and key.
+- **Severity**: Medium
+- **Affected area**: Persistent worker latency.
+- **Mitigation**: Resolve distinct paths once and use scoped indexed exact lookups.
+- **Residual risk**: Intentional high fan-out remains unbounded; metrics and operational limits are deferred.
+
+## Alternatives Considered
+
+### New wait step type
+
+Rejected because it would duplicate pause, signal, transition, branch, timeout, and audit behavior already owned by `WAIT_FOR_SIGNAL`.
+
+### Retry-based polling
+
+Rejected because retry represents failed execution rather than a durable idle wait and adds worker load and latency.
+
+### Separate subscription entity
+
+Rejected for the current one-active-step model. `StepInstance` already owns the wait lifecycle; a second entity would add consistency and cleanup work without another current consumer.
+
+### Instance-level correlation only
+
+Rejected because the expected value may be produced after start and may differ per parallel branch.
+
+## Success Criteria
+
+- A root or branch wait resumes only for an exact trusted scoped event match.
+- Duplicate delivery cannot execute its transition twice.
+- Rejected conditions and failed transitions leave a consistent durable state.
+- Uncorrelated definitions and manual signal clients remain compatible.
+- Correlation fields survive API and editor round-trips.
+- Focused unit, integration, generation, typecheck/build, and headed UI gates pass.
+
+## Deferred Follow-Ups
+
+- Durable inbox or TTL replay for events emitted before registration.
+- Deadline enforcement and timeout transitions.
+- UI context/payload path pickers or expression builders.
+- Backlog, fan-out, and delivery-latency metrics.
+- Domain-specific adoption scenarios, including customer interaction completion.
+
+## Final Compliance Report — 2026-07-20
+
+### AGENTS.md Files Reviewed
+
+- `AGENTS.md`
+- `.ai/specs/AGENTS.md`
+- `packages/core/AGENTS.md`
+- `packages/core/src/modules/workflows/AGENTS.md`
+- `packages/events/AGENTS.md`
+- `packages/ui/AGENTS.md`
+- `BACKWARD_COMPATIBILITY.md`
+
+### Compliance Matrix
+
+| Rule Source | Rule | Status | Notes |
+| --- | --- | --- | --- |
+| Root and core guides | Preserve public contracts and behavior | Compliant | Correlation is optional; routes, manual requests, and uncorrelated definitions remain |
+| Core guide | No direct ORM relationships between modules | Compliant | Generic subscriber consumes declared persistent events only |
+| Workflows and events guides | Scope every lookup by tenant and organization | Compliant | Trusted event metadata scopes discovery and locked re-check |
+| Workflows guide | Respect root and branch state machines | Compliant | Exact token is locked, conditions precede consumption, and failures roll back |
+| Events guide | Subscribers are focused and idempotent | Compliant | One subscriber owns one resume side effect with active-step idempotency |
+| Core guide | Generate entity migrations and snapshots | Compliant | Nullable routing columns and index use repository tooling |
+| Core guide | New routes require OpenAPI and auth metadata | N/A | No route is added |
+| Backward compatibility | Do not remove or rename contract surfaces | Compliant | Existing signal and timeout contracts remain |
+| UI guide | Reuse controls, i18n, and accessibility | Compliant | Existing node editors gain translated optional fields only |
+| Cache guidance | Tenant-safe cache and invalidation | N/A | Active execution routing is deliberately uncached |
+| Spec guidance | Cover affected API and UI paths | Compliant | Definition round-trip, generic execution integration, and headed editor path are specified |
+
+### Internal Consistency Check
+
+| Check | Status | Notes |
+| --- | --- | --- |
+| Data model matches routing | Pass | Definition paths resolve to three active-step routing fields |
+| API matches UI | Pass | Existing APIs and both editors round-trip the same optional pair |
+| Risks cover side effects | Pass | Scope, concurrency, rollback, early events, and fan-out are explicit |
+| Commands | N/A | No domain mutation command is introduced |
+| Cache strategy | Pass | Mutable active subscriptions remain uncached |
+| Compatibility | Pass | Manual delivery, uncorrelated waits, events, and timeouts remain |
+
+### Non-Compliant Items
+
+None.
+
+### Verdict
+
+**Fully compliant** — approved for implementation after the required public claim and Core admission gates.
 
 ## Changelog
 
-- 2026-07-20: Initial implementation-ready specification for THOM-73.
-- 2026-07-20: Corrected the baseline assessment: the persistent event worker already forwards trusted event name and scope; only customer emit options require scope propagation.
-- 2026-07-20: Clarified the atomic boundary between selected-transition execution and post-commit automatic continuation; documented the intentional legacy condition-handling bug fix.
-- 2026-07-20: Implemented persisted correlation, exact event routing, root/branch recovery, stable activity outputs, editor fields, migration, and self-contained integration scenarios; added provenance filtering and idempotent customer completion event re-enqueue after implementation and security review.
-- 2026-07-20: Closed review findings by executing selected transitions by ID across signal/task/timer/advance paths, rolling failed post-commit continuation transactions back before recording recovery metadata, grouping routing paths in SQL, and persisting a locked completion-event delivery marker.
+### 2026-07-20
+
+- Initial specification for generic correlated event delivery to `WAIT_FOR_SIGNAL`.
+- Added exact root/branch routing, condition-before-consumption, editor/API coverage, risk analysis, and compliance review.
+
+### Review — 2026-07-20
+
+- Reviewer: Agent
+- Security: Passed
+- Performance: Passed
+- Cache: N/A
+- Commands: N/A
+- Risks: Passed
+- Verdict: Approved

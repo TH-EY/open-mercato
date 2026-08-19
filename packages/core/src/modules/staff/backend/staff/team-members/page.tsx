@@ -3,7 +3,8 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import type { ColumnDef, SortingFn, SortingState } from '@tanstack/react-table'
+import type { LegacyColumnDef as ColumnDef, LegacyFeatures } from '@tanstack/react-table/legacy'
+import type { SortFn, SortingState } from '@tanstack/react-table'
 import { Page, PageBody } from '@open-mercato/ui/backend/Page'
 import { DataTable, withDataTableNamespaces } from '@open-mercato/ui/backend/DataTable'
 import { RowActions } from '@open-mercato/ui/backend/RowActions'
@@ -21,6 +22,9 @@ import { useOrganizationScopeVersion } from '@open-mercato/shared/lib/frontend/u
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { Pencil, Users } from 'lucide-react'
 import { formatDateTime } from '@open-mercato/shared/lib/time'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('staff')
 
 const PAGE_SIZE = 50
 
@@ -138,7 +142,7 @@ export default function StaffTeamMembersPage() {
     },
   }), [t])
 
-  const groupedSortingFn = React.useCallback((field: GroupedSortField): SortingFn<TeamMemberRow> => {
+  const groupedSortingFn = React.useCallback((field: GroupedSortField): SortFn<LegacyFeatures, TeamMemberRow> => {
     return (rowA, rowB) => compareGroupedRows(field, labels.groups, rowA.original, rowB.original)
   }, [labels.groups])
 
@@ -269,7 +273,7 @@ export default function StaffTeamMembersPage() {
           ? payload.totalPages
           : Math.max(1, Math.ceil(items.length / PAGE_SIZE)))
     } catch (error) {
-      console.error('staff.team-members.list', error)
+      logger.error('staff.team-members.list', { err: error })
       flash(labels.errors.load, 'error')
     } finally {
       setIsLoading(false)
@@ -401,7 +405,7 @@ export default function StaffTeamMembersPage() {
       flash(labels.messages.deleted, 'success')
       handleRefresh()
     } catch (error) {
-      console.error('staff.team-members.delete', error)
+      logger.error('staff.team-members.delete', { err: error })
       flash(labels.errors.delete, 'error')
     }
   }, [confirm, handleRefresh, labels.actions.deleteConfirm, labels.actions.delete, labels.errors.delete, labels.messages.deleted])

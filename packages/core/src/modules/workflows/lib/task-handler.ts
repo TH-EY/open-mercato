@@ -17,12 +17,15 @@ import {
   WorkflowInstance,
   WorkflowEvent,
   StepInstance,
-  WorkflowDefinition,
 } from '../data/entities'
 import { executeWorkflow } from './workflow-executor'
+import { findDefinitionForInstance } from './find-definition'
 import * as stepHandler from './step-handler'
 import * as transitionHandler from './transition-handler'
 import { normalizeUserTaskFormSchema } from './user-task-form-schema'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('workflows')
 
 // ============================================================================
 // Types and Interfaces
@@ -232,11 +235,7 @@ async function completeUserTaskInTransaction(
   const currentStepId = instance.currentStepId
 
   // Load workflow definition to find transitions
-  const definition = await em.findOne(WorkflowDefinition, {
-    id: instance.definitionId,
-    tenantId,
-    organizationId,
-  })
+  const definition = await findDefinitionForInstance(em, instance)
 
   if (!definition) {
     throw new UserTaskError(
@@ -291,7 +290,7 @@ async function completeUserTaskInTransaction(
   )
 
   if (!transitionResult.success) {
-    console.error(`[TaskHandler] Transition failed:`, transitionResult.error)
+    logger.error('Transition failed', { component: 'task-handler', err: transitionResult.error })
     // Don't throw, just leave workflow in current state
     return
   }

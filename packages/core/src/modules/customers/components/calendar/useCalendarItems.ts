@@ -15,6 +15,10 @@ import {
 const PAGE_LIMIT = 100
 export const MAX_WINDOW_ITEMS = 500
 
+type FetchInteractionWindowOptions = {
+  recurrenceMasters?: boolean
+}
+
 /**
  * Cursor-follows `/api/customers/interactions` across the given window (already
  * padded by the caller) up to `MAX_WINDOW_ITEMS`. Shared by the grid data hook
@@ -23,6 +27,7 @@ export const MAX_WINDOW_ITEMS = 500
 export async function fetchInteractionWindow(
   window: CalendarRange,
   signal?: AbortSignal,
+  options: FetchInteractionWindowOptions = {},
 ): Promise<{ payloads: CalendarInteractionPayload[]; truncated: boolean }> {
   const collected: CalendarInteractionPayload[] = []
   let cursor: string | undefined
@@ -33,6 +38,7 @@ export async function fetchInteractionWindow(
       to: window.to.toISOString(),
       limit: String(PAGE_LIMIT),
     })
+    if (options.recurrenceMasters) params.set('recurrenceMasters', 'true')
     if (cursor) params.set('cursor', cursor)
     const call = await apiCall<{ items?: unknown[]; nextCursor?: string }>(
       `/api/customers/interactions?${params.toString()}`,
@@ -53,10 +59,45 @@ export async function fetchInteractionWindow(
   return { payloads: collected.slice(0, MAX_WINDOW_ITEMS), truncated }
 }
 
+export function mergeInteractionPayloads(
+  windowPayloads: CalendarInteractionPayload[],
+  recurringPayloads: CalendarInteractionPayload[],
+): { payloads: CalendarInteractionPayload[]; truncated: boolean } {
+  const windowById = new Map(windowPayloads.map((payload) => [payload.id, payload]))
+  const byId = new Map<string, CalendarInteractionPayload>()
+  for (const payload of recurringPayloads) {
+    byId.set(payload.id, windowById.get(payload.id) ?? payload)
+  }
+  for (const payload of windowPayloads) {
+    if (!byId.has(payload.id)) byId.set(payload.id, payload)
+  }
+  const payloads = Array.from(byId.values())
+  return {
+    payloads: payloads.slice(0, MAX_WINDOW_ITEMS),
+    truncated: payloads.length > MAX_WINDOW_ITEMS,
+  }
+}
+
+export async function fetchCalendarCandidates(
+  window: CalendarRange,
+  signal?: AbortSignal,
+): Promise<{ payloads: CalendarInteractionPayload[]; truncated: boolean }> {
+  const [windowResult, recurringResult] = await Promise.all([
+    fetchInteractionWindow(window, signal),
+    fetchInteractionWindow(window, signal, { recurrenceMasters: true }),
+  ])
+  const merged = mergeInteractionPayloads(windowResult.payloads, recurringResult.payloads)
+  return {
+    payloads: merged.payloads,
+    truncated: windowResult.truncated || recurringResult.truncated || merged.truncated,
+  }
+}
+
 type ActivityTypeDictionaryEntry = {
   value?: unknown
   label?: unknown
   color?: unknown
+  icon?: unknown
 }
 
 export type UseCalendarItemsResult = {
@@ -66,6 +107,7 @@ export type UseCalendarItemsResult = {
   truncated: boolean
   typeLabels: Record<string, string>
   typeColors: Record<string, string | null>
+  typeIcons: Record<string, string | null>
   refetch: () => void
 }
 
@@ -76,6 +118,7 @@ export function useCalendarItems(range: CalendarRange): UseCalendarItemsResult {
   const [truncated, setTruncated] = React.useState(false)
   const [typeLabels, setTypeLabels] = React.useState<Record<string, string>>({})
   const [typeColors, setTypeColors] = React.useState<Record<string, string | null>>({})
+  const [typeIcons, setTypeIcons] = React.useState<Record<string, string | null>>({})
   const [reloadToken, setReloadToken] = React.useState(0)
 
   const fromTime = range.from.getTime()
@@ -93,18 +136,22 @@ export function useCalendarItems(range: CalendarRange): UseCalendarItemsResult {
       const entries = Array.isArray(call.result?.items) ? call.result.items : []
       const labels: Record<string, string> = {}
       const colors: Record<string, string | null> = {}
+      const icons: Record<string, string | null> = {}
       for (const entry of entries) {
         if (typeof entry?.value !== 'string' || entry.value.length === 0) continue
         labels[entry.value] = typeof entry.label === 'string' && entry.label.length > 0 ? entry.label : entry.value
         colors[entry.value] = typeof entry.color === 'string' && entry.color.length > 0 ? entry.color : null
+        icons[entry.value] = typeof entry.icon === 'string' && entry.icon.length > 0 ? entry.icon : null
       }
       setTypeLabels(labels)
       setTypeColors(colors)
+      setTypeIcons(icons)
     }
     loadActivityTypes().catch(() => {
       if (cancelled || controller.signal.aborted) return
       setTypeLabels({})
       setTypeColors({})
+      setTypeIcons({})
     })
     return () => {
       cancelled = true
@@ -120,13 +167,10 @@ export function useCalendarItems(range: CalendarRange): UseCalendarItemsResult {
       setError(null)
       try {
         const fetchWindow = getFetchWindow({ from: new Date(fromTime), to: new Date(toTime) })
-        const { payloads: collected, truncated: windowTruncated } = await fetchInteractionWindow(
-          fetchWindow,
-          controller.signal,
-        )
+        const result = await fetchCalendarCandidates(fetchWindow, controller.signal)
         if (cancelled) return
-        setPayloads(collected)
-        setTruncated(windowTruncated)
+        setPayloads(result.payloads)
+        setTruncated(result.truncated)
       } catch (err) {
         if (cancelled || controller.signal.aborted) return
         setPayloads([])
@@ -158,5 +202,5 @@ export function useCalendarItems(range: CalendarRange): UseCalendarItemsResult {
     setReloadToken((token) => token + 1)
   }, [])
 
-  return { items, isLoading, error, truncated, typeLabels, typeColors, refetch }
+  return { items, isLoading, error, truncated, typeLabels, typeColors, typeIcons, refetch }
 }

@@ -4,6 +4,7 @@ import type { SyncCrudEventResult } from '../lib/crud/sync-event-types'
 import type { DashboardWidgetModule } from './dashboard/widgets'
 import type { InjectionAnyWidgetModule, ModuleInjectionTable } from './widgets/injection'
 import type { IntegrationBundle, IntegrationDefinition } from './integrations/types'
+import { createLogger } from '../lib/logger'
 import {
   applyApiOverridesToManifests,
   applyModuleOverridesToModules,
@@ -11,6 +12,8 @@ import {
   composeApiRouteOverrides,
   composePageRouteOverrides,
 } from './overrides'
+
+const logger = createLogger('shared').child({ component: 'cli-registry' })
 
 // Context passed to dynamic metadata guards
 export type RouteVisibilityContext = { path?: string; auth?: any }
@@ -191,6 +194,8 @@ export type ModuleWorker = {
   moduleId?: string
   queue: string
   concurrency: number
+  lockDuration?: number
+  maxStalledCount?: number
   handler: ModuleWorkerHandler
 }
 
@@ -405,30 +410,7 @@ export function findApiRouteManifestMatch<T extends { path: string; methods: Htt
   }
 }
 
-export function resolvePageRouteMetadata(pattern: string, metadata: PageMetadata | null | undefined): ModuleRouteMetadata {
-  return {
-    pattern: pattern || '/',
-    requireAuth: metadata?.requireAuth,
-    requireRoles: metadata?.requireRoles ? [...metadata.requireRoles] : undefined,
-    requireFeatures: metadata?.requireFeatures ? [...metadata.requireFeatures] : undefined,
-    requireCustomerAuth: metadata?.requireCustomerAuth,
-    requireCustomerFeatures: metadata?.requireCustomerFeatures ? [...metadata.requireCustomerFeatures] : undefined,
-    nav: metadata?.nav,
-    title: metadata?.pageTitle ?? metadata?.title,
-    titleKey: metadata?.pageTitleKey ?? metadata?.titleKey,
-    group: metadata?.pageGroup ?? metadata?.group,
-    groupKey: metadata?.pageGroupKey ?? metadata?.groupKey,
-    icon: metadata?.icon,
-    order: metadata?.pageOrder ?? metadata?.order,
-    priority: metadata?.pagePriority ?? metadata?.priority,
-    navHidden: metadata?.navHidden,
-    visible: metadata?.visible,
-    enabled: metadata?.enabled,
-    breadcrumb: metadata?.breadcrumb,
-    pageContext: metadata?.pageContext,
-    placement: metadata?.placement,
-  }
-}
+export { resolvePageRouteMetadata } from './pageRouteMetadata'
 
 let _backendRouteManifests: BackendRouteManifestEntry[] | null = null
 
@@ -476,12 +458,18 @@ export function getApiRouteManifests(): ApiRouteManifestEntry[] {
   return _apiRouteManifests ?? []
 }
 
-// CLI modules registry - shared between CLI and module workers
+// CLI modules registry - populated ONLY by the `mercato` bin (packages/cli/src/bin.ts
+// plus the `init` and `seed:defaults` commands). Runtime code MUST NOT read it: it
+// fails open (see getCliModules below), so outside a CLI process a reader gets an
+// empty list and silently does nothing. The events worker made exactly that mistake
+// and dropped every persistent subscriber. Runtime code uses the app registry
+// (`getModules` from ../lib/modules/registry) or a DI-resolved service.
+// Enforced by src/modules/__tests__/cli-registry-boundary.test.ts.
 let _cliModules: Module[] | null = null
 
 export function registerCliModules(modules: Module[]) {
   if (_cliModules !== null && process.env.NODE_ENV === 'development') {
-    console.debug('[Bootstrap] CLI modules re-registered (this may occur during HMR)')
+    logger.debug('CLI modules re-registered (this may occur during HMR)')
   }
   _cliModules = applyModuleOverridesToModules(modules)
 }
@@ -510,6 +498,7 @@ export function getDefaultEncryptionMaps(modules: Module[]): import('./encryptio
         moduleId: mod.id,
         map: {
           entityId: entry.entityId,
+          ...(entry.keyScope ? { keyScope: entry.keyScope } : {}),
           fields: entry.fields.map((field) => ({
             field: field.field,
             hashField: field.hashField ?? null,

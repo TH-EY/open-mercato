@@ -2,7 +2,8 @@
 
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
-import type { ColumnDef, SortingState } from '@tanstack/react-table'
+import type { LegacyColumnDef as ColumnDef } from '@tanstack/react-table/legacy'
+import type { SortingState } from '@tanstack/react-table'
 import type { FilterDef, FilterValues } from '@open-mercato/ui/backend/FilterBar'
 import type { FilterOption } from '@open-mercato/ui/backend/FilterOverlay'
 import { Page, PageBody } from '@open-mercato/ui/backend/Page'
@@ -18,6 +19,11 @@ import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuarde
 import { useOrganizationScopeVersion } from '@open-mercato/shared/lib/frontend/useOrganizationScope'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { mapOfferRow, renderOfferPriceSummary, type OfferRow } from '@open-mercato/core/modules/sales/components/channels/offerTableUtils'
+import { useSalesChannelsEnabled } from '@open-mercato/core/modules/sales/components/useSalesChannelsEnabled'
+import { SalesChannelsDisabledNotice } from '@open-mercato/core/modules/sales/components/SalesChannelsDisabledNotice'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('sales')
 
 type OffersResponse = {
   items?: Array<Record<string, unknown>>
@@ -31,6 +37,7 @@ const SAVE_CONTEXT_ID = 'sales-channel-offers-list'
 
 export default function SalesChannelOffersListPage() {
   const t = useT()
+  const { enabled: channelsEnabled, isLoading: channelsEnabledLoading } = useSalesChannelsEnabled()
   const router = useRouter()
   const { runMutation, retryLastMutation } = useGuardedMutation<{
     formId: string
@@ -113,7 +120,7 @@ export default function SalesChannelOffersListPage() {
       upsertChannelOptions(options)
       return options
     } catch (err) {
-      console.warn('[sales.channels.offers] failed to load channel options', err)
+      logger.warn('sales.channels.offers failed to load channel options', { err })
       return []
     }
   }, [t, upsertChannelOptions])
@@ -153,7 +160,7 @@ export default function SalesChannelOffersListPage() {
         .filter((option) => !!option) as FilterOption[]
       upsertChannelOptions(options)
     } catch (err) {
-      console.warn('[sales.channels.offers] failed to hydrate channel metadata', err)
+      logger.warn('sales.channels.offers failed to hydrate channel metadata', { err })
     }
   }, [t, upsertChannelOptions])
 
@@ -269,7 +276,7 @@ export default function SalesChannelOffersListPage() {
         .filter((value): value is string => typeof value === 'string' && value.length > 0)
       if (ids.length) void ensureChannelMetadata(Array.from(new Set(ids)))
     } catch (err) {
-      console.error('sales.channels.offers.list', err)
+      logger.error('sales.channels.offers.list', { err })
       flash(t('sales.channels.offers.errors.load', 'Failed to load offers.'), 'error')
     } finally {
       setLoading(false)
@@ -316,7 +323,7 @@ export default function SalesChannelOffersListPage() {
       handleRefresh()
     } catch (err) {
       if (surfaceRecordConflict(err, t)) { handleRefresh(); return }
-      console.error('sales.channels.offers.delete', err)
+      logger.error('sales.channels.offers.delete', { err })
     }
   }, [handleRefresh, mutationContext, runMutation, t])
 
@@ -328,6 +335,10 @@ export default function SalesChannelOffersListPage() {
       </span>
     </div>
   )
+
+  if (!channelsEnabled && !channelsEnabledLoading) {
+    return <SalesChannelsDisabledNotice />
+  }
 
   return (
     <Page>

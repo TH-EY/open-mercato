@@ -44,6 +44,10 @@ describe('executeCallApi', () => {
       persist: jest.fn(function persist(this: any) { return this }),
       flush: jest.fn(),
       remove: jest.fn(function remove(this: any) { return this }),
+      // The one-time API key is created on a forked, context-detached EM so it
+      // commits outside the workflow-execution transaction (issue #4202). The
+      // fork shares the same mock surface so persist/flush/find tracking works.
+      fork: jest.fn(function fork(this: any) { return this }),
       findOne: jest.fn((Entity: any, query: any) => {
         const entityName = Entity?.name ?? ''
         if (entityName === 'WorkflowDefinition') {

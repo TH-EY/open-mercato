@@ -37,7 +37,46 @@ export function ActionBuilder({
     loading: true,
     error: null,
   })
-  const actions = value || []
+  const actions = React.useMemo(() => value || [], [value])
+
+  React.useEffect(() => {
+    let cancelled = false
+
+    async function loadOpenMercatoOptions() {
+      setOpenMercatoOptions((current) => ({ ...current, loading: true, error: null }))
+      try {
+        const response = await apiCall<OpenMercatoCallOptionsResponse>('/api/business_rules/openmercato-call-options')
+        if (!response.ok || !response.result) {
+          const error = response.result && 'error' in response.result
+            ? String((response.result as any).error)
+            : t('business_rules.components.actionRow.openMercato.options.fetchFailed', { status: response.status })
+          throw new Error(error)
+        }
+        if (!cancelled) {
+          setOpenMercatoOptions({
+            endpoints: Array.isArray(response.result.endpoints) ? response.result.endpoints : [],
+            apiKeys: Array.isArray(response.result.apiKeys) ? response.result.apiKeys : [],
+            loading: false,
+            error: null,
+          })
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setOpenMercatoOptions({
+            endpoints: [],
+            apiKeys: [],
+            loading: false,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+      }
+    }
+
+    void loadOpenMercatoOptions()
+    return () => {
+      cancelled = true
+    }
+  }, [t])
 
   React.useEffect(() => {
     let cancelled = false

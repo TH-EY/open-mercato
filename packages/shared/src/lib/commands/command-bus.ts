@@ -2,6 +2,7 @@ import type { ActionLog } from '@open-mercato/core/modules/audit_logs/data/entit
 import type { ActionLogCreateInput } from '@open-mercato/core/modules/audit_logs/data/validators'
 import { commandRegistry } from './registry'
 import type {
+  BulkImportSuppression,
   CommandExecutionOptions,
   CommandExecuteResult,
   CommandHandler,
@@ -30,6 +31,10 @@ import {
 } from './command-interceptor-runner'
 import type { CommandInterceptorContext } from './command-interceptor'
 import { CommandInterceptorError } from './errors'
+import { isReadProjectionAlwaysConsistent } from '@open-mercato/shared/lib/data/consistency'
+import { createLogger } from '../logger'
+
+const logger = createLogger('shared').child({ component: 'commands' })
 
 const SKIPPED_ACTION_LOG_RESOURCE_KINDS = new Set<string>([
   'audit_logs.access',
@@ -42,6 +47,28 @@ const SKIPPED_ACTION_LOG_RESOURCE_KINDS = new Set<string>([
 function asRecord(input: unknown): Record<string, unknown> | null {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null
   return input as Record<string, unknown>
+}
+
+/** Command handlers often return domain keys (e.g. warehouseId) without `id`; cache invalidation must still resolve the record. */
+function extractPrimaryIdFromCommandResult(result: unknown): string | null {
+  const r = asRecord(result)
+  if (!r) return null
+  const direct = pickFirstIdentifier(r.id, r.entityId, r.recordId)
+  if (direct) return direct
+  for (const key of [
+    'warehouseId',
+    'zoneId',
+    'locationId',
+    'lotId',
+    'reservationId',
+    'profileId',
+    'movementId',
+    'balanceId',
+  ]) {
+    const v = r[key]
+    if (typeof v === 'string' && v.trim().length > 0) return v.trim()
+  }
+  return null
 }
 
 function toISOString(value: unknown): string | null {
@@ -218,7 +245,8 @@ export class CommandBus {
         allInterceptors, commandId, options.input, interceptorCtx, userFeatures,
       )
       if (!beforeResult.ok) {
-        throw new CommandInterceptorError(beforeResult.error!.message)
+        const blocked = beforeResult.error!
+        throw new CommandInterceptorError(blocked.message, { status: blocked.status, body: blocked.body })
       }
       interceptorMetadata = beforeResult.metadataByInterceptor
       if (beforeResult.modifiedInput) {
@@ -239,6 +267,30 @@ export class CommandBus {
     const snapshotsWithAfter = { ...snapshots, after: afterSnapshot }
     const logMeta = await this.buildLog(handler, effectiveOptions, result, snapshotsWithAfter)
     let mergedMeta = this.mergeMetadata(effectiveOptions.metadata, logMeta)
+    // Interceptors opt into audit-log enrichment with a reserved `logContext` key rather
+    // than the generic `context` one, so the metadata an interceptor already passes to its
+    // own afterExecute hook is never silently promoted into audit storage.
+    // Map iteration order is interceptor priority order (see collectMatching), so a
+    // later-priority interceptor overrides an earlier one on key collisions.
+    let interceptorContextMerged: Record<string, unknown> = {}
+    for (const meta of interceptorMetadata.values()) {
+      const logContextRecord = asRecord(asRecord(meta)?.logContext)
+      if (!logContextRecord) continue
+      interceptorContextMerged = {
+        ...interceptorContextMerged,
+        ...logContextRecord,
+      }
+    }
+    const baseContext = asRecord(effectiveOptions.metadata?.context) ?? {}
+    const logMetaContext = asRecord(logMeta?.context) ?? {}
+    if (Object.keys(interceptorContextMerged).length > 0 || Object.keys(baseContext).length > 0 || Object.keys(logMetaContext).length > 0) {
+      mergedMeta = mergedMeta ?? {}
+      mergedMeta.context = {
+        ...baseContext,
+        ...interceptorContextMerged,
+        ...logMetaContext,
+      }
+    }
     const undoable = this.isUndoable(handler)
     if (undoable) {
       mergedMeta = mergedMeta ?? {}
@@ -293,7 +345,11 @@ export class CommandBus {
     if (!effectiveOptions.skipCacheInvalidation) {
       await this.invalidateCacheAfterExecute(commandId, effectiveOptions, finalResult, mergedMeta)
     }
-    await this.flushCrudSideEffects(effectiveOptions.ctx.container)
+    // Bulk-import backfills defer heavy per-record side effects: the ctx flags are read here and
+    // threaded as a local into the flush (never stored on the shared dataEngine), so a concurrent
+    // command with different flags can't observe them. Reindex is restored by the caller's
+    // end-of-run `query_index rebuild`. Mirrors `skipCacheInvalidation` above.
+    await this.flushCrudSideEffects(effectiveOptions.ctx.container, effectiveOptions.ctx?.bulkImport)
     return { result: finalResult, logEntry }
   }
 
@@ -332,7 +388,8 @@ export class CommandBus {
           allInterceptors, log.commandId, undoCtx, interceptorCtx, userFeatures,
         )
         if (!beforeResult.ok) {
-          throw new CommandInterceptorError(beforeResult.error!.message)
+          const blocked = beforeResult.error!
+          throw new CommandInterceptorError(blocked.message, { status: blocked.status, body: blocked.body })
         }
         undoInterceptorMetadata = beforeResult.metadataByInterceptor
       }
@@ -576,6 +633,7 @@ export class CommandBus {
 
       const recordId = pickFirstIdentifier(
         metadata?.resourceId,
+        extractPrimaryIdFromCommandResult(result),
         resultRecord?.entityId,
         resultRecord?.id,
         resultRecord?.recordId,
@@ -624,7 +682,7 @@ export class CommandBus {
     } catch (err) {
       if (isCrudCacheDebugEnabled()) {
         try {
-          console.debug('[crud][cache] execute-invalidation failed', { commandId, err })
+          logger.debug('Cache execute-invalidation failed', { commandId, err })
         } catch {}
       }
     }
@@ -656,17 +714,20 @@ export class CommandBus {
     } catch (err) {
       if (isCrudCacheDebugEnabled()) {
         try {
-          console.debug('[crud][cache] undo-invalidation failed', { commandId: log.commandId, err })
+          logger.debug('Cache undo-invalidation failed', { commandId: log.commandId, err })
         } catch {}
       }
     }
   }
 
-  private async flushCrudSideEffects(container: AwilixContainer): Promise<void> {
+  private async flushCrudSideEffects(container: AwilixContainer, suppress?: BulkImportSuppression): Promise<void> {
     try {
       const dataEngine = (container.resolve('dataEngine') as DataEngine)
-      await dataEngine.flushOrmEntityChanges()
-    } catch {
+      await dataEngine.flushOrmEntityChanges(suppress)
+    } catch (error) {
+      if (isReadProjectionAlwaysConsistent()) {
+        throw error
+      }
       // best-effort: failures should not block command execution
     }
   }

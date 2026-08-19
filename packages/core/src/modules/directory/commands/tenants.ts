@@ -5,6 +5,7 @@ import { Tenant } from '@open-mercato/core/modules/directory/data/entities'
 import type { DataEngine } from '@open-mercato/shared/lib/data/engine'
 import type { EntityManager, FilterQuery } from '@mikro-orm/postgresql'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
+import { requireSuperAdmin } from '@open-mercato/core/modules/auth/lib/tenantAccess'
 import { E } from '#generated/entities.ids.generated'
 import {
   parseWithCustomFields,
@@ -17,6 +18,9 @@ import { resolveTranslations } from '@open-mercato/shared/lib/i18n/server'
 import type { CrudEventsConfig, CrudIndexerConfig } from '@open-mercato/shared/lib/crud/types'
 import { isTenantDataEncryptionEnabled } from '@open-mercato/shared/lib/encryption/toggles'
 import { makeCreateRedo } from '@open-mercato/shared/lib/commands/redo'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('directory').child({ component: 'tenants' })
 
 export const tenantCrudEvents: CrudEventsConfig = {
   module: 'directory',
@@ -45,6 +49,7 @@ type SerializedTenant = ReturnType<typeof serializeTenant>
 const createTenantCommand: CommandHandler<TenantPayload, Tenant> = {
   id: 'directory.tenants.create',
   async execute(rawInput, ctx) {
+    await requireSuperAdmin(ctx)
     const { parsed, custom } = parseWithCustomFields(tenantCreateSchema, rawInput)
     const de = (ctx.container.resolve('dataEngine') as DataEngine)
 
@@ -70,19 +75,19 @@ const createTenantCommand: CommandHandler<TenantPayload, Tenant> = {
         const kms = ctx.container.resolve('kmsService') as { createTenantDek?: (id: string) => Promise<unknown>; isHealthy?: () => boolean }
         if (kms?.isHealthy?.()) {
           await kms?.createTenantDek?.(String(tenant.id))
-          console.info('🔑 [encryption][tenant] created tenant DEK', { tenantId: String(tenant.id) })
+          logger.info('Created tenant DEK', { tenantId: String(tenant.id) })
         } else {
-          console.warn('⚠️ [encryption][tenant] kms not healthy, skipping tenant DEK provisioning', { tenantId: String(tenant.id) })
+          logger.warn('KMS not healthy, skipping tenant DEK provisioning', { tenantId: String(tenant.id) })
         }
       } catch (err) {
-        console.warn('⚠️ [encryption] Failed to provision tenant key', err)
+        logger.warn('Failed to provision tenant key', { err })
       }
     }
 
     const identifiers = {
       id: String(tenant.id),
       organizationId: null,
-      tenantId: String(tenant.id),
+      tenantId: null,
     }
 
     await emitCrudSideEffects({
@@ -114,15 +119,13 @@ const createTenantCommand: CommandHandler<TenantPayload, Tenant> = {
     buildResult: (entity) => entity,
     events: tenantCrudEvents,
     indexer: tenantCrudIndexer,
-    afterRestore: ({ entity }) => {
-      Reflect.set(entity, 'tenantId', String(entity.id))
-    },
   }),
 }
 
 const updateTenantCommand: CommandHandler<TenantPayload, Tenant> = {
   id: 'directory.tenants.update',
   async prepare(rawInput, ctx) {
+    await requireSuperAdmin(ctx)
     const { parsed } = parseWithCustomFields(tenantUpdateSchema, rawInput)
     const em = (ctx.container.resolve('em') as EntityManager)
     const current = await em.findOne(Tenant, { id: parsed.id, deletedAt: null })
@@ -130,6 +133,7 @@ const updateTenantCommand: CommandHandler<TenantPayload, Tenant> = {
     return { before: serializeTenant(current) }
   },
   async execute(rawInput, ctx) {
+    await requireSuperAdmin(ctx)
     const { parsed, custom } = parseWithCustomFields(tenantUpdateSchema, rawInput)
     const de = (ctx.container.resolve('dataEngine') as DataEngine)
     const tenant = await de.updateOrmEntity({
@@ -155,7 +159,7 @@ const updateTenantCommand: CommandHandler<TenantPayload, Tenant> = {
     const identifiers = {
       id: String(tenant.id),
       organizationId: null,
-      tenantId: String(tenant.id),
+      tenantId: null,
     }
 
     await emitCrudSideEffects({
@@ -188,12 +192,14 @@ const updateTenantCommand: CommandHandler<TenantPayload, Tenant> = {
 const deleteTenantCommand: CommandHandler<{ body: any; query: Record<string, string> }, Tenant> = {
   id: 'directory.tenants.delete',
   async prepare(input, ctx) {
+    await requireSuperAdmin(ctx)
     const id = requireId(input, 'Tenant id required')
     const em = (ctx.container.resolve('em') as EntityManager)
     const existing = await em.findOne(Tenant, { id, deletedAt: null })
     return existing ? { before: serializeTenant(existing) } : {}
   },
   async execute(rawInput, ctx) {
+    await requireSuperAdmin(ctx)
     const id = requireId(rawInput, 'Tenant id required')
     const de = (ctx.container.resolve('dataEngine') as DataEngine)
     const tenant = await de.deleteOrmEntity({
@@ -207,7 +213,7 @@ const deleteTenantCommand: CommandHandler<{ body: any; query: Record<string, str
     const identifiers = {
       id: String(id),
       organizationId: null,
-      tenantId: String(id),
+      tenantId: null,
     }
 
     await emitCrudSideEffects({

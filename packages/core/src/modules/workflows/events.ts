@@ -30,6 +30,7 @@ const events = [
   { id: 'workflows.activity.started', label: 'Activity Started', category: 'lifecycle' },
   { id: 'workflows.activity.completed', label: 'Activity Completed', category: 'lifecycle' },
   { id: 'workflows.activity.failed', label: 'Activity Failed', category: 'lifecycle' },
+  { id: 'workflows.task.assigned', label: 'Task Assigned', entity: 'task', category: 'lifecycle' },
 
   // User Tasks
   { id: 'workflows.task.assigned', label: 'Workflow Task Assigned', entity: 'task', category: 'lifecycle' },

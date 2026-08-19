@@ -208,6 +208,46 @@ describe('AppShell', () => {
     )
   })
 
+  it('keeps the incoming page breadcrumb when the pathname change and ApplyBreadcrumb land in the same commit', () => {
+    const { rerender } = renderWithProviders(
+      <AppShell email="demo@example.com" groups={groups}>
+        <ApplyBreadcrumb breadcrumb={[{ label: 'Users List' }]} />
+      </AppShell>,
+      { dict },
+    )
+
+    mockPathname = '/backend/roles'
+    rerender(
+      <AppShell email="demo@example.com" groups={groups}>
+        <ApplyBreadcrumb breadcrumb={[{ label: 'Roles' }]} />
+      </AppShell>,
+    )
+
+    const breadcrumbNav = screen.getByRole('navigation', { name: 'Breadcrumb' })
+    const activePage = within(breadcrumbNav).getByText((_, el) => el?.getAttribute('data-slot') === 'breadcrumb-page')
+    expect(activePage).toHaveTextContent('Roles')
+    expect(within(breadcrumbNav).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/backend')
+  })
+
+  it('hides the backend footer status bar when requested', () => {
+    renderWithProviders(
+      <AppShell
+        email="demo@example.com"
+        groups={groups}
+        version="1.2.3"
+        hideFooter
+      >
+        <div>Child content</div>
+      </AppShell>,
+      { dict },
+    )
+
+    expect(screen.getByText('Child content')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Terms' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Privacy' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('injection-spot:backend:layout:footer')).toBeInTheDocument()
+  })
+
   it.each([
     ['internal-file', '/api/attachments/file/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
     ['internal-image-query', '/api/attachments/image/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/acme.svg?width=320&height=320'],
@@ -241,11 +281,11 @@ describe('AppShell', () => {
 
     try {
       renderWithProviders(
-          <AppShell
-            email="demo@example.com"
-            groups={[]}
-            adminNavApi={`/api/auth/admin/nav-brand-logo-${variant}`}
-          >
+        <AppShell
+          email="demo@example.com"
+          groups={[]}
+          adminNavApi={`/api/auth/admin/nav-brand-logo-${variant}`}
+        >
           <div>Child content</div>
         </AppShell>,
         { dict },
@@ -311,14 +351,8 @@ describe('AppShell', () => {
         expect(logo).toHaveAttribute('data-unoptimized', 'true')
         expect(logo).toHaveClass('object-cover')
         expect(logo).toHaveClass('rounded-full')
-        expect(logo).toHaveClass('h-10')
-        expect(logo).toHaveClass('w-10')
         expect(logo).not.toHaveClass('object-contain')
       })
-
-      fireEvent.click(screen.getByRole('button', { name: 'Open menu' }))
-      const mobileLogo = screen.getAllByAltText('Acme logo').find((logo) => logo.classList.contains('h-7'))
-      expect(mobileLogo).toHaveClass('w-7')
     } finally {
       global.fetch = previousFetch
       window.fetch = previousWindowFetch

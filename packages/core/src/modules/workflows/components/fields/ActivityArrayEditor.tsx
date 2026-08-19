@@ -19,6 +19,7 @@ import type { CrudCustomFieldRenderProps } from '@open-mercato/ui/backend/CrudFo
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { createDefaultActivityRetryPolicy } from '../../lib/activity-retry-policy'
 import { EndpointPicker, endpointPickerHeaders } from './EndpointPicker'
+import { durationTimeoutInputValue, durationTimeoutPatch } from '../../lib/activityTimeoutFields'
 
 /**
  * Activity definition structure
@@ -108,10 +109,14 @@ export function ActivityArrayEditor({ id, value = [], error, setValue, disabled 
     setExpandedIndices(newExpanded)
   }
 
-  const updateActivity = (index: number, field: keyof Activity, fieldValue: any) => {
+  const patchActivity = (index: number, patch: Partial<Activity>) => {
     const updated = [...activities]
-    updated[index] = { ...updated[index], [field]: fieldValue }
+    updated[index] = { ...updated[index], ...patch }
     setValue(updated)
+  }
+
+  const updateActivity = (index: number, field: keyof Activity, fieldValue: any) => {
+    patchActivity(index, { [field]: fieldValue })
   }
 
   const updateRetryPolicy = (index: number, field: string, fieldValue: any) => {
@@ -247,8 +252,8 @@ export function ActivityArrayEditor({ id, value = [], error, setValue, disabled 
                       <Input
                         id={`${id}-${index}-timeout`}
                         type="text"
-                        value={activity.timeout || ''}
-                        onChange={(e) => updateActivity(index, 'timeout', e.target.value)}
+                        value={durationTimeoutInputValue(activity)}
+                        onChange={(e) => patchActivity(index, durationTimeoutPatch(e.target.value))}
                         placeholder={t('workflows.fieldEditors.activities.timeoutPlaceholder')}
                         className="text-xs"
                         disabled={disabled}

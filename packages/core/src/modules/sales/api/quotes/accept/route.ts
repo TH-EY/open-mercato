@@ -2,19 +2,23 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { resolveTranslations } from '@open-mercato/shared/lib/i18n/server'
-import { isCrudHttpError } from '@open-mercato/shared/lib/crud/errors'
+import { CrudHttpError, isCrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import type { EntityManager } from '@mikro-orm/postgresql'
 import { getAuthFromRequest } from '@open-mercato/shared/lib/auth/server'
 import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { getCachedRateLimiterService } from '@open-mercato/core/bootstrap'
 import { readEndpointRateLimitConfig } from '@open-mercato/shared/lib/ratelimit/config'
-import { checkRateLimit, getClientIp, rateLimitErrorSchema } from '@open-mercato/shared/lib/ratelimit/helpers'
+import { checkRateLimit, getClientIp, RATE_LIMIT_FALLBACK_KEY, rateLimitErrorSchema } from '@open-mercato/shared/lib/ratelimit/helpers'
 import { validateSameOriginMutationRequest } from './originGuard'
 import { hashAuthToken } from '../../../../auth/lib/tokenHash'
 import { SalesQuote } from '../../../data/entities'
 import { quoteAcceptSchema } from '../../../data/validators'
 import { acceptQuoteAndConvertToOrder, quoteLockOptions } from '../../../lib/quoteAcceptance'
+import { resolveEffectiveTenantId } from '../../../lib/publicQuoteTenantScope'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('sales')
 
 export const metadata = {
   POST: { requireAuth: false },
@@ -40,11 +44,11 @@ export async function POST(req: Request) {
 
     const rateLimiterService = getCachedRateLimiterService()
     const clientIp = rateLimiterService ? getClientIp(req, rateLimiterService.trustProxyDepth) : null
-    if (rateLimiterService && clientIp) {
+    if (rateLimiterService) {
       const rateLimitResponse = await checkRateLimit(
         rateLimiterService,
         quoteAcceptRateLimitConfig,
-        clientIp,
+        clientIp ?? RATE_LIMIT_FALLBACK_KEY,
         translate('api.errors.rateLimit', 'Too many requests. Please try again later.'),
       )
       if (rateLimitResponse) return rateLimitResponse
@@ -56,7 +60,13 @@ export async function POST(req: Request) {
     const em = (container.resolve('em') as EntityManager).fork()
 
     const hashedToken = hashAuthToken(token)
-    const tenantScope = auth?.tenantId ? { tenantId: auth.tenantId } : undefined
+    const effectiveTenantId = resolveEffectiveTenantId(auth)
+    // A session whose tenant cannot be resolved must not fall through to an unscoped lookup.
+    // Anonymous callers (no auth) and tenant-less API keys stay unscoped by design.
+    if (auth && effectiveTenantId === null && auth.isApiKey !== true) {
+      throw new CrudHttpError(404, { error: translate('sales.quotes.accept.notFound', 'Quote not found.') })
+    }
+    const tenantScope = effectiveTenantId ? { tenantId: effectiveTenantId } : undefined
 
     const { orderId, orderNumber } = await acceptQuoteAndConvertToOrder({
       req,
@@ -88,7 +98,7 @@ export async function POST(req: Request) {
       return NextResponse.json(err.body, { status: err.status })
     }
     const { translate } = await resolveTranslations()
-    console.error('sales.quotes.accept failed', err)
+    logger.error('sales.quotes.accept failed', { err })
     return NextResponse.json({ error: translate('sales.quotes.accept.failed', 'Failed to accept quote.') }, { status: 400 })
   }
 }

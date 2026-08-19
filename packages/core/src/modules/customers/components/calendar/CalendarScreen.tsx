@@ -107,7 +107,14 @@ function asEditableItem(item: CalendarItem): CalendarItem {
   return item.isRecurringOccurrence ? { ...item, id: item.raw.id } : item
 }
 
-export function CalendarScreen() {
+export type CalendarScreenProps = {
+  /** True when the optional resources module is loaded (server-resolved). */
+  resourcesEnabled?: boolean
+  /** True when the optional staff module is loaded (server-resolved). */
+  staffEnabled?: boolean
+}
+
+export function CalendarScreen({ resourcesEnabled = false, staffEnabled = true }: CalendarScreenProps = {}) {
   const t = useT()
   const [view, setView] = React.useState<CalendarView>('week')
   const [anchor, setAnchor] = React.useState<Date>(() => new Date())
@@ -136,7 +143,7 @@ export function CalendarScreen() {
     () => getVisibleRange(view, anchor, agendaHorizonDays),
     [view, anchor, agendaHorizonDays],
   )
-  const { items, isLoading, error, truncated, typeLabels, typeColors, refetch } = useCalendarItems(range)
+  const { items, isLoading, error, truncated, typeLabels, typeColors, typeIcons, refetch } = useCalendarItems(range)
 
   React.useEffect(() => {
     if (!isLoading) setHasLoadedOnce(true)
@@ -221,15 +228,15 @@ export function CalendarScreen() {
 
   const typeOptions = React.useMemo(() => {
     const values = new Set<string>(Object.keys(typeLabels))
-    for (const item of items) values.add(item.interactionType)
+    for (const item of visibleItems) values.add(item.interactionType)
     return [...values]
       .sort((a, b) => a.localeCompare(b))
       .map((value) => ({ value, label: typeLabels[value] ?? value }))
-  }, [items, typeLabels])
+  }, [visibleItems, typeLabels])
 
   const ownerOptions = React.useMemo(() => {
     const participantNames = new Map<string, string>()
-    for (const item of items) {
+    for (const item of visibleItems) {
       for (const participant of item.participants) {
         if (participant.name && !participantNames.has(participant.userId)) {
           participantNames.set(participant.userId, participant.name)
@@ -237,14 +244,14 @@ export function CalendarScreen() {
       }
     }
     const owners = new Map<string, string>()
-    for (const item of items) {
+    for (const item of visibleItems) {
       if (!item.ownerUserId || owners.has(item.ownerUserId)) continue
       owners.set(item.ownerUserId, participantNames.get(item.ownerUserId) ?? item.ownerUserId)
     }
     return [...owners.entries()]
       .map(([value, label]) => ({ value, label }))
       .sort((first, second) => first.label.localeCompare(second.label))
-  }, [items])
+  }, [visibleItems])
 
   const timezoneLabel = React.useMemo(() => buildTimezoneLabel(), [])
 
@@ -577,11 +584,11 @@ export function CalendarScreen() {
           defaultDate={anchor}
           defaultRange={createRange}
           typeLabels={typeLabels}
-          typeColors={typeColors}
-          surfacedTypes={preferences.activityTypes}
-          eventCategories={preferences.eventCategories}
+          typeIcons={typeIcons}
           conflictScope={preferences.conflictScope}
           currentUserId={currentUserId}
+          resourcesEnabled={resourcesEnabled}
+          staffEnabled={staffEnabled}
           onOpenChange={(open) => setEditor((current) => ({ ...current, open }))}
           onSaved={refetch}
         />

@@ -13,6 +13,7 @@ import { graphToDefinition, definitionToGraph, validateWorkflowGraph, generateSt
 import { mergeVisualEditorEdges } from '../../../lib/visual-editor-edge-state'
 import { mergeVisualEditorNodes } from '../../../lib/visual-editor-node-state'
 import { performDeleteEdgeFlow, performDeleteNodeFlow } from '../../../lib/visual-editor-delete-flow'
+import { humanizeDefinitionIssuePath } from '../../../lib/format-validation-error'
 import { workflowDefinitionDataSchema } from '../../../data/validators'
 import { Page } from '@open-mercato/ui/backend/Page'
 import { Button } from '@open-mercato/ui/primitives/button'
@@ -47,6 +48,9 @@ import { useIsMobile } from '@open-mercato/ui/hooks/useIsMobile'
 import type { WorkflowDefinitionTrigger } from '../../../data/entities'
 import type { WorkflowMetadataState, WorkflowMetadataHandlers } from '../../../data/types'
 import * as React from 'react'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('workflows')
 
 /**
  * VisualEditorPage - Visual workflow definition editor
@@ -171,7 +175,7 @@ export default function VisualEditorPage() {
         setSource((definition.source as 'code' | 'code_override' | 'user') ?? null)
         setUpdatedAt(typeof definition.updatedAt === 'string' ? definition.updatedAt : null)
       } catch (error) {
-        console.error('Error loading workflow definition:', error)
+        logger.error('Error loading workflow definition', { err: error })
         flash('Failed to load workflow definition', 'error')
       } finally {
         setIsLoading(false)
@@ -378,11 +382,19 @@ export default function VisualEditorPage() {
       triggers: triggers.length > 0 ? triggers : undefined,
     }
 
-    // Run Zod schema validation before saving
+    // Run Zod schema validation before saving. Report every issue, not just the
+    // first: a save rejected for one missing activity field used to look like
+    // "nothing happened" once the operator fixed that field and hit a second
+    // one (#4232). Paths are humanized (steps.2.activities.0.config.endpoint →
+    // step 3 › activity 1 › endpoint) so the message points at the node to open.
     const schemaResult = workflowDefinitionDataSchema.safeParse(definitionData)
     if (!schemaResult.success) {
-      const firstIssue = schemaResult.error.issues[0]
-      flash(`Schema error: ${firstIssue.path.join('.')} - ${firstIssue.message}`, 'error')
+      const issues = schemaResult.error.issues
+      const described = issues
+        .slice(0, 3)
+        .map((issue) => `${humanizeDefinitionIssuePath(issue.path)}: ${issue.message}`)
+      const suffix = issues.length > described.length ? ` (+${issues.length - described.length} more)` : ''
+      flash(`Cannot save — ${described.join('; ')}${suffix}`, 'error')
       return
     }
 
@@ -461,7 +473,7 @@ export default function VisualEditorPage() {
       }, 1500)
 
     } catch (error) {
-      console.error('Error saving workflow definition:', error)
+      logger.error('Error saving workflow definition', { err: error })
       flash('Failed to save workflow definition. Please try again.', 'error')
     } finally {
       setIsSaving(false)
@@ -700,7 +712,7 @@ export default function VisualEditorPage() {
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowClearConfirm(false)}>{t('common.cancel', 'Cancel')}</Button>
-            <Button variant="destructive" onClick={confirmClear}>{t('common.clear', 'Clear')}</Button>
+            <Button variant="destructive-solid" onClick={confirmClear}>{t('common.clear', 'Clear')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -849,12 +861,12 @@ export default function VisualEditorPage() {
       {(isCodeOnly || isCodeOverride) && (
         <div className="shrink-0 border-b border-border bg-background px-3 py-2 md:px-6 md:py-3">
           {isCodeOnly && (
-            <Alert variant="info">
+            <Alert status="information">
               <AlertTitle>{t('workflows.source.code.readonlyBanner')}</AlertTitle>
             </Alert>
           )}
           {isCodeOverride && (
-            <Alert variant="warning">
+            <Alert status="warning">
               <AlertTitle>{t('workflows.source.code_override.banner')}</AlertTitle>
             </Alert>
           )}
@@ -1182,7 +1194,7 @@ export default function VisualEditorPage() {
               </div>
 
               {/* Instructions */}
-              <Alert variant="info" className="mt-6">
+              <Alert status="information" className="mt-6">
                 <AlertTitle className="text-xs">{t('workflows.visualEditor.howToUse', 'How to use:')}</AlertTitle>
                 <div className="mt-2">
                   <ul className="list-inside list-disc space-y-1 text-xs">

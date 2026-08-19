@@ -20,6 +20,9 @@ import {
   okResponseSchema,
   updateDraftSchema as updateDraftOpenApiSchema,
 } from '../openapi'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('messages').child({ component: 'api' })
 
 export const metadata = {
   GET: { requireAuth: true },
@@ -89,10 +92,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
           organizationId: scope.organizationId,
         })
       } catch (error) {
-        console.error(
-          `[messages] Failed to load preview for ${item.entityModule}:${item.entityType}:${item.entityId}`,
-          error,
-        )
+        logger.error('Failed to load preview', { entityModule: item.entityModule, entityType: item.entityType, entityId: item.entityId, err: error })
         return null
       }
     }),
@@ -399,6 +399,27 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
   }
 
   if (!hasOrganizationAccess(scope.organizationId, message.organizationId)) {
+    return Response.json({ error: 'Access denied' }, { status: 403 })
+  }
+
+  const isSender = message.senderUserId === scope.userId
+  // Only look the recipient row up when the actor is not the sender: deleting one's own
+  // message is the common path, and the lookup is a decryption-aware query.
+  const isRecipient = isSender
+    ? false
+    : Boolean(await findOneWithDecryption(
+      em,
+      MessageRecipient,
+      {
+        messageId: params.id,
+        recipientUserId: scope.userId,
+        deletedAt: null,
+      },
+      undefined,
+      { tenantId: scope.tenantId, organizationId: scope.organizationId },
+    ))
+
+  if (!isSender && !isRecipient) {
     return Response.json({ error: 'Access denied' }, { status: 403 })
   }
 

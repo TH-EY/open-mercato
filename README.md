@@ -245,6 +245,22 @@ Each guide below is self-contained and covers all prerequisites, infrastructure 
   </tr>
 </table>
 
+---
+
+### 🤖 Learn AI Engineering like we do!
+
+All of our experience building this enterprise-grade ERP is distilled into **[open-mercato/skills](https://github.com/open-mercato/skills)** — re-usable, **technology-agnostic** agent skills for autonomous PR creation, code review, CI stabilization, spec writing, integration testing, and merge management.
+
+Stack-agnostic — install them all with one command:
+
+```bash
+npx skills add open-mercato/skills --skill '*'
+```
+
+[![Open Mercato Skills](https://img.shields.io/badge/GitHub-open--mercato%2Fskills-181717?logo=github)](https://github.com/open-mercato/skills)
+
+---
+
 ## Spec Driven Development
 
 Open Mercato follows a **spec-first development approach**. Before implementing new features or making significant changes, we document the design in the `.ai/specs/` folder.
@@ -408,13 +424,27 @@ We welcome contributions of all sizes—from fixes and docs updates to new modul
 
 Refer to [AGENTS.md](AGENTS.md) for deeper guidance on architecture and conventions when extending modules.
 
-Open Mercato is proudly supported by [Catch The Tornado](https://catchthetornado.com/).
+## Sponsors
 
-<div align="center">
-  <a href="https://catchthetornado.com/">
-    <img src="./apps/mercato//public/catch-the-tornado-logo.png" alt="Catch The Tornado logo" width="96" />
-  </a>
-</div>
+### Blacksmith
+
+<a href="https://www.blacksmith.sh/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/useblacksmith/stickydisk/main/Blacksmith_Logo-White-Large.png" />
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/useblacksmith/stickydisk/main/Blacksmith_Logo-Black-Large.png" />
+    <img src="https://raw.githubusercontent.com/useblacksmith/stickydisk/main/Blacksmith_Logo-Black-Large.png" alt="Blacksmith logo" width="240" />
+  </picture>
+</a>
+
+Open Mercato's continuous integration is powered by [Blacksmith](https://www.blacksmith.sh/), providing fast and reliable GitHub Actions runners for the project.
+
+### Catch The Tornado
+
+<a href="https://catchthetornado.com/">
+  <img src="./apps/mercato/public/catch-the-tornado-logo.png" alt="Catch The Tornado logo" width="96" />
+</a>
+
+Open Mercato is proudly supported by [Catch The Tornado](https://catchthetornado.com/).
 
 ## CLI Commands
 

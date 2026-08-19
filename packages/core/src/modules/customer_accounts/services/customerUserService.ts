@@ -47,8 +47,20 @@ export class CustomerUserService {
     )
   }
 
-  async findById(id: string, tenantId: string): Promise<CustomerUser | null> {
-    return this.em.findOne(CustomerUser, { id, tenantId, deletedAt: null })
+  async findById(
+    id: string,
+    tenantId: string,
+    organizationId?: string | null,
+  ): Promise<CustomerUser | null> {
+    const where: Record<string, unknown> = { id, tenantId, deletedAt: null }
+    if (organizationId !== undefined) where.organizationId = organizationId
+    return findOneWithDecryption(
+      this.em,
+      CustomerUser,
+      where as any,
+      undefined,
+      { tenantId, organizationId },
+    )
   }
 
   async verifyPassword(user: CustomerUser, password: string): Promise<boolean> {
@@ -90,20 +102,43 @@ export class CustomerUserService {
 
   async updatePassword(user: CustomerUser, newPassword: string, em?: EntityManager): Promise<void> {
     const passwordHash = await hash(newPassword, BCRYPT_COST)
-    await (em ?? this.em).nativeUpdate(CustomerUser, { id: user.id }, { passwordHash })
+    await (em ?? this.em).nativeUpdate(CustomerUser, {
+      id: user.id,
+      tenantId: user.tenantId,
+      organizationId: user.organizationId,
+    }, { passwordHash })
     user.passwordHash = passwordHash
   }
 
+  // `display_name` is encrypted at rest. `nativeUpdate` issues raw SQL and fires none of the
+  // flush hooks the tenant-encryption subscriber depends on, so writing it that way persists
+  // plaintext PII into a ciphertext column (#3837). Assign it on the managed entity and flush
+  // so `beforeUpdate` encrypts the value on its way to the database.
   async updateProfile(user: CustomerUser, data: { displayName?: string }): Promise<void> {
-    const updates: Record<string, unknown> = {}
-    if (data.displayName !== undefined) updates.displayName = data.displayName
-    if (Object.keys(updates).length === 0) return
-    await this.em.nativeUpdate(CustomerUser, { id: user.id }, updates)
-    if (data.displayName !== undefined) user.displayName = data.displayName
+    if (data.displayName === undefined) return
+    const managed = await findOneWithDecryption(
+      this.em,
+      CustomerUser,
+      { id: user.id, tenantId: user.tenantId, organizationId: user.organizationId, deletedAt: null } as any,
+      undefined,
+      { tenantId: user.tenantId, organizationId: user.organizationId },
+    )
+    if (!managed) return
+    managed.displayName = data.displayName
+    await this.em.flush()
+    user.displayName = data.displayName
   }
 
-  async softDelete(userId: string): Promise<void> {
-    await this.em.nativeUpdate(CustomerUser, { id: userId }, {
+  async softDelete(
+    userId: string,
+    scope?: { tenantId: string; organizationId: string | null },
+  ): Promise<void> {
+    const where: Record<string, unknown> = { id: userId }
+    if (scope) {
+      where.tenantId = scope.tenantId
+      where.organizationId = scope.organizationId
+    }
+    await this.em.nativeUpdate(CustomerUser, where, {
       deletedAt: new Date(),
       isActive: false,
     })

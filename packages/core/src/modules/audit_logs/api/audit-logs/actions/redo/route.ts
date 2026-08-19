@@ -4,6 +4,7 @@ import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { resolveFeatureCheckContext, resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/directory/utils/organizationScope'
 import type { RbacService } from '@open-mercato/core/modules/auth/services/rbacService'
 import { CommandBus } from '@open-mercato/shared/lib/commands/command-bus'
+import { isCrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { ActionLogService } from '@open-mercato/core/modules/audit_logs/services/actionLogService'
 import type { CommandRuntimeContext, CommandLogMetadata } from '@open-mercato/shared/lib/commands'
 import { serializeOperationMetadata } from '@open-mercato/shared/lib/commands/operationMetadata'
@@ -11,6 +12,9 @@ import type { AwilixContainer } from 'awilix'
 import type { ActionLog } from '@open-mercato/core/modules/audit_logs/data/entities'
 import { z } from 'zod'
 import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('audit_logs').child({ component: 'redo' })
 
 export const metadata = {
   POST: { requireAuth: true, requireFeatures: ['audit_logs.redo_self'] },
@@ -157,7 +161,13 @@ export async function POST(req: Request) {
     }
     return response
   } catch (err) {
-    console.error('Redo failed', err)
+    // Same contract as undo: a domain refusal carries an already-localized body the
+    // operator can act on, so surface it instead of a generic message.
+    if (isCrudHttpError(err)) {
+      logger.warn('Redo rejected', { err })
+      return NextResponse.json(err.body, { status: err.status })
+    }
+    logger.error('Redo failed', { err })
     return NextResponse.json({ error: 'Redo failed' }, { status: 400 })
   }
 }

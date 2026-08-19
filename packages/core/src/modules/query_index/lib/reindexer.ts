@@ -3,12 +3,22 @@ import { type Kysely, sql } from 'kysely'
 import { resolveRegisteredEntityTableName } from '@open-mercato/shared/lib/query/engine'
 import { resolveTenantEncryptionService } from '@open-mercato/shared/lib/encryption/customFieldValues'
 import { decryptIndexDocForSearch, encryptIndexDocForStorage } from '@open-mercato/shared/lib/encryption/indexDoc'
-import { upsertIndexBatch, type AnyRow } from './batch'
+import {
+  upsertIndexBatch,
+  assertIndexBatchWritesLanded,
+  createEmptyUpsertIndexBatchResult,
+  mergeUpsertIndexBatchResults,
+  QueryIndexBatchWriteError,
+  type AnyRow,
+} from './batch'
 import { refreshCoverageSnapshot, writeCoverageCounts, applyCoverageAdjustments } from './coverage'
 import { prepareJob, updateJobProgress, finalizeJob, type JobScope } from './jobs'
 import { purgeOrphans } from './stale'
 import type { VectorIndexService } from '@open-mercato/search/vector'
 import { isSearchDebugEnabled } from './search-tokens'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('query_index').child({ component: 'reindexer' })
 
 export type ReindexJobOptions = {
   entityType: string
@@ -36,6 +46,12 @@ export type ReindexJobResult = {
 
 export const DEFAULT_REINDEX_PARTITIONS = 5
 const DEFAULT_BATCH_SIZE = 500
+/**
+ * Above this many failed records the purge exclusion list stops being a sane query, so
+ * the purge is skipped entirely instead. Failing closed keeps stale rows; the alternative
+ * deletes index entries the run failed to rebuild.
+ */
+const MAX_PURGE_EXCLUSIONS = 1000
 const deriveOrgFromId = new Set<string>(['directory:organization'])
 const COVERAGE_REFRESH_THROTTLE_MS = 5 * 60 * 1000
 const lastCoverageReset = new Map<string, number>()
@@ -153,7 +169,7 @@ export async function reindexEntity(
   const table = resolveRegisteredEntityTableName(em, entityType)
   if (!table || entityType === 'query_index:search_token' || table === 'search_tokens') {
     if (!table) {
-      console.warn('[HybridQueryEngine] Refusing to reindex unregistered entity type', {
+      logger.warn('Refusing to reindex unregistered entity type', {
         entityType,
       })
     }
@@ -302,58 +318,82 @@ export async function reindexEntity(
 
   let processed = 0
   let lastId: string | null = null
+  let jobFailed = false
+  const writeTotals = createEmptyUpsertIndexBatchResult()
 
   options?.onProgress?.({ processed, total, chunkSize: 0 })
 
-  if (resetCoverage) {
-    if (force) {
+  // Partitions run concurrently, so a scope-wide purge here would delete rows a sibling
+  // partition has already written and never rebuild them (the run still reports success
+  // because progress counts attempted writes). Each partition therefore purges only the
+  // slice it is about to rebuild, and every partition purges — restricting the purge to
+  // the coverage-resetting partition would otherwise leave the other slices' stale rows
+  // behind on a forced rebuild.
+  if (force && (resetCoverage || usingPartitions)) {
+    try {
+      let purgeQuery = db
+        .deleteFrom('entity_indexes' as any)
+        .where('entity_type' as any, '=', entityType)
+      if (tenantId !== undefined) {
+        purgeQuery = purgeQuery.where(sql<boolean>`tenant_id is not distinct from ${tenantId ?? null}`)
+      }
+      if (organizationId !== undefined) {
+        purgeQuery = purgeQuery.where(sql<boolean>`organization_id is not distinct from ${organizationId ?? null}`)
+      }
+      if (usingPartitions && partitionIndex !== null) {
+        purgeQuery = purgeQuery.where(
+          sql<boolean>`mod(abs(hashtext(entity_id::text)), ${partitionCountRaw}) = ${partitionIndex}`,
+        )
+      }
+      await purgeQuery.execute()
+    } catch (error) {
+      logger.warn('Failed to purge index rows before force reindex', {
+        entityType,
+        tenantId: tenantId ?? null,
+        organizationId: organizationId ?? null,
+        partitionIndex: usingPartitions ? partitionIndex : null,
+        error: error instanceof Error ? error.message : error,
+      })
+    }
+  }
+
+  // The vector purge is scope-wide and cannot be partitioned — the queued job deletes every
+  // vector for the scope. Emitting it from one partition while siblings are already queueing
+  // per-record vectorize jobs is the same race the row purge just had, so a partitioned run
+  // leaves it to the caller that owns the fan-out (`api/reindex.ts` queues it once, before
+  // dispatching any partition).
+  if (force && resetCoverage && !usingPartitions && emitVectorize && eventBus) {
+    if (tenantId !== undefined) {
+      const payload: Record<string, unknown> = {
+        entityType,
+        tenantId: tenantId ?? null,
+      }
+      if (organizationId !== undefined) payload.organizationId = organizationId ?? null
       try {
-        let purgeQuery = db
-          .deleteFrom('entity_indexes' as any)
-          .where('entity_type' as any, '=', entityType)
-        if (tenantId !== undefined) {
-          purgeQuery = purgeQuery.where(sql<boolean>`tenant_id is not distinct from ${tenantId ?? null}`)
-        }
-        if (organizationId !== undefined) {
-          purgeQuery = purgeQuery.where(sql<boolean>`organization_id is not distinct from ${organizationId ?? null}`)
-        }
-        await purgeQuery.execute()
-      } catch (error) {
-        console.warn('[HybridQueryEngine] Failed to purge index rows before force reindex', {
+        await eventBus.emitEvent('query_index.vectorize_purge', payload)
+      } catch (err) {
+        logger.warn('Failed to queue vector purge before force reindex', {
           entityType,
           tenantId: tenantId ?? null,
           organizationId: organizationId ?? null,
-          error: error instanceof Error ? error.message : error,
+          error: err instanceof Error ? err.message : err,
         })
       }
-
-      if (emitVectorize && eventBus) {
-        if (tenantId !== undefined) {
-          const payload: Record<string, unknown> = {
-            entityType,
-            tenantId: tenantId ?? null,
-          }
-          if (organizationId !== undefined) payload.organizationId = organizationId ?? null
-          try {
-            await eventBus.emitEvent('query_index.vectorize_purge', payload)
-          } catch (err) {
-            console.warn('[HybridQueryEngine] Failed to queue vector purge before force reindex', {
-              entityType,
-              tenantId: tenantId ?? null,
-              organizationId: organizationId ?? null,
-              error: err instanceof Error ? err.message : err,
-            })
-          }
-        } else {
-          console.warn('[HybridQueryEngine] Skipping vector purge for force reindex without tenant scope', {
-            entityType,
-          })
-        }
-      }
+    } else {
+      logger.warn('Skipping vector purge for force reindex without tenant scope', {
+        entityType,
+      })
     }
+  }
 
+  if (resetCoverage) {
+    // Only meaningful for an unpartitioned run: `baseCounts` holds this partition's slice,
+    // so writing it as the scope's base count under-reports by the partition factor, and
+    // zeroing indexed_count scope-wide discards deltas siblings have already applied. The
+    // authoritative `refreshCoverageSnapshot` at the end of every partition owns the counts
+    // for partitioned runs.
     const nowTs = Date.now()
-    for (const scope of baseCounts.values()) {
+    for (const scope of usingPartitions ? [] : baseCounts.values()) {
       const key = `${entityType}|${scopeKey(scope.tenantId, scope.organizationId)}`
       const last = lastCoverageReset.get(key) ?? 0
       if (force || nowTs - last >= COVERAGE_REFRESH_THROTTLE_MS) {
@@ -414,15 +454,25 @@ export async function reindexEntity(
           dekKeyCache,
         )
         if (isSearchDebugEnabled()) {
-          console.info('[reindex:decrypt]', buildReindexDecryptDebugPayload(targetEntity, result as Record<string, unknown>, scope))
+          logger.debug('Reindex decrypt', buildReindexDecryptDebugPayload(targetEntity, result as Record<string, unknown>, scope))
         }
         return result
       }
 
-      await upsertIndexBatch(db, entityType, rows, scopeOverrides, { deriveOrganizationId: deriveOrg, encryptDoc, decryptDoc })
+      const batchResult = await upsertIndexBatch(db, entityType, rows, scopeOverrides, { deriveOrganizationId: deriveOrg, encryptDoc, decryptDoc })
+      mergeUpsertIndexBatchResults(writeTotals, batchResult)
+
+      // A whole batch failing is infrastructural (pool exhausted, disk full, KMS down),
+      // not a poison record. Abort now instead of grinding through the rest of the table.
+      if (batchResult.written === 0 && batchResult.attempted > 0) {
+        throw new QueryIndexBatchWriteError(entityType, writeTotals)
+      }
+
+      const failedInBatch = new Set(batchResult.failedRecordIds)
+      const writtenRows = failedInBatch.size ? rows.filter((row) => !failedInBatch.has(String(row.id))) : rows
 
       const coverageDeltas = new Map<string, { tenantId: string | null; organizationId: string | null; delta: number }>()
-      for (const row of rows) {
+      for (const row of writtenRows) {
         const scopeTenant = tenantId !== undefined
           ? tenantId ?? null
           : (hasTenantCol ? ((row as AnyRow).tenant_id ?? null) : null)
@@ -454,7 +504,7 @@ export async function reindexEntity(
 
       if (emitVectorize && eventBus) {
         await Promise.all(
-          rows.map((row) => {
+          writtenRows.map((row) => {
             const scopeOrg = organizationId !== undefined
               ? organizationId ?? null
               : hasOrgCol
@@ -475,20 +525,32 @@ export async function reindexEntity(
         )
       }
 
-      processed += rows.length
+      processed += batchResult.written
       lastId = String(rows[rows.length - 1]!.id)
-      options?.onProgress?.({ processed, total, chunkSize: rows.length })
-      await updateJobProgress(db, jobScope, rows.length)
+      options?.onProgress?.({ processed, total, chunkSize: batchResult.written })
+      await updateJobProgress(db, jobScope, batchResult.written)
     }
 
-    await purgeOrphans(db, {
-      entityType,
-      tenantId,
-      organizationId,
-      partitionIndex: usingPartitions ? partitionIndex : null,
-      partitionCount: usingPartitions ? partitionCountRaw : null,
-      startedAt: jobStartedAt,
-    })
+    // Records this run failed to write still look untouched to the purge predicate, so
+    // without the exclusion the purge would delete the index rows it just failed to
+    // rebuild — turning a stale entry into a missing one.
+    const purgeExclusions = writeTotals.failedRecordIds
+    if (purgeExclusions.length > MAX_PURGE_EXCLUSIONS) {
+      logger.warn('Skipping orphan purge after widespread write failures', {
+        entityType,
+        failedRecords: purgeExclusions.length,
+      })
+    } else {
+      await purgeOrphans(db, {
+        entityType,
+        tenantId,
+        organizationId,
+        partitionIndex: usingPartitions ? partitionIndex : null,
+        partitionCount: usingPartitions ? partitionCountRaw : null,
+        startedAt: jobStartedAt,
+        excludeRecordIds: purgeExclusions,
+      })
+    }
 
     if (force && vectorService && (!usingPartitions || partitionIndex === null)) {
       try {
@@ -499,7 +561,7 @@ export async function reindexEntity(
           olderThan: jobStartedAt,
         })
       } catch (error) {
-        console.warn('[HybridQueryEngine] Failed to prune vector orphans after reindex', {
+        logger.warn('Failed to prune vector orphans after reindex', {
           entityType,
           tenantId: tenantId ?? null,
           organizationId: organizationId ?? null,
@@ -519,8 +581,24 @@ export async function reindexEntity(
         },
       )
     }
+
+    // Deliberately after the coverage refresh: the authoritative recount is what keeps
+    // indexed_count truthful, and it is most worth having when a run has just failed.
+    // Throwing here fails the queue job so the loss is visible instead of silent.
+    if (writeTotals.searchTokenFailures > 0) {
+      logger.warn('Search token writes failed during reindex', {
+        entityType,
+        batches: writeTotals.searchTokenFailures,
+      })
+    }
+    assertIndexBatchWritesLanded(entityType, writeTotals)
+  } catch (error) {
+    jobFailed = true
+    throw error
   } finally {
-    await finalizeJob(db, jobScope)
+    // Still finalized on failure: the scope stays wedged behind the active-job guard
+    // while finished_at is null. The status carries the outcome instead.
+    await finalizeJob(db, jobScope, jobFailed ? { status: 'failed' } : {})
   }
 
   return {

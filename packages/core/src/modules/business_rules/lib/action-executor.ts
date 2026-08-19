@@ -665,12 +665,12 @@ async function parseOpenMercatoResponseBody(response: Response): Promise<any> {
   }
 }
 
-function throwOpenMercatoResponseError(status: number, _body: any): never {
+function throwOpenMercatoResponseError(status: number, _body: unknown): never {
   if (status >= 400 && status < 500) {
     throw new Error(`CALL_OPEN_MERCATO request failed with status ${status}`)
   }
 
-  const error: any = new Error(`CALL_OPEN_MERCATO request failed with status ${status}`)
+  const error: Error & { retriable?: boolean } = new Error(`CALL_OPEN_MERCATO request failed with status ${status}`)
   if (status >= 500) {
     error.retriable = true
   }

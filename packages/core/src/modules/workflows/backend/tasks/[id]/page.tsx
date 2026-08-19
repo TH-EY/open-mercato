@@ -30,6 +30,9 @@ import { normalizeUserTaskFormSchema } from '../../../lib/user-task-form-schema'
 import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
 import { useBackendChrome } from '@open-mercato/ui/backend/BackendChromeProvider'
 import { hasFeature } from '@open-mercato/shared/security/features'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('workflows')
 
 export default function UserTaskDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter()
@@ -156,7 +159,7 @@ export default function UserTaskDetailPage({ params }: { params: { id: string } 
         flash(error?.error || t('workflows.tasks.messages.completeFailed'), 'error')
       }
     } catch (err) {
-      console.error('Error completing task:', err)
+      logger.error('Error completing task', { err })
       flash(t('workflows.tasks.messages.completeFailed'), 'error')
     } finally {
       setSubmitting(false)

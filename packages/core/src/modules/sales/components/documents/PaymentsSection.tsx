@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from 'react'
-import type { ColumnDef } from '@tanstack/react-table'
+import type { LegacyColumnDef as ColumnDef } from '@tanstack/react-table/legacy'
 import { DataTable } from '@open-mercato/ui/backend/DataTable'
 import { LoadingMessage, ErrorMessage, TabEmptyState } from '@open-mercato/ui/backend/detail'
 import { apiCall, withScopedApiRequestHeaders } from '@open-mercato/ui/backend/utils/apiCall'
@@ -18,6 +18,9 @@ import { emitSalesDocumentTotalsRefresh } from '@open-mercato/core/modules/sales
 import { PaymentDialog, type PaymentFormData, type PaymentTotals } from './PaymentDialog'
 import { extractCustomFieldValues } from './customFieldHelpers'
 import { Plus } from 'lucide-react'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('sales')
 
 type PaymentRow = {
   id: string
@@ -161,7 +164,7 @@ export function SalesDocumentPaymentsSection({
         onPaymentsChangeRef.current?.([])
       }
     } catch (err) {
-      console.error('sales.payments.list', err)
+      logger.error('sales.payments.list', { err })
       setError(t('sales.documents.payments.errorLoad', 'Failed to load payments.'))
       onPaymentsChangeRef.current?.([])
     } finally {
@@ -242,7 +245,7 @@ export function SalesDocumentPaymentsSection({
         if (handleSectionMutationError(err, t, () => void loadPayments())) {
           return
         }
-        console.error('sales.payments.delete', err)
+        logger.error('sales.payments.delete', { err })
         flash(t('sales.documents.payments.errorDelete', 'Failed to delete payment.'), 'error')
       }
     },

@@ -1,109 +1,160 @@
 import { expect, test } from '@playwright/test'
-import { login } from '@open-mercato/core/helpers/integration/auth'
-import { getAuthToken } from '@open-mercato/core/helpers/integration/api'
 import {
-  createDealFixture,
-  deleteEntityIfExists,
-} from '@open-mercato/core/helpers/integration/crmFixtures'
-import {
-  cancelWorkflowInstanceIfExists,
-  createWorkflowDefinitionFixture,
-  deleteWorkflowDefinitionIfExists,
-  findInstanceUserTask,
-  pollWorkflowInstance,
-  startWorkflowInstanceFixture,
-} from '@open-mercato/core/helpers/integration/workflowsFixtures'
+  deleteWorkflowDefinitions,
+  getWorkflowDefinition,
+  runLegacyCheckoutRepair,
+  seedWorkflowDefinition,
+} from './helpers/db'
 
 /**
- * TC-WF-031: An ordinary sales user completes a role-queued user task from the deal.
+ * TC-WF-031: Checkout-demo repair migration transforms only the known legacy seed.
  *
- * This is the primary end-user path: the employee does not visit workflow administration
- * or need to know the workflow instance id. The deal widget exposes the active task and
- * completing it resumes the paused workflow automatically.
+ * Guards issue #4179 at the data layer. `Migration20260715120000` is pure jsonb
+ * surgery; TC-WF-030 exercises the maintained code definition end-to-end but not
+ * the migration's SQL. This spec seeds a legacy-shaped `workflow_definitions`
+ * row (plus control rows that MUST stay untouched), runs the migration's exact
+ * exported SQL against Postgres, and asserts the resulting `definition`.
+ *
+ * ENVIRONMENT: DB-level fixtures (raw `pg` against `DATABASE_URL`). Run under a
+ * coherent app+DB stack (`yarn test:integration`).
  */
-test.describe('TC-WF-031: deal user-task widget', () => {
-  test('lets an employee claim and complete Initial contact from a deal', async ({ page, request }) => {
-    const adminToken = await getAuthToken(request, 'admin')
-    const timestamp = Date.now()
-    const workflowId = `qa-wf-deal-task-${timestamp}`
-    const dealTitle = `QA Initial contact deal ${timestamp}`
-    let definitionId: string | null = null
-    let instanceId: string | null = null
-    let dealId: string | null = null
 
+const LEGACY_ACTIVITY_URL = '{{env.INVENTORY_SERVICE_URL}}/api/inventory/reserve'
+const PAYMENT_ACTIVITY_URL = '{{env.PAYMENT_SERVICE_URL}}/api/payments/charge'
+
+const STRIPPED_TRANSITIONS = ['cart_to_customer_info', 'customer_info_to_payment', 'confirmation_to_order']
+const PRESERVED_WITH_ACTIVITIES = ['start_to_cart', 'payment_to_wait_confirmation', 'confirmation_to_end']
+
+type Transition = {
+  transitionId: string
+  activities?: Array<Record<string, unknown>>
+  preConditions?: Array<Record<string, unknown>>
+}
+
+/** Faithful shape of the original seeded checkout definition (examples/checkout-demo-definition.json). */
+function legacyCheckoutDefinition(overrides?: { inventoryUrl?: string }): Record<string, unknown> {
+  const inventoryUrl = overrides?.inventoryUrl ?? LEGACY_ACTIVITY_URL
+  const transitions: Transition[] = [
+    { transitionId: 'start_to_cart', activities: [{ activityId: 'log_checkout_start', activityType: 'EMIT_EVENT' }] },
+    {
+      transitionId: 'cart_to_customer_info',
+      preConditions: [{ ruleId: 'workflow_checkout_cart_not_empty', required: true }],
+      activities: [
+        { activityId: 'validate_cart_items', activityType: 'EMIT_EVENT' },
+        { activityId: 'reserve_inventory', activityType: 'CALL_WEBHOOK', config: { url: inventoryUrl } },
+        { activityId: 'emit_cart_validated', activityType: 'EMIT_EVENT' },
+      ],
+    },
+    {
+      transitionId: 'customer_info_to_payment',
+      activities: [
+        { activityId: 'charge_payment', activityType: 'CALL_WEBHOOK', config: { url: PAYMENT_ACTIVITY_URL } },
+        { activityId: 'log_payment_initiated', activityType: 'EMIT_EVENT' },
+      ],
+    },
+    { transitionId: 'payment_to_wait_confirmation', activities: [] },
+    {
+      transitionId: 'confirmation_to_order',
+      activities: [
+        { activityId: 'update_payment_status', activityType: 'EMIT_EVENT' },
+        { activityId: 'emit_payment_success', activityType: 'EMIT_EVENT' },
+      ],
+    },
+    {
+      transitionId: 'confirmation_to_end',
+      activities: [
+        { activityId: 'create_order', activityType: 'CALL_API' },
+        { activityId: 'send_confirmation_email', activityType: 'SEND_EMAIL' },
+        { activityId: 'emit_order_completed', activityType: 'EMIT_EVENT' },
+      ],
+    },
+  ]
+  return { steps: [], transitions }
+}
+
+function transitionsOf(definition: Record<string, unknown> | null): Transition[] {
+  return (definition?.transitions as Transition[]) ?? []
+}
+
+function byId(definition: Record<string, unknown> | null): Map<string, Transition> {
+  return new Map(transitionsOf(definition).map((transition) => [transition.transitionId, transition]))
+}
+
+test.describe('TC-WF-031: checkout-demo repair migration', () => {
+  test('strips only the three legacy transitions and leaves control rows untouched', async () => {
+    const seededIds: Array<string | null> = []
     try {
-      dealId = await createDealFixture(request, adminToken, { title: dealTitle })
-      definitionId = await createWorkflowDefinitionFixture(request, adminToken, {
-        workflowId,
-        workflowName: `QA Deal Initial Contact ${timestamp}`,
-        description: 'Self-contained end-user deal task integration fixture',
-        version: 1,
-        enabled: true,
-        definition: {
-          steps: [
-            { stepId: 'start', stepName: 'Start', stepType: 'START' },
-            {
-              stepId: 'initial-contact',
-              stepName: 'Initial contact',
-              stepType: 'USER_TASK',
-              userTaskConfig: { assignedTo: ['employee'] },
-            },
-            { stepId: 'quotation', stepName: 'Quotation', stepType: 'END' },
-          ],
-          transitions: [
-            {
-              transitionId: 'start-to-initial-contact',
-              fromStepId: 'start',
-              toStepId: 'initial-contact',
-              trigger: 'auto',
-            },
-            {
-              transitionId: 'initial-contact-to-quotation',
-              fromStepId: 'initial-contact',
-              toStepId: 'quotation',
-              trigger: 'auto',
-            },
-          ],
-        },
+      const target = await seedWorkflowDefinition({ definition: legacyCheckoutDefinition() })
+      const codeOverride = await seedWorkflowDefinition({
+        codeWorkflowId: 'workflows.checkout-demo',
+        definition: legacyCheckoutDefinition(),
       })
-      instanceId = await startWorkflowInstanceFixture(request, adminToken, {
-        workflowId,
-        initialContext: { dealId },
-        metadata: { entityType: 'customers.deal', entityId: dealId },
+      const differentUrl = await seedWorkflowDefinition({
+        definition: legacyCheckoutDefinition({ inventoryUrl: 'https://example.com/reserve' }),
       })
+      const wrongVersion = await seedWorkflowDefinition({ version: 2, definition: legacyCheckoutDefinition() })
+      const softDeleted = await seedWorkflowDefinition({ softDeleted: true, definition: legacyCheckoutDefinition() })
+      seededIds.push(target.id, codeOverride.id, differentUrl.id, wrongVersion.id, softDeleted.id)
 
-      const pendingTask = await findInstanceUserTask(request, adminToken, instanceId, {
-        statuses: ['PENDING'],
-      })
-      expect(pendingTask?.assignedToRoles).toContain('employee')
+      await runLegacyCheckoutRepair()
 
-      await login(page, 'employee')
-      await page.goto(`/backend/customers/deals/${encodeURIComponent(dealId)}`)
+      // Target: the three transitions lose their activities, everything else is preserved.
+      const repaired = await getWorkflowDefinition(target.id)
+      const repairedById = byId(repaired)
 
-      await expect(page.getByRole('heading', { name: dealTitle })).toBeVisible()
-      await expect(page.getByText(/Initial contact .*oczekuje|Initial contact .*waiting/i)).toBeVisible()
-      await expect(page.getByRole('link', { name: /Moje zadania|My tasks/i })).toBeVisible()
-      await expect(page.getByText(/Silnik Procesów Biznesowych|Workflow Engine/i)).toHaveCount(0)
+      expect(
+        transitionsOf(repaired).map((transition) => transition.transitionId),
+        'transition order is preserved',
+      ).toEqual([
+        'start_to_cart',
+        'cart_to_customer_info',
+        'customer_info_to_payment',
+        'payment_to_wait_confirmation',
+        'confirmation_to_order',
+        'confirmation_to_end',
+      ])
 
-      await page.getByRole('button', { name: /Przejmij zadanie|Claim task/i }).click()
-      await expect(page.getByRole('button', { name: /Zakończ Initial contact|Complete Initial contact/i })).toBeVisible()
+      for (const transitionId of STRIPPED_TRANSITIONS) {
+        expect(repairedById.get(transitionId), `${transitionId} exists`).toBeTruthy()
+        expect(
+          Object.prototype.hasOwnProperty.call(repairedById.get(transitionId)!, 'activities'),
+          `${transitionId} loses its activities key`,
+        ).toBe(false)
+      }
 
-      await page.getByRole('button', { name: /Zakończ Initial contact|Complete Initial contact/i }).click()
-      await expect(page.getByText(/Initial contact .*oczekuje|Initial contact .*waiting/i)).toHaveCount(0)
+      // preConditions on a stripped transition survive — only `activities` is removed.
+      expect(repairedById.get('cart_to_customer_info')!.preConditions, 'preConditions preserved').toHaveLength(1)
 
-      const completedInstance = await pollWorkflowInstance(
-        request,
-        adminToken,
-        instanceId,
-        (instance) => instance.status === 'COMPLETED',
-      )
-      expect(completedInstance?.currentStepId).toBe('quotation')
-      expect(completedInstance?.status).toBe('COMPLETED')
-      instanceId = null
+      for (const transitionId of PRESERVED_WITH_ACTIVITIES) {
+        expect(
+          Object.prototype.hasOwnProperty.call(repairedById.get(transitionId)!, 'activities'),
+          `${transitionId} keeps its activities key`,
+        ).toBe(true)
+      }
+      // confirmation_to_end retains all three internal (non-webhook) activities.
+      expect(repairedById.get('confirmation_to_end')!.activities, 'confirmation_to_end kept intact').toHaveLength(3)
+      // No obsolete external webhook survives on the repaired row.
+      const repairedJson = JSON.stringify(repaired)
+      expect(repairedJson).not.toContain(LEGACY_ACTIVITY_URL)
+      expect(repairedJson).not.toContain(PAYMENT_ACTIVITY_URL)
+
+      // Control rows: none of the guards may be crossed.
+      for (const control of [codeOverride, differentUrl, wrongVersion, softDeleted]) {
+        const untouched = byId(await getWorkflowDefinition(control.id))
+        for (const transitionId of STRIPPED_TRANSITIONS) {
+          expect(
+            Object.prototype.hasOwnProperty.call(untouched.get(transitionId)!, 'activities'),
+            `control row ${control.id} keeps ${transitionId} activities`,
+          ).toBe(true)
+        }
+      }
+
+      // Idempotency: once reserve_inventory is gone the predicate no longer
+      // matches, so replaying the repair must be a no-op.
+      await runLegacyCheckoutRepair()
+      expect(await getWorkflowDefinition(target.id), 'second repair run is a no-op').toEqual(repaired)
     } finally {
-      await cancelWorkflowInstanceIfExists(request, adminToken, instanceId)
-      await deleteWorkflowDefinitionIfExists(request, adminToken, definitionId)
-      await deleteEntityIfExists(request, adminToken, '/api/customers/deals', dealId)
+      await deleteWorkflowDefinitions(seededIds).catch(() => undefined)
     }
   })
 })

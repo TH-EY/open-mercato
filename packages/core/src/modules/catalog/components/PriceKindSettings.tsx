@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from 'react'
-import type { ColumnDef } from '@tanstack/react-table'
+import type { LegacyColumnDef as ColumnDef } from '@tanstack/react-table/legacy'
 import { DataTable } from '@open-mercato/ui/backend/DataTable'
 import { RowActions } from '@open-mercato/ui/backend/RowActions'
 import { Button } from '@open-mercato/ui/primitives/button'
@@ -28,6 +28,9 @@ import { DictionaryEntrySelect } from '@open-mercato/core/modules/dictionaries/c
 import { useCurrencyDictionary } from '@open-mercato/core/modules/customers/components/detail/hooks/useCurrencyDictionary'
 import type { DictionaryOption } from '@open-mercato/core/modules/dictionaries/components/DictionaryEntrySelect'
 import type { CatalogPriceDisplayMode } from '../data/types'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('catalog')
 
 type PriceKind = {
   id: string
@@ -153,7 +156,7 @@ export function PriceKindSettings() {
       const normalized = Array.isArray(payload.items) ? payload.items.map((item) => normalizePriceKind(item)) : []
       setItems(normalized)
     } catch (err) {
-      console.error('catalog.price-kinds.list failed', err)
+      logger.error('catalog.price-kinds.list failed', { err })
       flash(loadErrorMessage, 'error')
     } finally {
       setLoading(false)
@@ -236,7 +239,7 @@ export function PriceKindSettings() {
       closeDialog()
       await loadItems()
     } catch (err) {
-      console.error('catalog.price-kinds.save failed', err)
+      logger.error('catalog.price-kinds.save failed', { err })
       // Route a concurrent-edit 409 through the single conflict surface (unified
       // conflict bar, or the enterprise merge dialog when its handler is mounted)
       // and close the editor so that surface owns the resolution. Other errors
@@ -276,7 +279,7 @@ export function PriceKindSettings() {
         flash(t('catalog.priceKinds.messages.deleted', 'Price kind deleted.'), 'success')
         await loadItems()
       } catch (err) {
-        console.error('catalog.price-kinds.delete failed', err)
+        logger.error('catalog.price-kinds.delete failed', { err })
         // Route a concurrent-edit 409 through the single conflict surface; fall
         // back to a flash for any other delete failure.
         if (surfaceRecordConflict(err, t, { onRefresh: () => { void loadItems() } })) return
@@ -372,7 +375,7 @@ export function PriceKindSettings() {
       header: tableLabels.promotion,
       cell: ({ row }) =>
         row.original.isPromotion ? (
-          <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900 dark:border-amber-500/50 dark:bg-amber-500/10 dark:text-amber-100">
+          <span className="inline-flex items-center rounded-full border border-status-warning-border bg-status-warning-bg px-2 py-0.5 text-xs font-medium text-status-warning-text">
             {tableLabels.promotionYes}
           </span>
         ) : (
@@ -386,7 +389,7 @@ export function PriceKindSettings() {
       header: tableLabels.active,
       cell: ({ row }) =>
         row.original.isActive ? (
-          <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-900 dark:border-emerald-500/50 dark:bg-emerald-500/10 dark:text-emerald-100">
+          <span className="inline-flex items-center rounded-full border border-status-success-border bg-status-success-bg px-2 py-0.5 text-xs font-medium text-status-success-text">
             {tableLabels.activeYes}
           </span>
         ) : (
@@ -552,7 +555,7 @@ export function PriceKindSettings() {
                   {t('catalog.priceKinds.form.activeLabel', 'Active')}
                 </label>
               </div>
-              {error ? <p className="text-sm text-red-600">{error}</p> : null}
+              {error ? <p className="text-sm text-status-error-text">{error}</p> : null}
             </form>
             <DialogFooter>
               <Button variant="ghost" onClick={closeDialog}>

@@ -26,6 +26,9 @@ import {
   advanceWorkflowResponseSchema,
   workflowErrorSchema,
 } from '../../../openapi'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('workflows')
 
 // Validation schema
 const advanceWorkflowSchema = z.object({
@@ -262,7 +265,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       { status: 200 }
     )
   } catch (error) {
-    console.error('Error advancing workflow:', error)
+    logger.error('Error advancing workflow', { err: error })
 
     if (error instanceof Error) {
       return NextResponse.json(

@@ -13,7 +13,6 @@ import { EntityManager } from '@mikro-orm/core'
 import {
   WorkflowInstance,
   WorkflowBranchInstance,
-  WorkflowDefinition,
   StepInstance,
   UserTask,
   WorkflowEvent,
@@ -25,6 +24,10 @@ import { logWorkflowEvent } from './event-logger'
 import { normalizeUserTaskFormSchema } from './user-task-form-schema'
 import { emitWorkflowsEvent } from '../events'
 import { readCorrelationScalar } from './signal-correlation'
+import { findDefinitionForInstance } from './find-definition'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('workflows')
 
 // ============================================================================
 // Types and Interfaces
@@ -76,9 +79,7 @@ export async function enterStep(
   branch?: WorkflowBranchInstance | null
 ): Promise<StepInstance> {
   // Load workflow definition to get step details
-  const definition = await em.findOne(WorkflowDefinition, {
-    id: instance.definitionId,
-  })
+  const definition = await findDefinitionForInstance(em, instance)
 
   if (!definition) {
     throw new StepExecutionError(
@@ -213,9 +214,7 @@ export async function executeStep(
     const stepInstance = await enterStep(em, instance, stepId, context, branch)
 
     // Load workflow definition to get step configuration
-    const definition = await em.findOne(WorkflowDefinition, {
-      id: instance.definitionId,
-    })
+    const definition = await findDefinitionForInstance(em, instance)
 
     if (!definition) {
       throw new StepExecutionError(
@@ -284,7 +283,7 @@ export async function executeStep(
       }
     } catch (updateError) {
       // Swallow update errors to preserve original error
-      console.error('Failed to update step instance with error:', updateError)
+      logger.error('Failed to update step instance with error', { err: updateError })
     }
 
     return {
@@ -359,7 +358,7 @@ async function executeStepByType(
           { stepType, stepId: stepDef.stepId }
         )
       }
-      const definition = await em.findOne(WorkflowDefinition, { id: instance.definitionId })
+      const definition = await findDefinitionForInstance(em, instance)
       if (!definition) {
         throw new StepExecutionError(
           `Workflow definition not found: ${instance.definitionId}`,

@@ -60,6 +60,9 @@ import {
   extractCustomFieldValues,
 } from "./customFieldHelpers";
 import { canonicalizeUnitCode } from "@open-mercato/shared/lib/units/unitCodes";
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('sales')
 
 type ProductOption = {
   id: string;
@@ -289,14 +292,16 @@ type SnapshotEntity = {
 type SalesLineDialogProps = {
   open: boolean;
   kind: "order" | "quote";
-  documentId: string;
+  documentId?: string;
   currencyCode: string | null | undefined;
   documentUpdatedAt?: string | null;
   organizationId: string | null;
   tenantId: string | null;
   initialLine?: SalesLineRecord | null;
+  shippedQuantity?: number;
   onOpenChange: (open: boolean) => void;
   onSaved?: () => Promise<void> | void;
+  onDraftSaved?: (payload: Record<string, unknown>, lineId: string | null) => Promise<void> | void;
 };
 
 const defaultForm = (currencyCode?: string | null): LineFormState => ({
@@ -523,8 +528,10 @@ export function LineItemDialog({
   organizationId,
   tenantId,
   initialLine,
+  shippedQuantity = 0,
   onOpenChange,
   onSaved,
+  onDraftSaved,
 }: SalesLineDialogProps) {
   const t = useT();
   const scope = useOrganizationScopeDetail();
@@ -678,7 +685,7 @@ export function LineItemDialog({
       setTaxRates(parsed);
       return parsed;
     } catch (err) {
-      console.error("sales.tax-rates.fetch", err);
+      logger.error('sales.tax-rates.fetch', { err });
       taxRatesRef.current = [];
       defaultTaxRateRef.current = null;
       setTaxRates([]);
@@ -980,7 +987,7 @@ export function LineItemDialog({
             defaultSalesUnit = defaultSalesUnit ?? matchedUom.defaultSalesUnit;
           }
         } catch (err) {
-          console.error("sales.document.items.loadProductUnits.hydration", err);
+          logger.error('sales.document.items.loadProductUnits.hydration', { err });
         }
       }
       if (baseUnit) {
@@ -1011,7 +1018,7 @@ export function LineItemDialog({
           });
         }
       } catch (err) {
-        console.error("sales.document.items.loadUnits", err);
+        logger.error('sales.document.items.loadUnits', { err });
       }
       if (defaultSalesUnit && !map.has(defaultSalesUnit)) {
         map.set(defaultSalesUnit, {
@@ -1179,7 +1186,7 @@ export function LineItemDialog({
         setPriceOptions(mapped);
         return mapped;
       } catch (err) {
-        console.error("sales.document.items.loadPrices", err);
+        logger.error('sales.document.items.loadPrices', { err });
         return [];
       } finally {
         setPriceLoading(false);
@@ -1327,7 +1334,7 @@ export function LineItemDialog({
       setLineStatuses(mapped);
       return mapped;
     } catch (err) {
-      console.error("sales.lines.statuses.load", err);
+      logger.error('sales.lines.statuses.load', { err });
       setLineStatuses([]);
       return [];
     } finally {
@@ -1394,7 +1401,7 @@ export function LineItemDialog({
       const resolvedOrg = resolvedOrganizationId;
       const resolvedTenant = resolvedTenantId;
 
-      if (!resolvedOrg || !resolvedTenant || !resolvedDocumentId) {
+      if (!onDraftSaved && (!resolvedOrg || !resolvedTenant || !resolvedDocumentId)) {
         throw createCrudFormError(
           t(
             "sales.documents.items.errorScope",
@@ -1469,6 +1476,14 @@ export function LineItemDialog({
             ),
           },
         );
+      }
+      if (shippedQuantity > 0 && qtyNumber < shippedQuantity) {
+        const message = t(
+          "sales.documents.items.errorQuantityBelowShipped",
+          "You cannot lower the quantity below the {{shipped}} already shipped.",
+          { shipped: shippedQuantity },
+        );
+        throw createCrudFormError(message, { quantity: message });
       }
       const resolvedQuantityUnit = (() => {
         const entered = normalizeUnitCode(values.quantityUnit);
@@ -1606,9 +1621,9 @@ export function LineItemDialog({
       };
 
       const payload: Record<string, unknown> = {
-        [documentKey]: String(resolvedDocumentId),
-        organizationId: String(resolvedOrg),
-        tenantId: String(resolvedTenant),
+        ...(resolvedDocumentId ? { [documentKey]: String(resolvedDocumentId) } : {}),
+        ...(resolvedOrg ? { organizationId: String(resolvedOrg) } : {}),
+        ...(resolvedTenant ? { tenantId: String(resolvedTenant) } : {}),
         kind: isServiceLine ? "service" : "product",
         productId: isProductLine && values.productId
             ? String(values.productId)
@@ -1646,6 +1661,11 @@ export function LineItemDialog({
       if (resolvedName) payload.name = resolvedName;
 
       try {
+        if (onDraftSaved) {
+          await onDraftSaved(payload, editingId);
+          closeDialog();
+          return;
+        }
         const action = editingId ? updateCrud : createCrud;
         const result = await withScopedApiRequestHeaders(
           buildOptimisticLockHeader(documentUpdatedAt),
@@ -1683,6 +1703,7 @@ export function LineItemDialog({
       documentKey,
       documentUpdatedAt,
       editingId,
+      onDraftSaved,
       priceOptions,
       productOption,
       resourcePath,
@@ -3139,7 +3160,7 @@ export function LineItemDialog({
           }
           setDeletedCatalogReference(false);
         } catch (err) {
-          console.error("sales.document.items.verifyCatalogReference", err);
+          logger.error('sales.document.items.verifyCatalogReference', { err });
         }
       })();
       void loadProductUnits(initialLine.productId, resolvedProductOption).then(

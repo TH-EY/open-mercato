@@ -5,7 +5,7 @@ import { getAuthFromRequest } from '@open-mercato/shared/lib/auth/server'
 import { resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/directory/utils/organizationScope'
 import type { CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import { resolveTranslations, detectLocale } from '@open-mercato/shared/lib/i18n/server'
-import { CrudHttpError, isCrudHttpError } from '@open-mercato/shared/lib/crud/errors'
+import { CrudHttpError, isCrudHttpError, notFound } from '@open-mercato/shared/lib/crud/errors'
 import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import {
   bridgeLegacyGuard,
@@ -26,6 +26,9 @@ import { sendEmail } from '@open-mercato/shared/lib/email/send'
 import { resolveStatusEntryIdByValue } from '../../../lib/statusHelpers'
 import { emitQuoteStatusChanged } from '../../../lib/quoteStatusEvents'
 import { QuoteSentEmail } from '../../../emails/QuoteSentEmail'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('sales')
 
 export const metadata = {
   POST: { requireAuth: true, requireFeatures: ['sales.quotes.manage'] },
@@ -159,6 +162,23 @@ export async function POST(req: Request) {
     const tenantScope = ctx.auth?.tenantId
       ? { tenantId: ctx.auth.tenantId, organizationId: ctx.selectedOrganizationId ?? ctx.auth.orgId ?? null }
       : undefined
+    const quote = await findOneWithDecryption(em, SalesQuote, { id: input.quoteId, deletedAt: null }, {}, tenantScope)
+    if (!quote) {
+      throw notFound(translate('sales.documents.detail.error', 'Document not found or inaccessible.'))
+    }
+    if (quote.tenantId !== ctx.auth?.tenantId || quote.organizationId !== ctx.selectedOrganizationId) {
+      throw new CrudHttpError(403, { error: translate('sales.documents.errors.forbidden', 'Forbidden') })
+    }
+
+    if ((quote.status ?? null) === 'canceled') {
+      throw new CrudHttpError(400, { error: translate('sales.quotes.send.canceled', 'Canceled quotes cannot be sent.') })
+    }
+
+    const email = resolveQuoteEmail(quote)
+    if (!email) {
+      throw new CrudHttpError(400, { error: translate('sales.quotes.send.missingEmail', 'Customer email is required to send a quote.') })
+    }
+
     const now = new Date()
     const validUntil = new Date(now)
     validUntil.setUTCDate(validUntil.getUTCDate() + input.validForDays)
@@ -258,7 +278,7 @@ export async function POST(req: Request) {
       return NextResponse.json(err.body, { status: err.status })
     }
     const { translate } = await resolveTranslations()
-    console.error('sales.quotes.send failed', err)
+    logger.error('sales.quotes.send failed', { err })
     return NextResponse.json(
       { error: translate('sales.quotes.send.failed', 'Failed to send quote.') },
       { status: 400 }

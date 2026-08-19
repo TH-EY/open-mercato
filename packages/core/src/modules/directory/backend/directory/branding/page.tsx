@@ -20,6 +20,7 @@ type BrandingPayload = {
   organizationName: string
   tenantId: string
   logoUrl: string | null
+  logoPreserveAspectRatio: boolean
   updatedAt: string | null
   logoPreserveAspectRatio: boolean
 }

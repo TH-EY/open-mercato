@@ -2,6 +2,7 @@ import { cookies } from 'next/headers.js'
 import type { EntityManager } from '@mikro-orm/postgresql'
 import { verifyJwt } from './jwt'
 import { getSharedApiKeyAuthCache } from './apiKeyAuthCache'
+import { isTransientDbError } from '@open-mercato/shared/lib/db/pg-errors'
 
 const TENANT_COOKIE_NAME = 'om_selected_tenant'
 const ORGANIZATION_COOKIE_NAME = 'om_selected_org'
@@ -23,10 +24,27 @@ export type AuthContext = {
 } | null
 
 type CookieOverride = { applied: boolean; value: string | null }
-type AuthResolutionStatus = 'authenticated' | 'missing' | 'invalid'
+// 'error' means auth could not be determined because of a transient/unexpected
+// failure (DB unavailable, connection-pool exhaustion, statement timeout, …) —
+// NOT because the token is genuinely invalid. Callers MUST NOT clear the user's
+// session cookies for 'error'; doing so would log everyone out at once during a
+// shared infrastructure blip (issue #4176).
+type AuthResolutionStatus = 'authenticated' | 'missing' | 'invalid' | 'error'
 type AuthResolution = {
   auth: AuthContext
   status: AuthResolutionStatus
+}
+
+// Thrown by `resolveCanonicalInteractiveAuthContext` when the canonical auth
+// lookup itself fails unexpectedly (as opposed to resolving to a genuine
+// "not authorized" null). Kept distinct so resolvers can map it to the
+// non-destructive 'error' status instead of the cookie-clearing 'invalid'.
+export class AuthResolutionUnavailableError extends Error {
+  constructor(cause?: unknown) {
+    super('Auth resolution unavailable')
+    this.name = 'AuthResolutionUnavailableError'
+    if (cause !== undefined) (this as { cause?: unknown }).cause = cause
+  }
 }
 
 // Symbol-keyed trusted auth context. Set on synthetic Request objects by
@@ -80,12 +98,22 @@ function readCookieFromHeader(header: string | null | undefined, name: string): 
   return undefined
 }
 
+/**
+ * A blank `om_selected_tenant` is "no selection", not a deliberate "no tenant".
+ *
+ * Unlike the organization cookie there is no all-tenants sentinel to express, and the tenant
+ * selector renders with `includeEmptyOption={false}`, so no UI produces a blank value. Treating it
+ * as an applied override nulled `tenantId` for the whole super-admin session, which is what turned
+ * a cosmetic client bug into `tenantId ?? ''` reaching a NOT NULL uuid column. Reporting the
+ * override as not applied instead keeps the tenant carried in the token and remediates an
+ * already-poisoned browser on its next request, whatever wrote the cookie.
+ */
 function resolveTenantOverride(raw: string | undefined): CookieOverride {
   if (raw === undefined) return { applied: false, value: null }
   const decoded = decodeCookieValue(raw)
-  if (!decoded) return { applied: true, value: null }
+  if (!decoded) return { applied: false, value: null }
   const trimmed = decoded.trim()
-  if (!trimmed) return { applied: true, value: null }
+  if (!trimmed) return { applied: false, value: null }
   return { applied: true, value: trimmed }
 }
 
@@ -236,7 +264,14 @@ async function resolveApiKeyAuth(secret: string): Promise<AuthContext> {
     }
     cache.setSuccess(secret, auth, record.expiresAt ? record.expiresAt.getTime() : null)
     return auth
-  } catch {
+  } catch (err) {
+    // A transient DB failure (pool exhausted, `max_connections` reached, DB
+    // restarting) means we could not confirm the key — NOT that it is invalid.
+    // Surface it so callers return a retryable 503 instead of masking it as an
+    // auth miss (401). Genuine misses already returned `null` above.
+    if (isTransientDbError(err)) {
+      throw new AuthResolutionUnavailableError(err)
+    }
     return null
   }
 }
@@ -263,8 +298,12 @@ async function resolveCanonicalInteractiveAuthContext(auth: AuthContext): Promis
     const container = await createRequestContainer()
     const em = container.resolve('em') as EntityManager
     return await resolveCanonicalStaffAuthContext(em, auth)
-  } catch {
-    return null
+  } catch (err) {
+    // A thrown error here means we could not check the token against the
+    // database (DB down, pool exhausted, timeout). This is NOT the same as the
+    // token being invalid — surface it so callers keep the session intact and
+    // fail the request transiently instead of force-logging the user out.
+    throw new AuthResolutionUnavailableError(err)
   }
 }
 
@@ -284,7 +323,8 @@ export async function resolveAuthFromCookiesDetailed(): Promise<AuthResolution> 
       auth: applySuperAdminScope(canonicalAuth, tenantCookie, orgCookie),
       status: 'authenticated',
     }
-  } catch {
+  } catch (err) {
+    if (err instanceof AuthResolutionUnavailableError) return { auth: null, status: 'error' }
     return { auth: null, status: 'invalid' }
   }
 }
@@ -307,6 +347,7 @@ export async function resolveAuthFromRequestDetailed(req: Request): Promise<Auth
   const authHeader = (req.headers.get('authorization') || '').trim()
   let token: string | undefined
   let hadInvalidInteractiveToken = false
+  let hadUnavailableResolution = false
   if (authHeader.toLowerCase().startsWith('bearer ')) token = authHeader.slice(7).trim()
   if (!token) {
     const match = cookieHeader.match(/(?:^|;\s*)auth_token=([^;]+)/)
@@ -326,18 +367,38 @@ export async function resolveAuthFromRequestDetailed(req: Request): Promise<Auth
         }
         hadInvalidInteractiveToken = true
       }
-    } catch {
-      hadInvalidInteractiveToken = true
+    } catch (err) {
+      // Transient/unexpected canonical-resolution failures must not invalidate
+      // the token — surface them so we return 'error' (retryable) rather than
+      // clearing the session cookies.
+      if (err instanceof AuthResolutionUnavailableError) hadUnavailableResolution = true
+      else hadInvalidInteractiveToken = true
     }
   }
 
+  const resolveUnauthenticatedStatus = (): AuthResolutionStatus =>
+    hadUnavailableResolution ? 'error' : hadInvalidInteractiveToken ? 'invalid' : 'missing'
+
   const apiKey = extractApiKey(req)
   if (!apiKey) {
-    return { auth: null, status: hadInvalidInteractiveToken ? 'invalid' : 'missing' }
+    return { auth: null, status: resolveUnauthenticatedStatus() }
   }
-  const apiAuth = await resolveApiKeyAuth(apiKey)
+  let apiAuth: AuthContext
+  try {
+    apiAuth = await resolveApiKeyAuth(apiKey)
+  } catch (err) {
+    // Only a transient canonical-resolution failure maps to 'error' (retryable
+    // 503), mirroring the interactive-token path above. Anything else is an
+    // unexpected bug — rethrow so it surfaces as a 500 rather than being masked
+    // as an auth failure.
+    if (!(err instanceof AuthResolutionUnavailableError)) {
+      throw err
+    }
+    hadUnavailableResolution = true
+    return { auth: null, status: resolveUnauthenticatedStatus() }
+  }
   if (!apiAuth) {
-    return { auth: null, status: hadInvalidInteractiveToken ? 'invalid' : 'missing' }
+    return { auth: null, status: resolveUnauthenticatedStatus() }
   }
   return {
     auth: applySuperAdminScope(apiAuth, tenantCookie, orgCookie),

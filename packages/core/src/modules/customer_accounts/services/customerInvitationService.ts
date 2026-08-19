@@ -19,6 +19,7 @@ type InvitationRollbackSnapshot = {
   emailHash: string
   token: string
   customerEntityId?: string | null
+  personEntityId?: string | null
   roleIdsJson?: string[] | null
   invitedByUserId?: string | null
   invitedByCustomerUserId?: string | null
@@ -40,6 +41,7 @@ function snapshotInvitation(invitation: CustomerUserInvitation): InvitationRollb
     emailHash: invitation.emailHash,
     token: invitation.token,
     customerEntityId: invitation.customerEntityId ?? null,
+    personEntityId: invitation.personEntityId ?? null,
     roleIdsJson: Array.isArray(invitation.roleIdsJson) ? [...invitation.roleIdsJson] : invitation.roleIdsJson ?? null,
     invitedByUserId: invitation.invitedByUserId ?? null,
     invitedByCustomerUserId: invitation.invitedByCustomerUserId ?? null,
@@ -56,6 +58,7 @@ export class CustomerInvitationService {
     scope: { tenantId: string; organizationId: string },
     options: {
       customerEntityId?: string | null
+      personEntityId?: string | null
       roleIds: string[]
       invitedByUserId?: string | null
       invitedByCustomerUserId?: string | null
@@ -92,6 +95,7 @@ export class CustomerInvitationService {
       existing.email = normalizedEmail
       existing.token = tokenHashed
       existing.customerEntityId = options.customerEntityId || null
+      existing.personEntityId = options.personEntityId || null
       existing.roleIdsJson = options.roleIds
       existing.invitedByUserId = options.invitedByUserId || null
       existing.invitedByCustomerUserId = options.invitedByCustomerUserId || null
@@ -108,6 +112,7 @@ export class CustomerInvitationService {
       emailHash,
       token: tokenHashed,
       customerEntityId: options.customerEntityId || null,
+      personEntityId: options.personEntityId || null,
       roleIdsJson: options.roleIds,
       invitedByUserId: options.invitedByUserId || null,
       invitedByCustomerUserId: options.invitedByCustomerUserId || null,
@@ -156,6 +161,7 @@ export class CustomerInvitationService {
         emailHash: snapshot.emailHash,
         token: snapshot.token,
         customerEntityId: snapshot.customerEntityId ?? null,
+        personEntityId: snapshot.personEntityId ?? null,
         roleIdsJson: restoredRoleIds,
         invitedByUserId: snapshot.invitedByUserId ?? null,
         invitedByCustomerUserId: snapshot.invitedByCustomerUserId ?? null,
@@ -171,6 +177,7 @@ export class CustomerInvitationService {
     invitation.emailHash = snapshot.emailHash
     invitation.token = snapshot.token
     invitation.customerEntityId = snapshot.customerEntityId ?? null
+    invitation.personEntityId = snapshot.personEntityId ?? null
     invitation.roleIdsJson = restoredRoleIds
     invitation.invitedByUserId = snapshot.invitedByUserId ?? null
     invitation.invitedByCustomerUserId = snapshot.invitedByCustomerUserId ?? null
@@ -270,6 +277,7 @@ export class CustomerInvitationService {
         tenantId: invitation.tenantId,
         organizationId: invitation.organizationId,
         customerEntityId: invitation.customerEntityId || null,
+        personEntityId: invitation.personEntityId || null,
         isActive: true,
         emailVerifiedAt: acceptedAt,
         failedLoginAttempts: 0,

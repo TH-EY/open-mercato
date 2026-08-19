@@ -18,6 +18,9 @@ import { Organization } from '@open-mercato/core/modules/directory/data/entities
 import { organizationUpdateSchema } from '@open-mercato/core/modules/directory/data/validators'
 import { resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/directory/utils/organizationScope'
 import '@open-mercato/core/modules/directory/commands/organizations'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('directory').child({ component: 'organization-branding' })
 
 export const metadata = {
   GET: { requireAuth: true, requireFeatures: ['directory.organizations.view'] },
@@ -29,6 +32,7 @@ const brandingResponseSchema = z.object({
   organizationName: z.string(),
   tenantId: z.string().uuid(),
   logoUrl: z.string().nullable(),
+  logoPreserveAspectRatio: z.boolean(),
   updatedAt: z.string().nullable(),
   logoPreserveAspectRatio: z.boolean(),
 })
@@ -131,6 +135,7 @@ function toResponsePayload(organization: Organization, tenantId: string) {
     organizationName: organization.name,
     tenantId,
     logoUrl: organization.logoUrl ?? null,
+    logoPreserveAspectRatio: !!organization.logoPreserveAspectRatio,
     updatedAt: toIsoOrNull(organization.updatedAt),
     logoPreserveAspectRatio: !!organization.logoPreserveAspectRatio,
   }
@@ -265,7 +270,7 @@ export async function PUT(req: Request) {
     if (isCrudHttpError(err)) {
       return NextResponse.json(err.body, { status: err.status })
     }
-    console.error('directory.organization-branding.update failed', err)
+    logger.error('Organization branding update failed', { err })
     return NextResponse.json(
       { error: resolved.translate('directory.branding.errors.save', 'Failed to update organization branding.') },
       { status: 400 },

@@ -185,7 +185,15 @@ const sidebars: SidebarsConfig = {
     {
       type: "category",
       label: "Architecture",
-      items: ["architecture/system-overview", "architecture/module-dependencies", "architecture/generators", "architecture/cache-cli", "architecture/data-encryption"],
+      items: [
+        "architecture/system-overview",
+        "architecture/module-dependencies",
+        "architecture/configuration-decision-guide",
+        "architecture/generators",
+        "architecture/standalone-ai-development-harness",
+        "architecture/cache-cli",
+        "architecture/data-encryption",
+      ],
     },
     {
       type: "category",
@@ -228,6 +236,7 @@ const sidebars: SidebarsConfig = {
       label: "REST API",
       items: [
         "api/overview",
+        "api/exporting",
         {
           type: "category",
           label: "Module Guides",
@@ -421,6 +430,7 @@ const sidebars: SidebarsConfig = {
             "framework/ai-assistant/launcher",
             "framework/ai-assistant/overrides",
             "framework/ai-assistant/settings",
+            "framework/ai-assistant/moderation",
             "framework/ai-assistant/playground",
           ],
         },
@@ -495,6 +505,7 @@ const sidebars: SidebarsConfig = {
           items: [
             "framework/runtime/data-engine",
             "framework/runtime/request-lifecycle",
+            "framework/runtime/logging",
           ],
         },
         {
@@ -542,6 +553,7 @@ const sidebars: SidebarsConfig = {
         "tutorials/building-todo-module",
         "tutorials/authoring-first-module",
         "tutorials/api-data-fetching",
+        "tutorials/devices-and-push-getting-started",
         "tutorials/testing",
         {
           type: "category",

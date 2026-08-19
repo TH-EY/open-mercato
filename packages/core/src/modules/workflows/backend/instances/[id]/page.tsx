@@ -22,6 +22,9 @@ import { definitionToGraph } from '../../../lib/graph-utils'
 import { isCallApiIdentityResolutionError } from '../../../lib/call-api-identity-error'
 import type { Node } from '@xyflow/react'
 import { RecordNotFoundState, ErrorMessage } from '@open-mercato/ui/backend/detail'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('workflows')
 
 export default function WorkflowInstanceDetailPage({ params }: { params?: { id?: string } }) {
   const id = params?.id
@@ -70,7 +73,7 @@ export default function WorkflowInstanceDetailPage({ params }: { params?: { id?:
       // Fetch definition by ID
       const response = await apiFetch(`/api/workflows/definitions/${instance!.definitionId}`)
       if (!response.ok) {
-        console.error('Failed to fetch workflow definition:', response.statusText)
+        logger.error('Failed to fetch workflow definition', { statusText: response.statusText })
         return null
       }
       const result = await response.json()
@@ -153,7 +156,7 @@ export default function WorkflowInstanceDetailPage({ params }: { params?: { id?:
       queryClient.invalidateQueries({ queryKey: ['workflow-instance', id] })
     },
     onError: (error) => {
-      console.error('Error cancelling instance:', error)
+      logger.error('Error cancelling instance', { err: error })
       flash(t('workflows.instances.cancelFailed'), 'error')
     },
   })
@@ -173,7 +176,7 @@ export default function WorkflowInstanceDetailPage({ params }: { params?: { id?:
       queryClient.invalidateQueries({ queryKey: ['workflow-instance', id] })
     },
     onError: (error) => {
-      console.error('Error retrying instance:', error)
+      logger.error('Error retrying instance', { err: error })
       flash(t('workflows.instances.retryFailed'), 'error')
     },
   })
