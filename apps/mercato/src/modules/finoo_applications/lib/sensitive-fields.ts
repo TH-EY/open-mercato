@@ -23,9 +23,18 @@ export const FINOO_APPLICATION_SENSITIVE_FIELD_SPECS = [
 ] as const
 
 export const FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS = [
-  { entityId: 'customers:customer_entity', fields: ['display_name', 'primary_email', 'primary_phone'] },
-  { entityId: 'customers:customer_person_profile', fields: ['first_name', 'last_name'] },
-  { entityId: 'customers:customer_company_profile', fields: ['legal_name'] },
+  {
+    entityId: 'customers:customer_entity',
+    fields: ['display_name', 'primary_email', 'primary_phone', 'next_interaction_name', 'description'],
+  },
+  {
+    entityId: 'customers:customer_person_profile',
+    fields: ['first_name', 'last_name', 'preferred_name', 'job_title', 'department', 'seniority', 'timezone', 'linked_in_url', 'twitter_url'],
+  },
+  {
+    entityId: 'customers:customer_company_profile',
+    fields: ['legal_name', 'brand_name', 'domain', 'website_url', 'industry'],
+  },
   { entityId: 'customers:customer_deal', fields: ['title', 'description'] },
   {
     entityId: 'audit_logs:action_log',

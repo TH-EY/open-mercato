@@ -17,29 +17,38 @@ const ENCRYPTED_VALUE_PATTERN = /^[^:]+:[^:]+:[^:]+:v1$/
 type RequiredTableSpec = {
   entityId: string
   table: string
-  deletedAt: boolean
   fields: Array<{ column: string; json?: boolean }>
 }
 
 const REQUIRED_TABLE_SPECS: RequiredTableSpec[] = [
   {
-    entityId: 'customers:customer_entity', table: 'customer_entities', deletedAt: true,
-    fields: [{ column: 'display_name' }, { column: 'primary_email' }, { column: 'primary_phone' }],
+    entityId: 'customers:customer_entity', table: 'customer_entities',
+    fields: [
+      { column: 'display_name' }, { column: 'primary_email' }, { column: 'primary_phone' },
+      { column: 'next_interaction_name' }, { column: 'description' },
+    ],
   },
   {
-    entityId: 'customers:customer_person_profile', table: 'customer_people', deletedAt: false,
-    fields: [{ column: 'first_name' }, { column: 'last_name' }],
+    entityId: 'customers:customer_person_profile', table: 'customer_people',
+    fields: [
+      { column: 'first_name' }, { column: 'last_name' }, { column: 'preferred_name' },
+      { column: 'job_title' }, { column: 'department' }, { column: 'seniority' },
+      { column: 'timezone' }, { column: 'linked_in_url' }, { column: 'twitter_url' },
+    ],
   },
   {
-    entityId: 'customers:customer_company_profile', table: 'customer_companies', deletedAt: false,
-    fields: [{ column: 'legal_name' }],
+    entityId: 'customers:customer_company_profile', table: 'customer_companies',
+    fields: [
+      { column: 'legal_name' }, { column: 'brand_name' }, { column: 'domain' },
+      { column: 'website_url' }, { column: 'industry' },
+    ],
   },
   {
-    entityId: 'customers:customer_deal', table: 'customer_deals', deletedAt: true,
+    entityId: 'customers:customer_deal', table: 'customer_deals',
     fields: [{ column: 'title' }, { column: 'description' }],
   },
   {
-    entityId: 'audit_logs:action_log', table: 'action_logs', deletedAt: true,
+    entityId: 'audit_logs:action_log', table: 'action_logs',
     fields: [
       { column: 'command_id' }, { column: 'action_label' },
       { column: 'command_payload', json: true }, { column: 'snapshot_before', json: true },
@@ -48,14 +57,23 @@ const REQUIRED_TABLE_SPECS: RequiredTableSpec[] = [
     ],
   },
   {
-    entityId: 'finoo_applications:finoo_application_intake', table: 'finoo_application_intakes', deletedAt: false,
+    entityId: 'finoo_applications:finoo_application_intake', table: 'finoo_application_intakes',
     fields: [{ column: 'payload_json', json: true }],
   },
 ]
 
 type SqlConnection = { execute: (query: string, params?: unknown[]) => Promise<unknown> }
 
-function requiredMapFields(entityId: string): Array<{ field: string }> {
+function assertSupportedMapFields(entityId: string, fields: Array<{ field: string }>): void {
+  const tableSpec = REQUIRED_TABLE_SPECS.find((candidate) => candidate.entityId === entityId)
+  const supportedFields = new Set(tableSpec?.fields.map(({ column }) => column) ?? [])
+  const unsupported = fields.map(({ field }) => field).filter((field) => !supportedFields.has(field))
+  if (unsupported.length) {
+    throw new Error(`[internal] Existing encryption map has unsupported fields for FINOO backfill: ${entityId}`)
+  }
+}
+
+function requiredMapFields(entityId: string): Array<{ field: string; hashField?: string | null }> {
   const spec = FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS.find((candidate) => candidate.entityId === entityId)
   if (!spec) throw new Error('[internal] FINOO required encryption map is missing')
   return spec.fields.map((field) => ({ field }))
@@ -87,9 +105,8 @@ async function prepareRequiredMappedFields(
   let rowsToEncrypt = 0
   for (const spec of REQUIRED_TABLE_SPECS) {
     const columns = spec.fields.map(({ column }) => `"${column}"`).join(', ')
-    const deletedClause = spec.deletedAt ? ' and deleted_at is null' : ''
     const result = await connection.execute(
-      `select "id", ${columns} from "${spec.table}" where tenant_id = ? and organization_id = ?${deletedClause}`,
+      `select "id", ${columns} from "${spec.table}" where tenant_id = ? and organization_id = ? for update`,
       [scope.tenantId, scope.organizationId],
     )
     const rows = Array.isArray(result) ? result as Array<Record<string, unknown>> : []
@@ -121,11 +138,12 @@ async function requiredMapsToEnable(
     deletedAt: null,
   })
   return FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS.filter((spec) => {
-    const current = existing.find((candidate) => candidate.entityId === spec.entityId)
-    const currentFields = Array.isArray(current?.fieldsJson)
-      ? current.fieldsJson.map((field) => field.field).sort()
-      : []
-    return !current?.isActive || currentFields.join(',') !== [...spec.fields].sort().join(',')
+    const candidates = existing.filter((candidate) => candidate.entityId === spec.entityId)
+    if (candidates.length > 1) throw new Error(`[internal] Duplicate scoped encryption maps: ${spec.entityId}`)
+    const current = candidates[0]
+    if (current?.fieldsJson) assertSupportedMapFields(spec.entityId, current.fieldsJson)
+    const currentFields = new Set(Array.isArray(current?.fieldsJson) ? current.fieldsJson.map((field) => field.field) : [])
+    return !current?.isActive || spec.fields.some((field) => !currentFields.has(field))
   }).length
 }
 
@@ -134,8 +152,15 @@ async function enableRequiredMaps(
   scope: { tenantId: string; organizationId: string },
 ): Promise<void> {
   for (const spec of FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS) {
-    const fieldsJson = requiredMapFields(spec.entityId)
-    const current = await em.findOne(EncryptionMap, { ...scope, entityId: spec.entityId, deletedAt: null })
+    const candidates = await em.find(EncryptionMap, { ...scope, entityId: spec.entityId, deletedAt: null })
+    if (candidates.length > 1) throw new Error(`[internal] Duplicate scoped encryption maps: ${spec.entityId}`)
+    const current = candidates[0]
+    if (current?.fieldsJson) assertSupportedMapFields(spec.entityId, current.fieldsJson)
+    const fieldsJson = [...(current?.fieldsJson ?? [])]
+    const currentFields = new Set(fieldsJson.map((field) => field.field))
+    for (const rule of requiredMapFields(spec.entityId)) {
+      if (!currentFields.has(rule.field)) fieldsJson.push(rule)
+    }
     if (current) {
       current.fieldsJson = fieldsJson
       current.isActive = true
@@ -193,6 +218,13 @@ function rawCustomFieldValue(row: CustomFieldValue): unknown {
   return null
 }
 
+function rawDeletedCustomFieldValue(row: Record<string, unknown>): unknown {
+  for (const key of ['value_multiline', 'value_text', 'value_int', 'value_float', 'value_bool']) {
+    if (row[key] !== null && row[key] !== undefined) return row[key]
+  }
+  return null
+}
+
 const prepareEncryption: ModuleCli = {
   command: 'prepare-encryption',
   async run(args) {
@@ -200,9 +232,10 @@ const prepareEncryption: ModuleCli = {
     const organizationId = option(args, 'organization')
     const apply = args.includes('--apply')
     const dryRun = args.includes('--dry-run')
+    const maintenanceWindow = args.includes('--maintenance-window')
     const confirm = option(args, 'confirm')
-    if (!tenantId || !organizationId || apply === dryRun || (apply && confirm !== tenantId)) {
-      console.error('Usage: mercato finoo_applications prepare-encryption --tenant <id> --organization <id> (--dry-run|--apply --confirm <same-tenant-id>)')
+    if (!tenantId || !organizationId || apply === dryRun || (apply && (confirm !== tenantId || !maintenanceWindow))) {
+      console.error('Usage: mercato finoo_applications prepare-encryption --tenant <id> --organization <id> (--dry-run|--apply --maintenance-window --confirm <same-tenant-id>)')
       return
     }
     const container = await createRequestContainer()
@@ -224,6 +257,15 @@ const prepareEncryption: ModuleCli = {
         .filter((spec) => !defs.some((def) => def.entityId === spec.entityId && def.key === spec.key && def.kind === spec.kind))
         .map(({ entityId, key, kind }) => `${entityId}:${key}:${kind}`)
       const rows = await em.find(CustomFieldValue, { ...scope, $or: valuesWhere, deletedAt: null })
+      const connection = em.getConnection() as unknown as SqlConnection
+      const deletedResult = await connection.execute(
+        `select id, entity_id, record_id, field_key, value_text, value_multiline, value_int, value_float, value_bool
+         from custom_field_values where tenant_id = ? and organization_id = ? and deleted_at is not null`,
+        [tenantId, organizationId],
+      )
+      const sensitivePairs = new Set(FINOO_APPLICATION_SENSITIVE_FIELD_SPECS.map(({ entityId, key }) => `${entityId}:${key}`))
+      const deletedRows = (Array.isArray(deletedResult) ? deletedResult as Array<Record<string, unknown>> : [])
+        .filter((row) => sensitivePairs.has(`${String(row.entity_id)}:${String(row.field_key)}`))
       const decodedRows = rows.map((row) => {
         const stored = rawCustomFieldValue(row)
         if (typeof stored !== 'string' || !ENCRYPTED_VALUE_PATTERN.test(stored)) {
@@ -236,7 +278,20 @@ const prepareEncryption: ModuleCli = {
         }
       })
       const plaintextRows = decodedRows.filter(({ raw, encrypted }) => raw !== null && !encrypted)
+      const decodedDeletedRows = deletedRows.map((row) => {
+        const stored = rawDeletedCustomFieldValue(row)
+        if (typeof stored !== 'string' || !ENCRYPTED_VALUE_PATTERN.test(stored)) {
+          return { row, raw: stored, encrypted: false }
+        }
+        try {
+          return { row, raw: decryptWithAesGcmStrict(stored, dek.key), encrypted: true }
+        } catch {
+          throw new Error('[internal] Existing deleted FINOO custom-field ciphertext failed authentication')
+        }
+      })
+      const plaintextDeletedRows = decodedDeletedRows.filter(({ raw, encrypted }) => raw !== null && !encrypted)
       const identityCandidates = rows
+        .filter((row) => !row.deletedAt)
         .filter((row) => row.fieldKey === 'tax_number' || row.fieldKey === 'national_identification_number')
         .map((row) => {
           const decoded = decodedRows.find((candidate) => candidate.row === row)
@@ -278,7 +333,7 @@ const prepareEncryption: ModuleCli = {
         definitions: defs.length,
         missingDefinitions: missing,
         definitionsToEnable: defs.filter((def) => (def.configJson as Record<string, unknown> | null)?.encrypted !== true).length,
-        plaintextRows: plaintextRows.length,
+        plaintextRows: plaintextRows.length + plaintextDeletedRows.length,
         coreRowsToEncrypt,
         coreMapsToEnable,
         identityCollisions,
@@ -305,6 +360,18 @@ const prepareEncryption: ModuleCli = {
           row.valueFloat = null
           row.valueBool = null
           transactionalEm.persist(row)
+        }
+        const transactionalConnection = transactionalEm.getConnection() as unknown as SqlConnection
+        for (const { row, raw } of plaintextDeletedRows) {
+          const encrypted = await encryptCustomFieldValue(raw, tenantId, encryption)
+          if (typeof encrypted !== 'string' || decryptWithAesGcm(encrypted, dek.key) === null) {
+            throw new Error('[internal] Deleted custom-field encryption failed closed')
+          }
+          await transactionalConnection.execute(
+            `update custom_field_values set value_text = ?, value_multiline = null, value_int = null,
+               value_float = null, value_bool = null where id = ? and tenant_id = ? and organization_id = ?`,
+            [encrypted, row.id, tenantId, organizationId],
+          )
         }
         for (const def of defs) {
           const currentConfig = def.configJson && typeof def.configJson === 'object' ? def.configJson as Record<string, unknown> : {}

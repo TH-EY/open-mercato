@@ -162,6 +162,7 @@ function prepareEncryption(scenario: Scenario): void {
       '--tenant', scenario.tenantId,
       '--organization', scenario.organizationId,
       '--apply',
+      '--maintenance-window',
       '--confirm', scenario.tenantId,
     ],
     {
@@ -363,13 +364,27 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
       ]],
     )
     const backfillActionLogId = randomUUID()
+    const deletedBackfillActionLogId = randomUUID()
     await queryDatabase(
       `insert into action_logs
          (id, tenant_id, organization_id, command_id, action_label, execution_state, created_at, updated_at)
        values ($1, $2, $3, $4, $5, 'done', now(), now())`,
       [backfillActionLogId, scenario.tenantId, scenario.organizationId, `finoo-backfill-fixture:${randomUUID()}`, 'FINOO plaintext backfill fixture'],
     )
+    await queryDatabase(
+      `insert into action_logs
+         (id, tenant_id, organization_id, command_id, action_label, execution_state, created_at, updated_at, deleted_at)
+       values ($1, $2, $3, $4, $5, 'done', now(), now(), now())`,
+      [deletedBackfillActionLogId, scenario.tenantId, scenario.organizationId, `finoo-deleted-backfill:${randomUUID()}`, 'FINOO deleted plaintext backfill fixture'],
+    )
     const companyTypeEntryId = await createFieldManifest(request, scenario)
+    const deletedCustomFieldValueId = randomUUID()
+    await queryDatabase(
+      `insert into custom_field_values
+         (id, tenant_id, organization_id, entity_id, record_id, field_key, value_text, created_at, deleted_at)
+       values ($1, $2, $3, 'customers:customer_deal', $4, 'initial_referrer', $5, now(), now())`,
+      [deletedCustomFieldValueId, scenario.tenantId, scenario.organizationId, randomUUID(), 'FINOO deleted custom-field plaintext fixture'],
+    )
     await createPipeline(request, scenario)
     prepareEncryption(scenario)
     const backfilledActionLog = await queryDatabase<{ command_id: string; action_label: string }>(
@@ -378,6 +393,49 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
     )
     expect(backfilledActionLog[0]?.command_id).toMatch(/^[^:]+:[^:]+:[^:]+:v1$/)
     expect(backfilledActionLog[0]?.action_label).toMatch(/^[^:]+:[^:]+:[^:]+:v1$/)
+    const deletedBackfilledRows = await queryDatabase<{ value: string }>(
+      `select command_id as value from action_logs where id=$1
+       union all select value_text as value from custom_field_values where id=$2`,
+      [deletedBackfillActionLogId, deletedCustomFieldValueId],
+    )
+    expect(deletedBackfilledRows).toHaveLength(2)
+    expect(deletedBackfilledRows.every((row) => /^[^:]+:[^:]+:[^:]+:v1$/.test(row.value))).toBe(true)
+    const preservedCustomerMap = await queryDatabase<{ fields_json: Array<{ field: string }> }>(
+      `select fields_json from encryption_maps
+       where tenant_id=$1 and organization_id=$2 and entity_id='customers:customer_entity' and deleted_at is null`,
+      [scenario.tenantId, scenario.organizationId],
+    )
+    expect(preservedCustomerMap).toHaveLength(1)
+    expect(preservedCustomerMap[0]!.fields_json.map(({ field }) => field)).toEqual(expect.arrayContaining([
+      'display_name', 'primary_email', 'primary_phone', 'next_interaction_name', 'description',
+    ]))
+    const duplicateMapId = randomUUID()
+    await queryDatabase(
+      `insert into encryption_maps
+         (id, tenant_id, organization_id, entity_id, fields_json, is_active, created_at, updated_at)
+       values ($1, $2, $3, 'customers:customer_entity', '[{"field":"display_name"}]'::jsonb, true, now(), now())`,
+      [duplicateMapId, scenario.tenantId, scenario.organizationId],
+    )
+    let duplicateMapFailure: unknown
+    try {
+      execFileSync(process.execPath, [
+        cliBin,
+        'finoo_applications',
+        'prepare-encryption',
+        '--tenant', scenario.tenantId,
+        '--organization', scenario.organizationId,
+        '--dry-run',
+      ], {
+        cwd: appDir,
+        encoding: 'utf8',
+        env: { ...process.env, FORCE_COLOR: '0', NODE_NO_WARNINGS: '1' },
+      })
+    } catch (error) {
+      duplicateMapFailure = error
+    }
+    expect(duplicateMapFailure).toBeTruthy()
+    expect(String((duplicateMapFailure as { stderr?: string | Buffer }).stderr)).toContain('Duplicate scoped encryption maps')
+    await queryDatabase('delete from encryption_maps where id=$1', [duplicateMapId])
     await configureIntegration(scenario)
 
     const leadId = `lead_${randomUUID().replace(/-/g, '')}`
