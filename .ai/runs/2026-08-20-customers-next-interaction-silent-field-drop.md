@@ -99,30 +99,44 @@ under the repo's "Ask First" rule, so it is reported on the PR as a follow-up ra
 
 ## Progress
 
+PR: #16
+
 > Convention: `- [ ]` pending, `- [x]` done. Append ` — <commit sha>` when a step lands. Do not rename step titles.
 
 ### Phase 1: Lock the current behaviour with failing tests
 
-- [ ] 1.1 Add a unit test proving `PUT /api/customers/people` mapInput drops `nextInteractionAt` and reports success
-- [ ] 1.2 Add a unit test proving an arbitrary misspelled field is dropped without error
+- [x] 1.1 Add a unit test proving `PUT /api/customers/people` mapInput drops `nextInteractionAt` and reports success — 8fb981a33
+- [x] 1.2 Add a unit test proving an arbitrary misspelled field is dropped without error — 8fb981a33
 
 ### Phase 2: Reject unrecognised top-level payload fields
 
-- [ ] 2.1 Add `assertNoUnknownPayloadFields` with a did-you-mean hint for known read-shape aliases
-- [ ] 2.2 Wire it into the people create and update mapInput
-- [ ] 2.3 Wire it into the companies create and update mapInput
+- [x] 2.1 Add `assertNoUnknownPayloadFields` with a did-you-mean hint for known read-shape aliases — 8fb981a33
+- [x] 2.2 Wire it into the people create and update mapInput — 8fb981a33
+- [x] 2.3 Wire it into the companies create and update mapInput — 8fb981a33
 
 ### Phase 3: Make the next-interaction read shape round-trip on write
 
-- [ ] 3.1 Add `foldFlatNextInteractionPayload` (flat camelCase + snake_case -> nested, null clears)
-- [ ] 3.2 Wire the fold ahead of the unknown-field check on people and companies
-- [ ] 3.3 Cover the fold with unit tests (set, clear, conflict, missing name)
+- [x] 3.1 Add `foldFlatNextInteractionPayload` (flat camelCase + snake_case -> nested, null clears) — 8fb981a33
+- [x] 3.2 Wire the fold ahead of the unknown-field check on people and companies — 8fb981a33
+- [x] 3.3 Cover the fold with unit tests (set, clear, conflict, missing name) — 8fb981a33
 
 ### Phase 4: Locale copy and API documentation
 
-- [ ] 4.1 Add the new error keys to en/pl/de/es/ko
-- [ ] 4.2 Document the accepted next-interaction write shapes in the OpenAPI update descriptions
+- [x] 4.1 Add the new error keys to en/pl/de/es/ko — 8fb981a33
+- [x] 4.2 Document the accepted next-interaction write shapes in the OpenAPI update descriptions — 8fb981a33
 
 ### Phase 5: Full validation gate
 
 - [ ] 5.1 Run the configured `validation.commands` gate green
+
+## Verification notes
+
+- Runner: **local** (no compose `app` container running in this environment; `yarn install` was run
+  from the lockfile in the task worktree, which had no `node_modules`).
+- The two Phase-1 regression tests assert the *fixed* behaviour. They were verified red against the
+  pre-fix code path by reverting `api/entityPayload.ts` and the route wiring and re-running them.
+- `src/modules/customers/api/deals/aggregate/__tests__/route.test.ts` →
+  "applies the valueCurrency filter used by kanban lane list requests" fails on the **base branch**
+  (verified by running it at `daf14f179`, the plan-only commit). It reads `executeMock.mock.calls[1]`
+  and depends on a call left behind by the preceding test — a test-isolation defect that arrived with
+  the upstream merge `8a8c77e7f`. Nothing in this PR is in its import graph. Not fixed here.
