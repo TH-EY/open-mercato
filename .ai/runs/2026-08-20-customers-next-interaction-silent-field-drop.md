@@ -127,7 +127,7 @@ PR: #16
 
 ### Phase 5: Full validation gate
 
-- [ ] 5.1 Run the configured `validation.commands` gate green
+- [x] 5.1 Run the configured `validation.commands` gate green — e2dbaed22
 
 ## Verification notes
 
@@ -135,8 +135,27 @@ PR: #16
   from the lockfile in the task worktree, which had no `node_modules`).
 - The two Phase-1 regression tests assert the *fixed* behaviour. They were verified red against the
   pre-fix code path by reverting `api/entityPayload.ts` and the route wiring and re-running them.
-- `src/modules/customers/api/deals/aggregate/__tests__/route.test.ts` →
-  "applies the valueCurrency filter used by kanban lane list requests" fails on the **base branch**
-  (verified by running it at `daf14f179`, the plan-only commit). It reads `executeMock.mock.calls[1]`
-  and depends on a call left behind by the preceding test — a test-isolation defect that arrived with
-  the upstream merge `8a8c77e7f`. Nothing in this PR is in its import graph. Not fixed here.
+### Gate results
+
+| Command | Result |
+|---|---|
+| `yarn build:packages` | pass |
+| `yarn generate` | pass, no generated-file churn |
+| `yarn build:packages` (2nd) | pass |
+| `yarn i18n:check-sync` | **fails identically on the base branch** — `[app] ko.json: 85 missing keys`, all `catalog.*`. Zero customers keys. |
+| `yarn i18n:check-usage` | **fails identically on the base branch** — 18 missing keys, all `sales.documents.*` / `catalog.services.*`. Zero customers keys. |
+| `yarn typecheck` | pass (25/25) |
+| `yarn test` | **the same 15 tests fail on the base branch**; this PR adds 21 passing tests and breaks none |
+| `yarn build:app` | pass |
+| `yarn lint` (extra) | 0 errors, 10 pre-existing warnings in `apps/mercato/src/modules/example` |
+
+### Pre-existing failures, each verified at base `6e9ecb642`
+
+| Suite | Failing | Why it is unrelated |
+|---|---|---|
+| `core` `customers/api/deals/aggregate/route.test.ts` | 1 | Reads `executeMock.mock.calls[1]`, depending on a call left by the preceding test — a test-isolation defect from upstream merge `8a8c77e7f`. Nothing in this PR is in its import graph. |
+| `core` `query_index/hybrid-engine.test.ts` | 6 | Hybrid query engine fallback/classification; untouched here. |
+| `core` `optimistic-lock-ui-coverage{,-workspace}.test.ts` | 2 | Workspace guards over mutating **UI** files; this PR touches no UI file. |
+| `cli` `module-facts.extension-hosts` / `module-facts.bc-guard` | 3 | `catalog.services.list` host token plus a 4,000,000-byte facts budget at **4,000,790 bytes at base too** (byte-identical on both sides, so the added OpenAPI description text is not in that payload). |
+| `search` `global-search-acl.test.ts` | 1 | `catalog/search.ts` missing `aclFeatures`. |
+| `create-mercato-app` template guards | 2 | Standalone-template mirroring; this PR touches no `apps/mercato/src/app/**` file or env var. |
