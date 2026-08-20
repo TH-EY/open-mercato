@@ -151,6 +151,14 @@ describe('assertNoUnknownPayloadFields', () => {
     )).not.toThrow()
   })
 
+  it('accepts underscore-namespaced response-enricher output echoed back from a read', () => {
+    expect(() => assertNoUnknownPayloadFields(
+      { displayName: 'Ada', _example: { todoCount: 3 }, _meta: { enrichers: ['example'] } },
+      allowed,
+      translate,
+    )).not.toThrow()
+  })
+
   it('rejects an unknown field and names it in the response body', () => {
     const { status, body } = captureCrudError(() => assertNoUnknownPayloadFields(
       { displayName: 'Ada', nextInteractionn: '2026-09-01T09:00:00.000Z' },

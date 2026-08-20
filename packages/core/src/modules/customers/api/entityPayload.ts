@@ -5,6 +5,12 @@ import type { TranslateWithFallbackFn } from '@open-mercato/shared/lib/i18n/tran
 // `profile` is consumed earlier by normalizeProfilePayload / normalizeCompanyProfilePayload.
 const IGNORED_ROUND_TRIP_KEYS = new Set(['id', 'createdAt', 'updatedAt', 'profile'])
 
+// Response enrichers namespace their output with a leading underscore (`_example.todoCount`,
+// `_meta`) and it is read-only by contract — exports strip it too. A client that PUTs back a
+// record it just read carries those keys through no fault of its own, so they are ignored
+// rather than reported as unknown.
+const isEnrichedReadOnlyKey = (key: string): boolean => key.startsWith('_')
+
 type NextInteractionField = 'at' | 'name' | 'refId' | 'icon' | 'color'
 
 // The read surfaces expose the next-interaction projection flat: the detail GET in camelCase
@@ -137,7 +143,7 @@ export function assertNoUnknownPayloadFields(
   const suggestions: string[] = []
 
   for (const key of Object.keys(payload)) {
-    if (allowed.has(key) || IGNORED_ROUND_TRIP_KEYS.has(key)) continue
+    if (allowed.has(key) || IGNORED_ROUND_TRIP_KEYS.has(key) || isEnrichedReadOnlyKey(key)) continue
     unknown.push(key)
     const camel = snakeToCamel(key)
     if (camel !== key && allowed.has(camel)) suggestions.push(`${key} -> ${camel}`)
