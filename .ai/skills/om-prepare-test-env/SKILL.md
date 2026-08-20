@@ -120,3 +120,45 @@ leftover from a dead run — kill it so the runner gets its stable preferred por
 After boot, mirror the state into `.ai/qa/test-env.json` (shared descriptor) as the shared skill
 prescribes; `.ai/qa/ephemeral-env.json` (CLI-owned) stays authoritative for the runner's own
 reuse decisions.
+
+## The placeholder JWT_SECRET fails the app closed, silently — 2026-08-20
+
+`yarn generate` copies `apps/mercato/.env.example` to `apps/mercato/.env` when none exists, and the
+example ships `JWT_SECRET=change-me-dev-secret`. The repository CLI forwards that value, and the
+ephemeral app boots in production mode, where `assertJwtSecretPolicy` rejects the placeholder and
+exits 1.
+
+The failure presents as anything but a configuration error. The CLI runs `yarn start` without
+`--verbose`, so the child's stderr never reaches the boot log: the entrypoint simply waits out its
+readiness probe and reports a timeout on a database and container stack that are both healthy. On a
+fresh worktree that timeout arrives several minutes into an apparently normal boot, which invites
+chasing the readiness probe or the port instead of the secret.
+
+Two consequences for a generated entrypoint:
+
+- Always pass `--verbose` to the CLI boot. A process that dies before readiness must leave a
+  diagnosis behind; without it every pre-readiness failure looks identical.
+- Export a disposable, non-placeholder `JWT_SECRET` (and the other auth secrets the app asserts on)
+  before invoking the CLI. Do not edit `apps/mercato/.env` to fix this — it is generated, machine-local,
+  and rewriting it hides the trap from the next worktree.
+
+## Pin the browser locale — and report what pinning it hides — 2026-08-20
+
+A headless host commonly runs under `LANG=C.UTF-8`. Chromium then reports
+`navigator.language = "en-US@posix"`, and any code path that hands that tag to an `Intl` API throws
+`RangeError: Invalid language tag: en-US@posix`.
+
+Pin the QA browser context to a real tag (`locale: 'en-US'`) so results depend on the build under
+test rather than on the runner's environment. An unpinned context makes the same commit pass on a
+developer's machine and fail in CI, which reads as flakiness.
+
+**Pinning is for reproducibility, not for concealment.** On 2026-08-20 the unpinned run surfaced a
+genuine application defect: `formatDate` passes `navigator.language` straight to
+`Date#toLocaleString`, the `RangeError` escapes `CustomerNewCustomersWidget` uncontained, and the
+whole `/backend` page falls into the "Something went wrong" boundary. Pinning the locale makes that
+crash invisible to QA while it still reaches every real user whose browser reports a tag the app does
+not expect.
+
+So when a pinned locale turns a red run green, the run is not fixed — a defect has been isolated.
+Record it as a finding with the before/after screenshots and report it. A harness that quietly
+normalizes its way past application errors stops being evidence.
