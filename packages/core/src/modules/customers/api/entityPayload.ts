@@ -3,7 +3,20 @@ import type { TranslateWithFallbackFn } from '@open-mercato/shared/lib/i18n/tran
 
 // Keys a client may echo back from a read response without meaning to write them.
 // `profile` is consumed earlier by normalizeProfilePayload / normalizeCompanyProfilePayload.
-const IGNORED_ROUND_TRIP_KEYS = new Set(['id', 'createdAt', 'updatedAt', 'profile'])
+//
+// `customFields` / `customValues` are consumed earlier by splitCustomFieldPayload and reach this
+// guard only when their value has the wrong type (a string instead of an object or array), which
+// makes that helper fall through. They are listed here so the error never claims a supported field
+// is "unsupported" — a malformed custom-field value keeps splitCustomFieldPayload's existing
+// module-wide behaviour, which is out of this guard's scope.
+const IGNORED_ROUND_TRIP_KEYS = new Set([
+  'id',
+  'createdAt',
+  'updatedAt',
+  'profile',
+  'customFields',
+  'customValues',
+])
 
 // Response enrichers namespace their output with a leading underscore (`_example.todoCount`,
 // `_meta`) and it is read-only by contract — exports strip it too. A client that PUTs back a

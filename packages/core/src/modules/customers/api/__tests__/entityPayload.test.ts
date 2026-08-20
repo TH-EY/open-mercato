@@ -151,6 +151,14 @@ describe('assertNoUnknownPayloadFields', () => {
     )).not.toThrow()
   })
 
+  it('does not report a malformed custom-field payload as an unsupported field', () => {
+    expect(() => assertNoUnknownPayloadFields(
+      { displayName: 'Ada', customFields: 'not-an-object', customValues: 42 },
+      allowed,
+      translate,
+    )).not.toThrow()
+  })
+
   it('accepts underscore-namespaced response-enricher output echoed back from a read', () => {
     expect(() => assertNoUnknownPayloadFields(
       { displayName: 'Ada', _example: { todoCount: 3 }, _meta: { enrichers: ['example'] } },
