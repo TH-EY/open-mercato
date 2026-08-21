@@ -52,6 +52,24 @@ selected.", and the PREVIEW card still renders the person plus their link settin
   would have hidden LINK SETTINGS while a selection was still pending, which is a worse regression
   than the bug being fixed. Covered by a dedicated test.
 - No CI runs on `fork/crm-they-dev` PRs, so the local validation gate is the only evidence.
+- **Known pre-existing gate failures, all inherited from `fork/crm-they-dev`:**
+  - `yarn i18n:check-sync` — 85 missing `catalog.*` keys in `apps/mercato/src/i18n/ko.json`.
+  - `yarn i18n:check-usage` — 18 missing keys referenced from
+    `packages/core/src/modules/catalog/components/services/ServiceForm.tsx` and
+    `packages/core/src/modules/sales/components/documents/LineItemDialog.tsx`.
+  - `yarn test` → `@open-mercato/search` — `global-search-acl.test.ts`: one searchable entity in
+    `packages/core/src/modules/catalog/search.ts` has no `aclFeatures` entry (9 declared vs 8).
+  - `yarn test` → `@open-mercato/core` — 9 failing tests across 4 suites:
+    `optimistic-lock-ui-coverage{,-workspace}.test.ts` (violations in
+    `catalog/backend/catalog/services/[id]/edit/page.tsx` and
+    `catalog/components/services/ServicesDataTable.tsx`), `query_index/hybrid-engine.test.ts` (6),
+    and `customers/api/deals/aggregate/route.test.ts` (1).
+
+  Four of the five trace to the same unfinished **catalog services** feature already on the branch.
+  Verified inherited, not introduced: reverting this diff to its base version with
+  `git checkout origin/fork/crm-they-dev -- packages/core/src/modules/customers/components/linking/`
+  reproduces the identical 9 core failures, and the diff touches none of the named files. Completing
+  the catalog-services work is out of scope for this bug fix and should be its own PR.
 
 ## Implementation Plan
 
@@ -76,6 +94,8 @@ selected.", and the PREVIEW card still renders the person plus their link settin
 
 ## Progress
 
+PR: #17
+
 > Convention: `- [ ]` pending, `- [x]` done. Append ` — <commit sha>` when a step lands. Do not rename step titles.
 
 ### Phase 1: Fix the focus/selection invariant
@@ -86,6 +106,6 @@ selected.", and the PREVIEW card still renders the person plus their link settin
 
 ### Phase 2: Validation and delivery
 
-- [ ] 2.1 Run the full validation gate
-- [ ] 2.2 Open the PR and apply labels
-- [ ] 2.3 Run om-auto-review-pr and post the summary comment
+- [x] 2.1 Run the full validation gate — 6befe74e8 (see Risks: 5 inherited failures, none from this diff)
+- [x] 2.2 Open the PR and apply labels — PR #17: review, bug, needs-qa, priority-medium, risk-low
+- [x] 2.3 Run om-auto-review-pr and post the summary comment
