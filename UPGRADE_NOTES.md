@@ -24,6 +24,56 @@ most of the patterns listed below in a user's codebase.
 
 ## 0.7.0 → 0.7.1 (unreleased)
 
+### The customers people/company write endpoints reject unrecognised payload fields
+
+`POST`/`PUT` on `/api/customers/people` and `/api/customers/companies` validated the request body
+with a plain (non-`strict`) zod object, so zod's default `strip` silently discarded every key the
+write schema did not declare. The command then ran on whatever survived and the route answered
+`200 {ok:true}` — a success response for a write that never happened, with nothing in the payload for
+the caller to notice.
+
+That bit hardest on the next interaction, because its read shape and write shape disagree:
+
+| Surface | Shape |
+|---------|-------|
+| `GET /api/customers/people/{id}` | `nextInteractionAt`, `nextInteractionName`, … (flat, camelCase) |
+| `GET /api/customers/people` | `next_interaction_at`, `next_interaction_name`, … (flat, snake_case) |
+| `PUT /api/customers/people` | `nextInteraction: { at, name, refId?, icon?, color? }` (nested) |
+
+A client that read a person and wrote it back therefore always sent an undeclared spelling for
+exactly that field and lost the reminder date, while `primaryEmail`/`primaryPhone` — identically
+named on both sides — saved in the very same request.
+
+**Both endpoints now answer `400` for an unrecognised field**, with
+`{ error, code: 'UNKNOWN_PAYLOAD_FIELDS', fields: [...] }` naming every offending key and a
+`snake_case -> camelCase` hint where one applies. As with the passkey entry in 0.6.7 → 0.7.0, this is
+a deliberate request-shape break with no deprecation window, because the accepted-and-ignored field
+*is* the defect: keeping the old behaviour for one more minor version means one more minor version of
+silent data loss. `BACKWARD_COMPATIBILITY.md` § 7 scopes the API-route field guarantees to *response*
+schemas and permits new optional request fields, so no protected surface is narrowed.
+
+**The flat next-interaction read shape is now accepted on write**, so a read-modify-write round trip
+persists. `nextInteractionAt`/`nextInteractionName`/`nextInteractionRefId`/`nextInteractionIcon`/
+`nextInteractionColor` (and their snake_case list-response spellings) fold into the nested object;
+a `null` or blank `nextInteractionAt` clears the reminder. Sending both shapes at once, one field in
+two spellings, or flat fields without a resolvable `at`/`name` pair each fail with their own
+`NEXT_INTERACTION_*` code instead of writing a partial projection.
+
+**Action for client and module authors:** if you PUT these endpoints, check the payload against the
+OpenAPI schema once. Fields that were quietly dropped before will now surface as `400`s naming them —
+which is the point, since every one of them was a write you believed had happened. Round-tripping a
+read response is safe: `id`, `createdAt`, `updatedAt`, `profile`, `customFields`/`customValues` and
+underscore-namespaced response-enricher output (`_example`, `_meta`) are ignored rather than
+rejected. Callers that go through the command bus (`customers.people.update`,
+`customers.companies.update`) are unaffected — the guard lives in the routes' `mapInput`.
+
+**Note on `next_interaction_*` ownership.** These columns are a projection of the customer
+interactions timeline: `recomputeNextInteraction()` rebuilds them from the earliest open, dated,
+non-deleted interaction inside every interaction command. A value written directly through the
+person/company endpoint has no backing `customer_interactions` row and is overwritten the next time
+an interaction on that record is created, completed, cancelled or deleted. Setting a durable
+next step means creating an interaction, not writing the projection.
+
 ### `loadSidebarPreference` is deprecated in favour of `findSidebarPreference`
 
 `loadSidebarPreference(em, scope)` from `@open-mercato/core/modules/auth/services/sidebarPreferencesService` returns a normalized *default* settings object (`hiddenItems: []`, `groupOrder: []`, …) for a user with no `UserSidebarPreference` row, which makes "no saved preference" indistinguishable from "a preference that happens to be empty". Its own callers were written for the former: the backend chrome layers role defaults beneath the user layout and guards the user pass with `userPreference ? … : baseForUser`, an else-branch that could never run. Since applying a preference **overwrites** each item's `hidden` flag rather than OR-ing it, the empty user pass silently erased every role-level hide and the role group order on each render.

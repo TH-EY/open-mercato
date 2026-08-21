@@ -1,0 +1,161 @@
+# Execution plan — customers: stop silently dropping unknown PUT fields (next-interaction round-trip)
+
+**Date:** 2026-08-20
+**Slug:** `customers-next-interaction-silent-field-drop`
+**Branch:** `fix/customers-next-interaction-silent-field-drop`
+**Base branch:** `fork/crm-they-dev` (this fix must land on the branch crm.they.dev runs; the touched
+files are all under `packages/core/src/modules/customers/**` and contain no fork-only paths, so the
+same commits can be cherry-picked into a `contrib/*` PR against upstream `develop` later)
+
+## Goal
+
+`PUT /api/customers/people` returns `200 {ok:true}` while silently discarding fields it does not
+recognise. Make an unrecognised field a loud `400`, and make the next-interaction read shape
+round-trip on write so a read-modify-write client stops losing reminder dates.
+
+## Reported symptom
+
+> `PUT /api/customers/people` with `nextInteraction` in the same payload as `primaryPhone` returned
+> 200 but silently ignored the date. Sending a separate PUT with only `nextInteraction` was needed.
+> Later: separate sequential PUTs all returned 200 and the date still did not persist; only an
+> identical repeat PUT worked. Silent field omission on success is the worst possible failure mode —
+> the sender has no way to notice.
+
+## Root cause (confirmed by reading the code)
+
+1. **Unknown keys are stripped silently.** `packages/core/src/modules/customers/api/people/route.ts`
+   parses the PUT body with `personUpdateSchema` (`data/validators.ts`), a plain non-strict zod
+   object. Zod's default `strip` behaviour drops every key the shape does not declare, the command
+   runs on the remainder, and the route answers `200 {ok:true, updatedAt}`. Nothing anywhere reports
+   the dropped key. The same holds for `/api/customers/companies` and for the create actions.
+
+2. **The next-interaction read shape and write shape differ.** This is why that stripping bites on
+   this field specifically:
+
+   | Surface | Shape |
+   |---------|-------|
+   | `GET /api/customers/people/{id}` | `nextInteractionAt`, `nextInteractionName`, `nextInteractionRefId`, `nextInteractionIcon`, `nextInteractionColor` (flat, camelCase) |
+   | `GET /api/customers/people` (list) | `next_interaction_at`, `next_interaction_name`, … (flat, snake_case) |
+   | `PUT /api/customers/people` | `nextInteraction: { at, name, refId?, icon?, color? }` (nested, `.strict()`, `name` required) |
+
+   A client that reads a person and PUTs the record back sends `nextInteractionAt` — which no write
+   schema declares, so it is stripped and the write is a no-op returning 200. `primaryPhone` has the
+   same name on both sides, so it saves. That is exactly the reported
+   "phone saved, date silently ignored in the same payload".
+
+## Secondary finding (verify-and-report, not fixed here)
+
+`next_interaction_*` on `customer_entities` is a **derived projection** of `customer_interactions`.
+`lib/interactionProjection.ts#recomputeNextInteraction` rewrites all five columns from the earliest
+open, dated, non-deleted interaction — and NULLs them when there is none. It runs inside every
+interaction command (`commands/interactions.ts`: create / update / complete / cancel / delete plus
+their undo/redo paths) and from `customers.interaction.recompute_next`.
+
+A value written straight through the person/company PUT has no backing `customer_interactions` row,
+so the next interaction command touching that entity overwrites it — usually to NULL. That is a
+second, independent way a manually-set reminder disappears (last-writer-wins between two owners of
+the same columns, not a timing race). Deciding who owns those columns is a contract change and falls
+under the repo's "Ask First" rule, so it is reported on the PR as a follow-up rather than changed here.
+
+## Scope
+
+- `packages/core/src/modules/customers/api/people/payload.ts` — extend the existing payload
+  normaliser (it already 400s on an unsupported `profile.*` key; this is the missing top-level twin).
+- `packages/core/src/modules/customers/api/companies/` — same treatment, the surface is symmetric.
+- `packages/core/src/modules/customers/api/{people,companies}/route.ts` — wire it into create+update.
+- `packages/core/src/modules/customers/i18n/*.json` — error copy in all five locales.
+
+## Non-goals
+
+- Changing who owns the `next_interaction_*` projection columns (see Secondary finding).
+- Touching `commands/people.ts` / `commands/companies.ts` write logic — they are correct.
+- Touching the deals / interactions payload surfaces.
+- Any fork-only path, infra, or deployment file.
+
+## Risks
+
+- **Strictness could reject a payload the app itself sends.** Mitigated by auditing every in-repo
+  call site first (`buildPersonPayload` / `buildPersonEditPayload` / `buildCompanyEditPayload`, the
+  v1 inline-edit patches, the v2 form submit) and by allowing benign round-trip keys (`id`,
+  `updatedAt`, `createdAt`) explicitly. `sync_excel` calls the command bus directly and bypasses the
+  route mapInput, so it is unaffected.
+- **Behaviour change for external API clients**: a payload that used to 200-and-drop now 400s. That
+  is the point of the fix, but it is called out in the PR body and the error names the offending
+  fields plus the accepted spelling.
+
+## Implementation Plan
+
+### Phase 1: Lock the current behaviour with failing tests
+- Reproduce the silent drop and the read/write shape asymmetry as unit tests before changing code.
+
+### Phase 2: Reject unrecognised top-level payload fields
+- Shared helper + wiring into people and companies create/update.
+
+### Phase 3: Make the next-interaction read shape round-trip on write
+- Fold the flat `nextInteraction*` keys into the nested object the schema expects.
+
+### Phase 4: Locale copy and API documentation
+### Phase 5: Full validation gate
+
+## Progress
+
+PR: #16
+
+> Convention: `- [ ]` pending, `- [x]` done. Append ` — <commit sha>` when a step lands. Do not rename step titles.
+
+### Phase 1: Lock the current behaviour with failing tests
+
+- [x] 1.1 Add a unit test proving `PUT /api/customers/people` mapInput drops `nextInteractionAt` and reports success — 8fb981a33
+- [x] 1.2 Add a unit test proving an arbitrary misspelled field is dropped without error — 8fb981a33
+
+### Phase 2: Reject unrecognised top-level payload fields
+
+- [x] 2.1 Add `assertNoUnknownPayloadFields` with a did-you-mean hint for known read-shape aliases — 8fb981a33
+- [x] 2.2 Wire it into the people create and update mapInput — 8fb981a33
+- [x] 2.3 Wire it into the companies create and update mapInput — 8fb981a33
+
+### Phase 3: Make the next-interaction read shape round-trip on write
+
+- [x] 3.1 Add `foldFlatNextInteractionPayload` (flat camelCase + snake_case -> nested, null clears) — 8fb981a33
+- [x] 3.2 Wire the fold ahead of the unknown-field check on people and companies — 8fb981a33
+- [x] 3.3 Cover the fold with unit tests (set, clear, conflict, missing name) — 8fb981a33
+
+### Phase 4: Locale copy and API documentation
+
+- [x] 4.1 Add the new error keys to en/pl/de/es/ko — 8fb981a33
+- [x] 4.2 Document the accepted next-interaction write shapes in the OpenAPI update descriptions — 8fb981a33
+
+### Phase 5: Full validation gate
+
+- [x] 5.1 Run the configured `validation.commands` gate green — e2dbaed22
+
+## Verification notes
+
+- Runner: **local** (no compose `app` container running in this environment; `yarn install` was run
+  from the lockfile in the task worktree, which had no `node_modules`).
+- The two Phase-1 regression tests assert the *fixed* behaviour. They were verified red against the
+  pre-fix code path by reverting `api/entityPayload.ts` and the route wiring and re-running them.
+### Gate results
+
+| Command | Result |
+|---|---|
+| `yarn build:packages` | pass |
+| `yarn generate` | pass, no generated-file churn |
+| `yarn build:packages` (2nd) | pass |
+| `yarn i18n:check-sync` | **fails identically on the base branch** — `[app] ko.json: 85 missing keys`, all `catalog.*`. Zero customers keys. |
+| `yarn i18n:check-usage` | **fails identically on the base branch** — 18 missing keys, all `sales.documents.*` / `catalog.services.*`. Zero customers keys. |
+| `yarn typecheck` | pass (25/25) |
+| `yarn test` | **the same 15 tests fail on the base branch**; this PR adds 21 passing tests and breaks none |
+| `yarn build:app` | pass |
+| `yarn lint` (extra) | 0 errors, 10 pre-existing warnings in `apps/mercato/src/modules/example` |
+
+### Pre-existing failures, each verified at base `6e9ecb642`
+
+| Suite | Failing | Why it is unrelated |
+|---|---|---|
+| `core` `customers/api/deals/aggregate/route.test.ts` | 1 | Reads `executeMock.mock.calls[1]`, depending on a call left by the preceding test — a test-isolation defect from upstream merge `8a8c77e7f`. Nothing in this PR is in its import graph. |
+| `core` `query_index/hybrid-engine.test.ts` | 6 | Hybrid query engine fallback/classification; untouched here. |
+| `core` `optimistic-lock-ui-coverage{,-workspace}.test.ts` | 2 | Workspace guards over mutating **UI** files; this PR touches no UI file. |
+| `cli` `module-facts.extension-hosts` / `module-facts.bc-guard` | 3 | `catalog.services.list` host token plus a 4,000,000-byte facts budget at **4,000,790 bytes at base too** (byte-identical on both sides, so the added OpenAPI description text is not in that payload). |
+| `search` `global-search-acl.test.ts` | 1 | `catalog/search.ts` missing `aclFeatures`. |
+| `create-mercato-app` template guards | 2 | Standalone-template mirroring; this PR touches no `apps/mercato/src/app/**` file or env var. |

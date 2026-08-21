@@ -19,6 +19,18 @@ jest.mock('@open-mercato/shared/lib/encryption/find', () => ({
   findWithDecryption: jest.fn((...args: unknown[]) => mockFindWithDecryption(...args)),
 }))
 
+jest.mock('@open-mercato/shared/lib/i18n/server', () => ({
+  resolveTranslations: jest.fn(async () => ({
+    translate: (_key: string, fallback?: string, params?: Record<string, unknown>) => {
+      const template = fallback ?? _key
+      if (!params) return template
+      return template.replace(/\{\{(\w+)\}\}/g, (match, key: string) => (
+        params[key] === undefined ? match : String(params[key])
+      ))
+    },
+  })),
+}))
+
 describe('customers people route afterList hook', () => {
   beforeAll(async () => {
     await import('../route')
@@ -161,5 +173,65 @@ describe('customers people route afterList hook', () => {
     resolveProfiles?.([])
     resolveEntities?.([])
     await hookPromise
+  })
+})
+
+// Regression coverage for the silent-field-drop report: `PUT /api/customers/people` answered
+// 200 {ok:true} while zod stripped every key the write schema did not declare, so a caller that
+// echoed back the detail-GET shape (`nextInteractionAt`) lost the reminder with nothing to notice.
+describe('customers people route update mapInput payload guards', () => {
+  const ctx = {
+    auth: { tenantId: '11111111-1111-4111-8111-111111111111', orgId: '22222222-2222-4222-8222-222222222222' },
+    selectedOrganizationId: '22222222-2222-4222-8222-222222222222',
+  }
+  const personId = '33333333-3333-4333-8333-333333333333'
+
+  const mapUpdate = (raw: Record<string, unknown>) =>
+    capturedCrudOptions?.actions?.update?.mapInput?.({ raw, parsed: raw, ctx })
+
+  beforeAll(async () => {
+    await import('../route')
+  })
+
+  it('persists the flat detail-GET next-interaction shape instead of dropping it', async () => {
+    const input = await mapUpdate({
+      id: personId,
+      primaryPhone: '+48 500 100 200',
+      nextInteractionAt: '2026-09-01T09:00:00.000Z',
+      nextInteractionName: 'Follow-up call',
+    })
+
+    expect(input.primaryPhone).toBe('+48 500 100 200')
+    expect(input.nextInteraction).toEqual({
+      at: new Date('2026-09-01T09:00:00.000Z'),
+      name: 'Follow-up call',
+    })
+  })
+
+  it('still accepts the documented nested write shape', async () => {
+    const input = await mapUpdate({
+      id: personId,
+      nextInteraction: { at: '2026-09-01T09:00:00.000Z', name: 'Follow-up call' },
+    })
+    expect(input.nextInteraction).toEqual({
+      at: new Date('2026-09-01T09:00:00.000Z'),
+      name: 'Follow-up call',
+    })
+  })
+
+  it('rejects an unrecognised field instead of reporting a success that wrote nothing', async () => {
+    await expect(mapUpdate({ id: personId, nextInteractionDate: '2026-09-01T09:00:00.000Z' }))
+      .rejects.toMatchObject({
+        status: 400,
+        body: expect.objectContaining({
+          code: 'UNKNOWN_PAYLOAD_FIELDS',
+          fields: ['nextInteractionDate'],
+        }),
+      })
+  })
+
+  it('leaves a payload that only touches declared fields working unchanged', async () => {
+    const input = await mapUpdate({ id: personId, displayName: 'Ada Lovelace', jobTitle: 'VP' })
+    expect(input).toMatchObject({ id: personId, displayName: 'Ada Lovelace', jobTitle: 'VP' })
   })
 })

@@ -35,9 +35,13 @@ import {
   withScopedCustomerDealLinkWhere,
 } from '../../lib/personCompanyLinkTable'
 import { normalizeProfilePayload } from './payload'
+import { normalizeCustomerEntityPayload } from '../entityPayload'
 import { createLogger } from '@open-mercato/shared/lib/logger'
 
 const logger = createLogger('customers')
+
+const personCreateKeys = Object.keys(personCreateSchema.shape)
+const personUpdateKeys = Object.keys(personUpdateSchema.shape)
 
 const rawBodySchema = z.object({}).passthrough()
 
@@ -382,7 +386,9 @@ const crud = makeCrudRoute({
         const { translate } = await resolveTranslations()
         const scoped = withScopedPayload(raw ?? {}, ctx, translate)
         const { base, custom } = splitCustomFieldPayload(scoped)
-        const parsed = personCreateSchema.parse(base)
+        const parsed = personCreateSchema.parse(
+          normalizeCustomerEntityPayload(base, personCreateKeys, translate),
+        )
         return Object.keys(custom).length ? { ...parsed, customFields: custom } : parsed
       },
       response: ({ result }) => ({
@@ -399,7 +405,9 @@ const crud = makeCrudRoute({
         const scoped = withScopedPayload(raw ?? {}, ctx, translate)
         const normalized = normalizeProfilePayload(scoped, translate)
         const { base, custom } = splitCustomFieldPayload(normalized)
-        const parsed = personUpdateSchema.parse(base)
+        const parsed = personUpdateSchema.parse(
+          normalizeCustomerEntityPayload(base, personUpdateKeys, translate),
+        )
         return Object.keys(custom).length ? { ...parsed, customFields: custom } : parsed
       },
       // Return the freshly-bumped updatedAt so inline-edit detail pages can refresh
@@ -571,7 +579,16 @@ export const openApi = createCustomersCrudOpenApi({
   update: {
     schema: personUpdateSchema,
     responseSchema: defaultOkResponseSchema,
-    description: 'Updates contact details or custom fields for a person.',
+    description: [
+      'Updates contact details or custom fields for a person.',
+      'Fields the schema does not declare are rejected with 400 (code UNKNOWN_PAYLOAD_FIELDS) rather than ignored.',
+      'The next interaction accepts either the nested `nextInteraction: { at, name, refId?, icon?, color? }`',
+      'or the flat read shape returned by the GET endpoints (`nextInteractionAt`/`nextInteractionName`/… ,',
+      'or their snake_case list-response spellings); send one shape or the other, never both.',
+      'A null or blank `nextInteractionAt` (or `nextInteraction: null`) clears the reminder.',
+      'Note that these columns are a projection of the customer interactions timeline: an interaction',
+      'created, completed, cancelled or deleted for this person recomputes them from that timeline.',
+    ].join(' '),
   },
   del: {
     schema: z.object({ id: z.string().uuid() }),
