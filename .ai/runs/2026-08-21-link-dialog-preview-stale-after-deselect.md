@@ -80,9 +80,9 @@ selected.", and the PREVIEW card still renders the person plus their link settin
 
 ### Phase 1: Fix the focus/selection invariant
 
-- [ ] 1.1 Rework handleRowClick so deselection updates focusedId
-- [ ] 1.2 Add regression tests for preview clearing and fallback
-- [ ] 1.3 Run the targeted test file
+- [x] 1.1 Rework handleRowClick so deselection updates focusedId — 6befe74e8
+- [x] 1.2 Add regression tests for preview clearing and fallback — 6befe74e8
+- [x] 1.3 Run the targeted test file — 6befe74e8
 
 ### Phase 2: Validation and delivery
 
