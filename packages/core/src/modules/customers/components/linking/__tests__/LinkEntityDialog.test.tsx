@@ -233,6 +233,82 @@ describe('LinkEntityDialog', () => {
     expect(saveButton).toBeDisabled()
   })
 
+  describe('preview visibility follows the selection', () => {
+    function buildPreviewAdapter(): LinkEntityAdapter {
+      return buildAdapter({
+        renderPreview: (option) => <div data-testid="preview-card">{option.label}</div>,
+      })
+    }
+
+    async function clickRow(label: string): Promise<void> {
+      await act(async () => {
+        fireEvent.click(getSearchResultRow(label))
+      })
+    }
+
+    it('hides the preview when the only selected entry is deselected', async () => {
+      renderWithProviders(
+        <LinkEntityDialog
+          open
+          onOpenChange={() => undefined}
+          adapter={buildPreviewAdapter()}
+          initialSelectedIds={[]}
+          onConfirm={async () => undefined}
+        />,
+      )
+
+      await waitFor(() => expect(getSearchResultRow('Acme Corp')).toBeInTheDocument())
+
+      await clickRow('Acme Corp')
+      await waitFor(() => expect(screen.getByTestId('preview-card')).toHaveTextContent('Acme Corp'))
+
+      await clickRow('Acme Corp')
+      await waitFor(() => expect(screen.queryByTestId('preview-card')).not.toBeInTheDocument())
+    })
+
+    it('moves the preview to a remaining selected entry when the focused entry is deselected', async () => {
+      renderWithProviders(
+        <LinkEntityDialog
+          open
+          onOpenChange={() => undefined}
+          adapter={buildPreviewAdapter()}
+          initialSelectedIds={[]}
+          onConfirm={async () => undefined}
+        />,
+      )
+
+      await waitFor(() => expect(getSearchResultRow('Acme Corp')).toBeInTheDocument())
+
+      await clickRow('Acme Corp')
+      await clickRow('Globex')
+      await waitFor(() => expect(screen.getByTestId('preview-card')).toHaveTextContent('Globex'))
+
+      await clickRow('Globex')
+      await waitFor(() => expect(screen.getByTestId('preview-card')).toHaveTextContent('Acme Corp'))
+    })
+
+    it('keeps the preview when a different, unfocused entry is deselected', async () => {
+      renderWithProviders(
+        <LinkEntityDialog
+          open
+          onOpenChange={() => undefined}
+          adapter={buildPreviewAdapter()}
+          initialSelectedIds={[]}
+          onConfirm={async () => undefined}
+        />,
+      )
+
+      await waitFor(() => expect(getSearchResultRow('Acme Corp')).toBeInTheDocument())
+
+      await clickRow('Acme Corp')
+      await clickRow('Globex')
+      await waitFor(() => expect(screen.getByTestId('preview-card')).toHaveTextContent('Globex'))
+
+      await clickRow('Acme Corp')
+      await waitFor(() => expect(screen.getByTestId('preview-card')).toHaveTextContent('Globex'))
+    })
+  })
+
   it('propagates linkSettings from renderLinkSettings to onConfirm', async () => {
     const adapter = buildAdapter({
       kind: 'person',
