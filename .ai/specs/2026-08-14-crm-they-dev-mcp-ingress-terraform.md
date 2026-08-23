@@ -4,7 +4,7 @@
 
 Adopt the already-live MCP target group and `/mcp` listener rule into Terraform,
 declare the existing ALB-only port `3002` security-group ingress, and preserve the
-application fallback at priority `1003`. Keep the healthy EC2 target attachment as
+application fallback at priority `1003`. Keep the registered EC2 target attachment as
 a documented exception because the provider resource does not support import.
 
 ## Overview
@@ -62,7 +62,8 @@ key is stored or changed by this Terraform declaration.
 3. Review a saved targeted plan covering only the MCP resources, existing app
    listener rule, and app security group.
 4. Apply only when the plan contains no resource replacement or deletion and no unrelated drift.
-5. Verify the existing `i-0f2bf77841475e173:3002` attachment directly in AWS.
+5. Verify the existing `i-0f2bf77841475e173:3002` attachment directly in AWS and,
+   while the scheduled instance is running, require it to become `healthy`.
 6. Do not run a future plan that replaces `module.crm.aws_instance.app` until the
    same change registers the new instance on port `3002`, waits for `healthy`,
    verifies `/mcp`, and only then deregisters the old target. Terraform state owns
@@ -74,8 +75,10 @@ key is stored or changed by this Terraform declaration.
 - `tofu validate` in `infra/terraform/environments/crm-they-dev`
 - `node --test scripts/__tests__/crm-observability.test.mjs`
 - Post-apply targeted plan reports no changes.
-- Both target groups remain healthy; `/login` returns `200`, unauthenticated
-  `/mcp` returns `401`, and an authenticated MCP call succeeds.
+- While the scheduled instance is running, both target groups are healthy;
+  `/login` returns `200`, unauthenticated `/mcp` returns `401`, and an
+  authenticated MCP call succeeds. A stopped instance is expected to report an
+  unusable target and is not valid pre-apply health evidence.
 
 ## Risks & Impact Review
 
@@ -102,8 +105,8 @@ target is healthy and authenticated and unauthenticated probes pass.
 - No EC2, RDS, DNS, TLS, IAM, schedule, database, or secret resource is changed.
 - The non-importable attachment, future EC2 replacement block, and manual
   registration state boundary are explicit.
-- Verification covers Terraform syntax, repository tests, AWS target health,
-  listener routing, unauthenticated rejection, and authenticated MCP access.
+- Verification requirements cover Terraform syntax, repository tests, AWS target
+  health, listener routing, unauthenticated rejection, and authenticated MCP access.
 - Public pre-authentication rate limiting remains a documented residual risk and
   is not represented as solved by this infrastructure adoption.
 

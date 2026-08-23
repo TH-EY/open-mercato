@@ -58,7 +58,9 @@ before their Terraform declaration. Import the exact target group and listener
 rule before any targeted plan; never let Terraform propose replacements for them.
 The existing EC2 target attachment on port `3002` remains a documented exception:
 the provider resource does not support import, so this change does not recreate
-the healthy live attachment. Do not assume a provider upgrade will make it importable.
+the registered live attachment. Freshly verify it becomes `healthy` while the
+scheduled instance is running before any apply; a stopped instance is not valid
+health evidence. Do not assume a provider upgrade will make it importable.
 
 Any plan that replaces `module.crm.aws_instance.app` is blocked until a separately
 reviewed MCP attachment runbook is part of that change. The runbook must register
