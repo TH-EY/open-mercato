@@ -1,0 +1,53 @@
+{
+  "finoo_identities": {
+    "identity": { "title": "Dane tożsamości", "column": "Dane tożsamości", "loadingStatus": "Ładowanie kompletności danych tożsamości…" },
+    "fields": {
+      "pesel": "PESEL",
+      "documentType": "Typ dokumentu",
+      "issuingCountryCode": "Kraj wydania",
+      "documentNumber": "Numer dokumentu",
+      "issuedOn": "Data wydania",
+      "expiresOn": "Data ważności"
+    },
+    "status": {
+      "complete": "Uzupełnione",
+      "missing": "Brak",
+      "not_applicable": "Nie dotyczy"
+    },
+    "aggregate": { "complete": "Kompletne", "incomplete": "Niekompletne" },
+    "filter": { "label": "Kompletność danych tożsamości" },
+    "documentTypes": {
+      "identity_card": "Dowód osobisty",
+      "permanent_identity_card": "Bezterminowy dowód osobisty",
+      "passport": "Paszport",
+      "digital_identity_card": "Cyfrowy dokument tożsamości"
+    },
+    "raw": {
+      "title": "Chronione dane tożsamości",
+      "loading": "Ładowanie chronionych danych tożsamości…",
+      "empty": "Brak chronionego rekordu tożsamości.",
+      "emptyValue": "Nie podano",
+      "create": "Utwórz dane tożsamości",
+      "save": "Zapisz dane tożsamości"
+    },
+    "errors": {
+      "invalidPerson": "Brakuje identyfikatora osoby.",
+      "load": "Nie udało się wczytać chronionych danych tożsamości.",
+      "loadStatus": "Nie udało się wczytać kompletności danych tożsamości.",
+      "save": "Nie udało się zapisać chronionych danych tożsamości."
+    },
+    "conflicts": {
+      "title": "Konflikty importu danych tożsamości",
+      "loading": "Ładowanie konfliktów importu danych tożsamości…",
+      "loadError": "Nie udało się wczytać konfliktów importu danych tożsamości.",
+      "field": "Pole",
+      "current": "Aktualna wartość",
+      "candidate": "Wartość z importu",
+      "replace": "Użyj wartości z importu",
+      "dismiss": "Zachowaj aktualne wartości",
+      "resolved": "Zastosowano zaimportowane dane tożsamości.",
+      "dismissed": "Zachowano aktualne dane tożsamości.",
+      "resolveError": "Nie udało się rozstrzygnąć konfliktu importu danych tożsamości."
+    }
+  }
+}

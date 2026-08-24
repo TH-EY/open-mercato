@@ -11,10 +11,14 @@ import { CustomerDeal, CustomerEntity, CustomerPipeline, CustomerPipelineStage }
 import { DictionaryEntry } from '@open-mercato/core/modules/dictionaries/data/entities'
 import { normalizeDictionaryValue } from '@open-mercato/core/modules/dictionaries/lib/utils'
 import { FinooApplicationConsentEvidence, FinooApplicationIdentityBinding, FinooApplicationIntake, FinooApplicationProjection, type FinooApplicationProjectionState } from '../data/entities'
-import type { SanitizedFinooApplicationPayload } from '../data/validators'
+import { isValidPesel, type SanitizedFinooApplicationPayload } from '../data/validators'
 import { FINOO_CONSENT_REGISTRY, FINOO_CONSENT_REGISTRY_VERSION } from './consents'
+import { buildFinooIdentityImportInput, resolveFinooIdentityTechnicalImportPort } from './identity-import'
 import { hasConfiguredLookupHashPepper } from './security'
-import { FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS, FINOO_APPLICATION_SENSITIVE_FIELD_SPECS } from './sensitive-fields'
+import {
+  FINOO_APPLICATION_NON_IDENTITY_SENSITIVE_FIELD_SPECS,
+  FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS,
+} from './sensitive-fields'
 
 type Scope = { tenantId: string; organizationId: string }
 type OptionalAffiliateService = { findActiveLinkByCodeInScope?: (code: string, scope: Scope) => Promise<unknown | null> }
@@ -66,7 +70,7 @@ function commandContext(container: AppContainer, scope: Scope) {
   }
 }
 
-async function requireSensitiveFieldsEncrypted(
+export async function requireSensitiveFieldsEncrypted(
   em: EntityManager,
   encryption: TenantDataEncryptionService,
   scope: Scope,
@@ -79,14 +83,14 @@ async function requireSensitiveFieldsEncrypted(
   }
   const defs = await em.find(CustomFieldDef, {
     ...scope,
-    $or: FINOO_APPLICATION_SENSITIVE_FIELD_SPECS.map(({ entityId, key, kind }) => ({ entityId, key, kind })),
+    $or: FINOO_APPLICATION_NON_IDENTITY_SENSITIVE_FIELD_SPECS.map(({ entityId, key, kind }) => ({ entityId, key, kind })),
     deletedAt: null,
     isActive: true,
   })
-  if (defs.length !== FINOO_APPLICATION_SENSITIVE_FIELD_SPECS.length) {
+  if (defs.length !== FINOO_APPLICATION_NON_IDENTITY_SENSITIVE_FIELD_SPECS.length) {
     throw new Error('sensitive_field_definition_missing')
   }
-  for (const spec of FINOO_APPLICATION_SENSITIVE_FIELD_SPECS) {
+  for (const spec of FINOO_APPLICATION_NON_IDENTITY_SENSITIVE_FIELD_SPECS) {
     const def = defs.find((candidate) => candidate.entityId === spec.entityId && candidate.key === spec.key && candidate.kind === spec.kind)
     if (!def?.configJson || (def.configJson as Record<string, unknown>).encrypted !== true) {
       throw new Error('sensitive_field_encryption_required')
@@ -280,22 +284,12 @@ async function recordConsentEvidence(
 
 function personCustomFields(
   payload: SanitizedFinooApplicationPayload,
-  pesel: string | null,
-  dictionaries: { jobPositionEntryId?: string; idTypeEntryId?: string; countryEntryId?: string },
+  dictionaries: { jobPositionEntryId?: string },
 ): Record<string, unknown> {
   const mobile = normalizePhone(payload.mobilePrefix, payload.mobile)
-  const idNumber = payload.idType === 'PASSPORT' ? payload.passport : payload.idType === 'DIGITCARD' ? payload.digitCard : payload.idCard
-  const issued = payload.idType === 'PASSPORT' ? payload.passportIssued : payload.idType === 'DIGITCARD' ? payload.digitCardIssued : payload.idCardIssued
-  const expiry = payload.idType === 'PASSPORT' ? payload.passportExpiry : payload.idType === 'DIGITCARD' ? payload.digitCardExpiry : payload.idCardExpiry
   return {
-    ...(pesel ? { national_identification_number: pesel } : {}),
     ...(mobile ? { mobile } : {}),
     ...(dictionaries.jobPositionEntryId ? { job_position: dictionaries.jobPositionEntryId } : {}),
-    ...(dictionaries.idTypeEntryId ? { id_type: dictionaries.idTypeEntryId } : {}),
-    ...(idNumber ? { id_number: idNumber } : {}),
-    ...(dictionaries.countryEntryId ? { id_country_code: dictionaries.countryEntryId } : {}),
-    ...(issued ? { id_issued_date: issued } : {}),
-    ...(expiry ? { id_expiry_date: expiry } : {}),
     ...consentFields(payload),
   }
 }
@@ -375,7 +369,7 @@ async function projectFinooApplicationUnlocked(
   const nip = normalizeDigits(payload.companyNip || payload.nip)
   const pesel = normalizeDigits(payload.pesel)
   const email = normalizeEmail(payload.email)
-  if (!nip || nip.length !== 10 || (pesel && pesel.length !== 11) || !payload.companyName || !payload.name || !payload.surname || (!pesel && !email)) {
+  if (!nip || nip.length !== 10 || !pesel || !isValidPesel(pesel) || !payload.companyName || !payload.name || !payload.surname) {
     projection.warningsJson = [...new Set([...projection.warningsJson, 'insufficient_draft_data'])].slice(-50)
     projection.lastIntakeId = intake.id
     projection.lastSourceTimestamp = intake.sourceTimestamp
@@ -403,24 +397,6 @@ async function projectFinooApplicationUnlocked(
         'customers:customer_person_profile',
         'job_position',
         payload.position,
-      ),
-    } : {}),
-    ...(payload.idType ? {
-      idTypeEntryId: await resolveDictionaryEntryId(
-        em,
-        scope,
-        'customers:customer_person_profile',
-        'id_type',
-        payload.idType === 'IDCARD' ? 'idenitity_card' : payload.idType === 'PASSPORT' ? 'passport' : 'digital_identity_card',
-      ),
-    } : {}),
-    ...(payload.country || payload.passportCountryCode ? {
-      countryEntryId: await resolveDictionaryEntryId(
-        em,
-        scope,
-        'customers:customer_person_profile',
-        'id_country_code',
-        (payload.passportCountryCode || payload.country)!.toLowerCase(),
       ),
     } : {}),
   }
@@ -490,8 +466,8 @@ async function projectFinooApplicationUnlocked(
     await em.flush()
   }
 
-  const applicantBinding = await bindIdentity(em, scope, projection, pesel ? 'pesel' : 'email', pesel || email!)
-  const emailBinding = email && pesel
+  const applicantBinding = await bindIdentity(em, scope, projection, 'pesel', pesel)
+  const emailBinding = email
     ? await bindIdentity(em, scope, projection, 'email', email)
     : applicantBinding
   const applicantOwned = applicantBinding.projectionId === projection.id
@@ -515,7 +491,7 @@ async function projectFinooApplicationUnlocked(
       : await findOneWithDecryption(em, CustomerEntity, { ...scope, id: applicantBinding.reservedEntityId, kind: 'person', deletedAt: null }, undefined, scope)
     if (!applicantEntity) {
       const created = await commandBus.execute<Record<string, unknown>, { entityId: string }>('customers.people.create', {
-        input: { ...scope, systemEntityId: applicantBinding.reservedEntityId, systemProfileId: randomUUID(), firstName: payload.name, lastName: payload.surname, primaryEmail: email, primaryPhone, companyEntityId: projection.companyEntityId, source: ownedSource, customFields: personCustomFields(payload, pesel, applicantDictionaries) }, ctx: context,
+        input: { ...scope, systemEntityId: applicantBinding.reservedEntityId, systemProfileId: randomUUID(), firstName: payload.name, lastName: payload.surname, primaryEmail: email, primaryPhone, companyEntityId: projection.companyEntityId, source: ownedSource, customFields: personCustomFields(payload, applicantDictionaries) }, ctx: context,
       })
       projection.applicantEntityId = created.result.entityId
       applicantCreated = true
@@ -550,13 +526,26 @@ async function projectFinooApplicationUnlocked(
           primaryEmail: email,
           primaryPhone,
           companyEntityId: projection.companyEntityId,
-          customFields: personCustomFields(payload, pesel, applicantDictionaries),
+          customFields: personCustomFields(payload, applicantDictionaries),
         },
         ctx: context,
       })
     }
     applicantBinding.customerEntityId = projection.applicantEntityId
     emailBinding.customerEntityId = projection.applicantEntityId
+    await em.flush()
+  }
+
+  const identityService = resolveFinooIdentityTechnicalImportPort(container)
+  const identityImport = await identityService.createFromTechnicalImport({
+    ...scope,
+    personId: projection.applicantEntityId,
+    sourceModule: 'finoo_applications',
+    sourceRecordId: intake.id,
+    input: buildFinooIdentityImportInput(payload),
+  })
+  if (identityImport.status === 'conflict') {
+    projection.warningsJson = [...new Set([...projection.warningsJson, 'identity_import_conflict'])].slice(-50)
     await em.flush()
   }
 

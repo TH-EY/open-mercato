@@ -7,6 +7,22 @@ const consentPrefixes = [
   'jdg_consent', 'legal_consent', 'nova_lend_property_community_consent',
 ]
 
+export const FINOO_LEGACY_IDENTITY_FIELD_KEYS = [
+  'national_identification_number',
+  'id_type',
+  'id_country_code',
+  'id_number',
+  'id_issued_date',
+  'id_expiry_date',
+] as const
+
+export const FINOO_LEGACY_RAW_IDENTITY_FIELD_KEYS = [
+  'national_identification_number',
+  'id_number',
+  'id_issued_date',
+  'id_expiry_date',
+] as const
+
 export const FINOO_APPLICATION_SENSITIVE_FIELD_SPECS = [
   ...sensitiveSpecs('customers:customer_company_profile', 'text', ['tax_number']),
   ...sensitiveSpecs('customers:customer_person_profile', 'text', [
@@ -21,6 +37,10 @@ export const FINOO_APPLICATION_SENSITIVE_FIELD_SPECS = [
   ...sensitiveSpecs('customers:customer_deal', 'multiline', ['submission_history']),
   ...sensitiveSpecs('customers:customer_deal', 'text', ['nova_lend_status_reason', 'initial_referrer', 'last_referrer', 'landing_page']),
 ] as const
+
+export const FINOO_APPLICATION_NON_IDENTITY_SENSITIVE_FIELD_SPECS = FINOO_APPLICATION_SENSITIVE_FIELD_SPECS.filter(
+  ({ key }) => !(FINOO_LEGACY_RAW_IDENTITY_FIELD_KEYS as readonly string[]).includes(key),
+)
 
 export const FINOO_APPLICATION_REQUIRED_ENCRYPTION_MAPS = [
   {

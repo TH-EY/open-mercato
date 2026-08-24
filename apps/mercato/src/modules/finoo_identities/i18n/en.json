@@ -1,0 +1,53 @@
+{
+  "finoo_identities": {
+    "identity": { "title": "Identity data", "column": "Identity data", "loadingStatus": "Loading identity completeness…" },
+    "fields": {
+      "pesel": "PESEL",
+      "documentType": "Document type",
+      "issuingCountryCode": "Issuing country",
+      "documentNumber": "Document number",
+      "issuedOn": "Issue date",
+      "expiresOn": "Expiry date"
+    },
+    "status": {
+      "complete": "Complete",
+      "missing": "Missing",
+      "not_applicable": "Not applicable"
+    },
+    "aggregate": { "complete": "Complete", "incomplete": "Incomplete" },
+    "filter": { "label": "Identity data completeness" },
+    "documentTypes": {
+      "identity_card": "Identity card",
+      "permanent_identity_card": "Permanent identity card",
+      "passport": "Passport",
+      "digital_identity_card": "Digital identity card"
+    },
+    "raw": {
+      "title": "Restricted identity data",
+      "loading": "Loading restricted identity data…",
+      "empty": "No restricted identity record.",
+      "emptyValue": "Not provided",
+      "create": "Create identity data",
+      "save": "Save identity data"
+    },
+    "errors": {
+      "invalidPerson": "The Person identifier is missing.",
+      "load": "Failed to load restricted identity data.",
+      "loadStatus": "Failed to load identity completeness.",
+      "save": "Failed to save restricted identity data."
+    },
+    "conflicts": {
+      "title": "Identity import conflicts",
+      "loading": "Loading identity import conflicts…",
+      "loadError": "Failed to load identity import conflicts.",
+      "field": "Field",
+      "current": "Current value",
+      "candidate": "Imported value",
+      "replace": "Use imported values",
+      "dismiss": "Keep current values",
+      "resolved": "Imported identity values applied.",
+      "dismissed": "Current identity values retained.",
+      "resolveError": "Failed to resolve the identity import conflict."
+    }
+  }
+}

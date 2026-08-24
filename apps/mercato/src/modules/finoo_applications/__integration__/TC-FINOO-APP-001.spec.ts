@@ -7,7 +7,10 @@ import { expect, test, type APIRequestContext } from '@playwright/test'
 import { drainIntegrationQueue } from '@open-mercato/core/helpers/integration/queue'
 import { createDictionaryFixture } from '@open-mercato/core/helpers/integration/dictionariesFixtures'
 import { hashForLookup } from '@open-mercato/shared/lib/encryption/aes'
-import { FINOO_APPLICATION_SENSITIVE_FIELD_SPECS } from '../lib/sensitive-fields'
+import {
+  FINOO_APPLICATION_SENSITIVE_FIELD_SPECS,
+  FINOO_LEGACY_IDENTITY_FIELD_KEYS,
+} from '../lib/sensitive-fields'
 import { FINOO_CONSENT_REGISTRY_VERSION } from '../lib/consents'
 import {
   cleanupScenario,
@@ -312,6 +315,9 @@ async function expectSingleProjectionGraph(scenario: Scenario, leadId: string): 
 async function cleanupFinooScenario(scenario: Scenario | null): Promise<void> {
   if (!scenario) return
   const values = [scenario.tenantId, scenario.organizationId]
+  await queryDatabase('delete from finoo_identity_import_conflicts where tenant_id=$1 and organization_id=$2', values)
+  await queryDatabase('delete from finoo_identity_audit_entries where tenant_id=$1 and organization_id=$2', values)
+  await queryDatabase('delete from finoo_person_identities where tenant_id=$1 and organization_id=$2', values)
   await queryDatabase('delete from action_logs where tenant_id=$1 and organization_id=$2', values)
   await queryDatabase('delete from finoo_application_consent_evidence where tenant_id=$1 and organization_id=$2', values)
   await queryDatabase('delete from finoo_application_identity_bindings where tenant_id=$1 and organization_id=$2', values)
@@ -450,7 +456,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
       mobile: '111000000',
       companyName: 'FINOO Draft Company',
       nip: '1234567890',
-      pesel: '12345678901',
+      pesel: '90010100009',
       businessType: 'company',
       amount: '100000',
       acceptTerms: true,
@@ -475,7 +481,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
       [draft.body.intakeId],
     )
     expect(rawDraft[0]?.payload_json).not.toContain('KONTOMATIK_INTEGRATION_CANARY')
-    expect(rawDraft[0]?.payload_json).not.toContain('12345678901')
+    expect(rawDraft[0]?.payload_json).not.toContain('90010100009')
     expect(rawDraft[0]?.payload_json).not.toContain('1234567890')
 
     const finalPayload = {
@@ -488,7 +494,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
       traffic_source: 'organic',
       companyName: 'FINOO Final Company',
       nip: '9876543210',
-      pesel: '10987654321',
+      pesel: '90010200013',
       kontomatikToken: undefined,
     }
     const finalMessageId = `msg_${randomUUID()}`
@@ -617,14 +623,28 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
       `/api/customers/people/${graph[0]?.person_entity_id}`,
     )
     expect(personResponse.status()).toBe(200)
-    expect(await personResponse.json()).toMatchObject({
+    const personPayload = await personResponse.json()
+    expect(personPayload).toMatchObject({
       person: {
         displayName: 'Alicja Final',
         primaryEmail: 'alicja-final@example.invalid',
         primaryPhone: '+48222000000',
       },
       profile: { firstName: 'Alicja', lastName: 'Final' },
+      _finooIdentities: {
+        isComplete: false,
+        statuses: {
+          pesel: 'complete',
+          documentType: 'missing',
+          issuingCountryCode: 'missing',
+          documentNumber: 'missing',
+          issuedOn: 'missing',
+          expiresOn: 'missing',
+        },
+      },
     })
+    expect(JSON.stringify(personPayload)).not.toContain('90010100009')
+    expect(JSON.stringify(personPayload)).not.toContain('90010200013')
     const dealResponse = await scopedApiRequest(
       request,
       scenario,
@@ -646,6 +666,49 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
     expect(bindings).toHaveLength(6)
     expect(bindings.every((binding) => Boolean(binding.customer_entity_id))).toBe(true)
 
+    const identityRows = await queryDatabase<{
+      person_id: string
+      pesel: string
+      is_complete: boolean
+      field_statuses: Record<string, string>
+    }>(
+      `select person_id::text, pesel, is_complete, field_statuses
+       from finoo_person_identities
+       where tenant_id=$1 and organization_id=$2 and deleted_at is null`,
+      [scenario.tenantId, scenario.organizationId],
+    )
+    expect(identityRows).toHaveLength(1)
+    expect(identityRows[0]).toMatchObject({
+      person_id: graph[0]?.person_entity_id,
+      is_complete: false,
+      field_statuses: {
+        pesel: 'complete',
+        documentType: 'missing',
+      },
+    })
+    expect(identityRows[0]?.pesel).toMatch(/:v1$/)
+    expect(identityRows[0]?.pesel).not.toContain('90010100009')
+
+    const identityConflicts = await queryDatabase<{ candidate_pesel: string; state: string }>(
+      `select candidate_pesel, state
+       from finoo_identity_import_conflicts
+       where tenant_id=$1 and organization_id=$2`,
+      [scenario.tenantId, scenario.organizationId],
+    )
+    expect(identityConflicts).toHaveLength(1)
+    expect(identityConflicts[0]?.state).toBe('open')
+    expect(identityConflicts[0]?.candidate_pesel).toMatch(/:v1$/)
+    expect(identityConflicts[0]?.candidate_pesel).not.toContain('90010200013')
+
+    const legacyIdentityValues = await queryDatabase<{ count: string }>(
+      `select count(*)::text as count from custom_field_values
+       where tenant_id=$1 and organization_id=$2
+         and entity_id='customers:customer_person_profile'
+         and field_key = any($3::text[])`,
+      [scenario.tenantId, scenario.organizationId, FINOO_LEGACY_IDENTITY_FIELD_KEYS],
+    )
+    expect(legacyIdentityValues).toEqual([{ count: '0' }])
+
     const companyType = await queryDatabase<{ value_text: string | null }>(
       `select cfv.value_text from custom_field_values cfv
        where cfv.tenant_id=$1 and cfv.organization_id=$2
@@ -661,7 +724,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
     )
     const rawCustomFields = JSON.stringify(sensitiveRows)
     expect(rawCustomFields).not.toContain('9876543210')
-    expect(rawCustomFields).not.toContain('10987654321')
+    expect(rawCustomFields).not.toContain('90010200013')
     expect(rawCustomFields).not.toContain('+48222000000')
 
     const actionLogRows = await queryDatabase<{ stored: string }>(
@@ -672,7 +735,15 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
     )
     expect(actionLogRows.length).toBeGreaterThan(0)
     const rawActionLogs = JSON.stringify(actionLogRows)
-    for (const canary of ['FINOO Final Company', 'Alicja', 'Final', 'alicja-final@example.invalid', '+48222000000']) {
+    for (const canary of [
+      'FINOO Final Company',
+      'Alicja',
+      'Final',
+      'alicja-final@example.invalid',
+      '+48222000000',
+      '90010100009',
+      '90010200013',
+    ]) {
       expect(rawActionLogs).not.toContain(canary)
     }
     const actionLogResponse = await scopedApiRequest(
@@ -684,7 +755,10 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
     expect(actionLogResponse.status()).toBe(200)
     const decryptedActionLogs = await actionLogResponse.json() as { items?: Array<Record<string, unknown>> }
     expect(decryptedActionLogs.items?.length).toBeGreaterThan(0)
-    expect(JSON.stringify(decryptedActionLogs.items)).toContain('FINOO Final Company')
+    const decryptedActionLogText = JSON.stringify(decryptedActionLogs.items)
+    expect(decryptedActionLogText).toContain('FINOO Final Company')
+    expect(decryptedActionLogText).not.toContain('90010100009')
+    expect(decryptedActionLogText).not.toContain('90010200013')
 
     const evidence = await queryDatabase<{ count: string; distinct_intakes: string }>(
       `select count(*)::text as count, count(distinct intake_id)::text as distinct_intakes
@@ -699,7 +773,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
       leadId: rejectedLeadId,
       email: 'rejected@example.invalid',
       nip: '5555555555',
-      pesel: '55555555555',
+      pesel: '90010300027',
       companyName: 'FINOO Rejected Company',
       disqualified: true,
       disqualification_message: 'Synthetic automatic rejection',

@@ -81,7 +81,7 @@ HMAC input is the ASCII prefix `<message-id>.<timestamp>.` followed by exact raw
 | `503` | Scope/integration/credential/encryption unavailable or revoked. |
 
 - `leadId` must be a string matching `^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$`; JSON numbers are rejected.
-- Final requires Company name, NIP, applicant names, and PESEL or email. Incomplete draft remains durable.
+- Final requires Company name, NIP, applicant names, and a valid PESEL. Email remains optional for identity matching; incomplete draft remains durable.
 - The stripping schema recognizes only current form fields. Unknown values are discarded. Only safe bounded warning codes are retained; unsafe unknown names are not retained.
 - `kontomatikToken` is recognized only to discard it. Logs contain internal UUIDs/error codes, never body, identity, contact, document, IP, consent, signature, or secret.
 
@@ -91,7 +91,7 @@ HMAC input is the ASCII prefix `<message-id>.<timestamp>.` followed by exact raw
 
 The route inserts once transactionally. Duplicate success requires matching digest and repairs delivery. Enqueue after commit is best-effort. Queue payload is only `{ intakeId, tenantId, organizationId }`. Earlier failures remain `retrying`; `failed` is terminal only after retry exhaustion. A scheduled reconciler re-enqueues pending/due/expired-lease rows. Locks and compare-and-set leasing prevent concurrent projection.
 
-Queue/dead-letter contains no PII. All encrypted intake payloads, projections, identity bindings and consent evidence are retained until the client approves an explicit retention and data-subject erasure policy. No scheduled deletion or payload pruning is registered in the current implementation.
+Queue/dead-letter contains no PII. The separate Person-retention capability owns the single retention clock and invokes downstream erasure seams; this module registers no second clock or scheduler. The FINOO identity erasure seam redacts identity-document/PESEL keys from Person-linked encrypted intakes and deletes that Person's PESEL binding. Retention of the remaining application/projection/consent data stays with the external Person-retention owner.
 
 ## Projection and recovery
 
@@ -106,11 +106,11 @@ Incoming state: completed+disqualified -> `disqualified`; completed -> `complete
 ## Mapping
 
 - Company: `companyName` -> display/legal name; NIP -> encrypted `tax_number`; business type -> existing company dictionary; start date -> existing field.
-- Applicant/representatives: core name/email/phone plus encrypted mobile, PESEL and ID-document fields; existing job-position dictionary; links to Company/Deal.
+- Applicant/representatives: core name/email/phone plus encrypted mobile and existing job-position dictionary; links to Company/Deal. Applicant PESEL and document values go only through the write-only `finooIdentityTechnicalImport` port. The projector never writes the six legacy identity custom fields, including during the controlled rollback window; existing legacy values are reserved for the scoped migration tool.
 - Deal: lead ID -> `external_id`; state -> `form_complete` and exact stage; financial values -> existing fields/core PLN value; reason -> description; affiliate/UTM/click/touch/referrer -> existing fields; disqualification and Kontomatik completion -> bounded history. Never advance after `Submitted`.
 - Consent: reuse prepared Terms & Conditions, channel, data-sharing, JDG, legal, and NovaLend fields. Backend derives acceptance time from trusted server context and selects text/code from a versioned server registry; browser-supplied evidence is rejected. The server-to-server peer address is not represented as the applicant IP and is not copied to prepared `*_ip_address` fields. Only its keyed digest is included in append-only evidence bound to scope, lead, intake, acceptance, version/code and server time. If legal requires applicant IP, the caller contract needs a separately signed, validated claim and a new consent registry version. Missing content/code remains unset.
 
-Before projection, require enabled tenant encryption, recoverable DEK, active monotonic encryption maps containing the full canonical and currently configured field union for the core, audit and intake destinations, and `configJson.encrypted=true` for every sensitive custom-field destination. Fail closed otherwise. The existing-tenant `prepare-encryption` rollout authenticates existing ciphertext and encrypts active and soft-deleted rows before activating the map union in the same transaction; duplicate scoped maps fail closed. Deployment requires a pre-migration backup and a maintenance window that drains all relevant writers before apply, restarts every app/worker process to clear local map caches, and performs post-restart dry-run/raw/decrypted read-back before reopening traffic.
+Before projection, require enabled tenant encryption, recoverable DEK, active monotonic encryption maps containing the full canonical and currently configured field union for the core, audit and intake destinations, and `configJson.encrypted=true` for every active non-identity sensitive custom-field destination. Legacy identity definitions never control projector behavior. The existing-tenant `prepare-encryption` rollout authenticates existing ciphertext and encrypts active and soft-deleted rows before activating the map union in the same transaction; duplicate scoped maps fail closed. Deployment requires a pre-migration backup and a maintenance window that drains all relevant writers before apply, restarts every app/worker process to clear local map caches, and performs post-restart dry-run/raw/decrypted read-back before reopening traffic.
 
 ## Compatibility and gates
 
@@ -129,7 +129,7 @@ Before projection, require enabled tenant encryption, recoverable DEK, active mo
 6. Draft/final/disqualified, duplicate/stale/conflict, one graph.
 7. Failure after each command phase and concurrent messages recover reserved IDs.
 8. Cross-scope, guessed lead ID, unrelated identity, optional affiliate unavailable/unknown.
-9. Trusted consent/integrity and retention without scheduled deletion.
+9. Trusted consent/integrity, valid final PESEL, write-only identity import, cutover mode, and Person-retention erasure seam without a second scheduler.
 
 Runtime QA uses signed synthetic calls and exact-SHA deployment, raw-DB/application read-backs, headed Created/Submitted/Closed UI, canary search, and zero-residual cleanup. Caller handoff documents exact signing/retry/limit/string-lead/trusted-consent/no-browser/token rules without secrets or PII.
 
@@ -145,9 +145,13 @@ Security review rejects overwriting an unrelated Company solely from public NIP.
 
 The immutable consent registry is pinned to the current 2026-08-19 `finoo.pl/apply` application bundle `index-BnFiOo84.js` (SHA-256 `7e72cbeb84185992210acd39a9fae843ccaf351836f36e868809d52f18a4c906`); the ordered server registry itself has SHA-256 `b53f8ffac9d0aaf4b82f3d48951082e1201c1e85ac1c2bbed5dca95edad95c3c`. It maps the current BIK, BIG InfoMonitor and KRD clauses (`jdg1..jdg3`, `legal1..legal2`) and keeps application-contact consent separate from optional FINOO.PL and partner marketing channels. Legal/business approval of this exact version, or an approved successor registry, is required before production consent evidence is treated as authoritative.
 
-The client decision for the current rollout is to retain all encrypted intake payloads, projections, identity bindings and consent evidence until explicit retention and data-subject erasure periods are agreed. The module therefore registers no retention schedule and performs no automatic deletion.
+The current client decision is one Person-level retention clock for all user-linked data, including PESEL and document data. This module therefore registers no independent schedule. Its identity-specific erasure port is invoked by the external Person-retention owner and removes identity keys from linked encrypted intakes plus the Person's PESEL binding; it does not independently decide when erasure is due.
 
 ## Changelog
+
+### 2026-08-24
+
+- Required valid PESEL for final projection, moved PESEL/document writes exclusively to the narrow FINOO identity import port, stopped projector writes to legacy identity custom fields, and bound identity-copy erasure to the external single Person-retention clock.
 
 ### 2026-08-18
 

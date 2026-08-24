@@ -7,8 +7,34 @@ const MAX_UNKNOWN_FIELD_NAMES = 50
 const MAX_REPRESENTATIVES = 20
 const LEAD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/
 const SAFE_UNKNOWN_FIELD_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
+const PESEL_WEIGHTS = [1, 3, 7, 9, 1, 3, 7, 9, 1, 3] as const
 
 const optionalText = (max: number) => z.string().trim().max(max).optional()
+
+export function isValidPesel(value: string): boolean {
+  const pesel = value.replace(/\D/g, '')
+  if (pesel.length !== 11) return false
+  const encodedMonth = Number(pesel.slice(2, 4))
+  const century = encodedMonth >= 81 && encodedMonth <= 92
+    ? 1800
+    : encodedMonth >= 1 && encodedMonth <= 12
+      ? 1900
+      : encodedMonth >= 21 && encodedMonth <= 32
+        ? 2000
+        : encodedMonth >= 41 && encodedMonth <= 52
+          ? 2100
+          : encodedMonth >= 61 && encodedMonth <= 72
+            ? 2200
+            : null
+  if (century === null) return false
+  const year = century + Number(pesel.slice(0, 2))
+  const month = encodedMonth % 20
+  const day = Number(pesel.slice(4, 6))
+  const date = new Date(Date.UTC(year, month - 1, day))
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return false
+  const sum = PESEL_WEIGHTS.reduce((total, weight, index) => total + Number(pesel[index]) * weight, 0)
+  return (10 - (sum % 10)) % 10 === Number(pesel[10])
+}
 
 const formBooleanSchema = z.union([z.boolean(), z.string().trim().max(16)]).transform((value, context) => {
   if (typeof value === 'boolean') return value
@@ -160,11 +186,10 @@ function validateFinalSubmission(
   if (nip && nip.replace(/\D/g, '').length !== 10) {
     context.addIssue({ code: 'custom', path: ['nip'], message: 'NIP must contain 10 digits' })
   }
-  if (value.pesel && value.pesel.replace(/\D/g, '').length !== 11) {
-    context.addIssue({ code: 'custom', path: ['pesel'], message: 'PESEL must contain 11 digits' })
-  }
-  if (!value.pesel && !value.email) {
-    context.addIssue({ code: 'custom', path: ['pesel'], message: 'PESEL or email is required for final submission' })
+  if (!value.pesel) {
+    context.addIssue({ code: 'custom', path: ['pesel'], message: 'PESEL is required for final submission' })
+  } else if (!isValidPesel(value.pesel)) {
+    context.addIssue({ code: 'custom', path: ['pesel'], message: 'PESEL is invalid' })
   }
 }
 

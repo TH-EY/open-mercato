@@ -24,7 +24,7 @@ describe('FINOO application payload sanitization', () => {
       companyNip: '1234567890',
       name: 'Jan',
       surname: 'Kowalski',
-      pesel: '12345678901',
+      pesel: '44051401458',
       acceptTerms: '1',
       contactConsent: '1',
       contactEmail: true,
@@ -88,6 +88,32 @@ describe('FINOO application payload sanitization', () => {
       name: 'Jan',
       surname: 'Kowalski',
       pesel: '123',
+    }, metadata)).toThrow()
+  })
+
+  it('requires PESEL even when a final submission contains email', () => {
+    expect(() => parseAndSanitizeFinooApplicationPayload({
+      leadId: 'lead_12345678',
+      consentVersion: FINOO_CONSENT_REGISTRY_VERSION,
+      completed: true,
+      companyName: 'Test company',
+      companyNip: '1234567890',
+      name: 'Jan',
+      surname: 'Kowalski',
+      email: 'jan@example.com',
+    }, metadata)).toThrow()
+  })
+
+  it('rejects an eleven-digit final PESEL with an invalid checksum', () => {
+    expect(() => parseAndSanitizeFinooApplicationPayload({
+      leadId: 'lead_12345678',
+      consentVersion: FINOO_CONSENT_REGISTRY_VERSION,
+      completed: true,
+      companyName: 'Test company',
+      companyNip: '1234567890',
+      name: 'Jan',
+      surname: 'Kowalski',
+      pesel: '12345678901',
     }, metadata)).toThrow()
   })
 
