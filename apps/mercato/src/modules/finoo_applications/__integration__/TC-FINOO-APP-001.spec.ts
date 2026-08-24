@@ -453,7 +453,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
     const draftPayload = {
       leadId,
       consentVersion: FINOO_CONSENT_REGISTRY_VERSION,
-      przeszedl_caly_wniosek: 'Nie',
+      completed: false,
       name: 'Alicja',
       surname: 'Draft',
       email: 'alicja-draft@example.invalid',
@@ -492,7 +492,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
 
     const finalPayload = {
       ...draftPayload,
-      przeszedl_caly_wniosek: 'Tak',
+      completed: true,
       surname: 'Final',
       email: 'alicja-final@example.invalid',
       mobilePrefix: '+48',
@@ -536,7 +536,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
 
     const regression = await submit(scenario, {
       ...finalPayload,
-      przeszedl_caly_wniosek: 'Nie',
+      completed: false,
       surname: 'Ignored Regression',
     }, `msg_${randomUUID()}`)
     expect(regression.status).toBe(202)
@@ -940,7 +940,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
     )
     const representativeRecoveryFinal = await submit(scenario, {
       ...representativeRecoveryPayload,
-      przeszedl_caly_wniosek: 'Tak',
+      completed: true,
       representatives: [{
         firstname: 'Recovered',
         lastname: 'Representative',

@@ -80,7 +80,7 @@ function buildScenario(runId: string, options: ScenarioOptions): ApplyFormScenar
   const step1 = {
     leadId,
     consentVersion: FINOO_CONSENT_REGISTRY_VERSION,
-    przeszedl_caly_wniosek: 'Nie',
+    completed: false,
     leadType: 'business',
     companyName,
     nip,
@@ -124,7 +124,7 @@ function buildScenario(runId: string, options: ScenarioOptions): ApplyFormScenar
         : undefined
   const step3 = {
     ...step2,
-    przeszedl_caly_wniosek: 'Tak',
+    completed: true,
     acceptTerms: true,
     emailConsent: options.index % 2 === 0,
     smsConsent: options.index % 3 === 0,

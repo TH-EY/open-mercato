@@ -19,7 +19,7 @@ describe('FINOO application payload sanitization', () => {
     const parsed = parseAndSanitizeFinooApplicationPayload({
       leadId: 'lead_12345678',
       consentVersion: FINOO_CONSENT_REGISTRY_VERSION,
-      przeszedl_caly_wniosek: 'Tak',
+      completed: true,
       companyName: 'Test company',
       companyNip: '1234567890',
       name: 'Jan',
@@ -44,7 +44,7 @@ describe('FINOO application payload sanitization', () => {
     expect(JSON.stringify(parsed)).not.toContain('SECRET_CANARY')
     expect(JSON.stringify(parsed)).not.toContain('UNTRUSTED_NAME')
     expect(parsed.jdgConsent?.jdg1).toEqual({ selected: true })
-    expect(parsed).toMatchObject({ contactConsent: true, contactEmail: true })
+    expect(parsed).toMatchObject({ completed: true, contactConsent: true, contactEmail: true })
     expect(parsed.ingestionMeta).toMatchObject({
       receivedAt: metadata.receivedAt,
       sourceIp: metadata.sourceIp,
@@ -56,6 +56,7 @@ describe('FINOO application payload sanitization', () => {
   it('rejects consent text that does not match the signed registry version', () => {
     expect(() => parseAndSanitizeFinooApplicationPayload({
       leadId: 'lead_12345678',
+      completed: false,
       jdgConsent: { jdg1: { selected: true, text: 'changed text' } },
     }, metadata)).toThrow('consent_registry_mismatch')
   })
@@ -63,6 +64,7 @@ describe('FINOO application payload sanitization', () => {
   it('accepts current clause decisions without caller-supplied legal text', () => {
     const parsed = parseAndSanitizeFinooApplicationPayload({
       leadId: 'lead_12345678',
+      completed: false,
       consentVersion: FINOO_CONSENT_REGISTRY_VERSION,
       legalConsent: { legal1: { selected: true }, legal2: { selected: false } },
     }, metadata)
@@ -73,6 +75,7 @@ describe('FINOO application payload sanitization', () => {
   it('rejects superseded consent clause names instead of dropping a decision', () => {
     expect(() => parseAndSanitizeFinooApplicationPayload({
       leadId: 'lead_12345678',
+      completed: false,
       consentVersion: FINOO_CONSENT_REGISTRY_VERSION,
       jdgConsent: { jdg: { selected: true } },
     }, metadata)).toThrow()
@@ -117,17 +120,36 @@ describe('FINOO application payload sanitization', () => {
     }, metadata)).toThrow()
   })
 
+  it('requires completed and rejects non-boolean values', () => {
+    expect(() => parseAndSanitizeFinooApplicationPayload({
+      leadId: 'lead_12345678',
+    }, metadata)).toThrow()
+    expect(() => parseAndSanitizeFinooApplicationPayload({
+      leadId: 'lead_12345678',
+      completed: 'true',
+    }, metadata)).toThrow()
+  })
+
+  it('rejects disqualification unless the submission is completed', () => {
+    expect(() => parseAndSanitizeFinooApplicationPayload({
+      leadId: 'lead_12345678',
+      completed: false,
+      disqualified: true,
+    }, metadata)).toThrow()
+  })
+
   it('requires the current registry version for draft consent decisions', () => {
     expect(() => parseAndSanitizeFinooApplicationPayload({
       leadId: 'lead_12345678',
+      completed: false,
       acceptTerms: true,
     }, metadata)).toThrow()
   })
 
   it('enforces the 8 to 128 character lead ID boundary', () => {
-    expect(() => parseAndSanitizeFinooApplicationPayload({ leadId: '1234567' }, metadata)).toThrow()
-    expect(parseAndSanitizeFinooApplicationPayload({ leadId: '12345678' }, metadata).leadId).toBe('12345678')
-    expect(parseAndSanitizeFinooApplicationPayload({ leadId: `a${'b'.repeat(127)}` }, metadata).leadId).toHaveLength(128)
-    expect(() => parseAndSanitizeFinooApplicationPayload({ leadId: `a${'b'.repeat(128)}` }, metadata)).toThrow()
+    expect(() => parseAndSanitizeFinooApplicationPayload({ leadId: '1234567', completed: false }, metadata)).toThrow()
+    expect(parseAndSanitizeFinooApplicationPayload({ leadId: '12345678', completed: false }, metadata).leadId).toBe('12345678')
+    expect(parseAndSanitizeFinooApplicationPayload({ leadId: `a${'b'.repeat(127)}`, completed: false }, metadata).leadId).toHaveLength(128)
+    expect(() => parseAndSanitizeFinooApplicationPayload({ leadId: `a${'b'.repeat(128)}`, completed: false }, metadata)).toThrow()
   })
 })
