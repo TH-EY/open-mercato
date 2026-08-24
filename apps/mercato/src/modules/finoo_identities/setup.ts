@@ -9,7 +9,11 @@ export const setup: ModuleSetupConfig = {
   },
   defaultRoleFeatures: {
     superadmin: ['finoo_identities.*'],
-    [FINOO_IOD_ROLE]: ['finoo_identities.view', 'finoo_identities.manage'],
+    [FINOO_IOD_ROLE]: [
+      'customers.people.view',
+      'finoo_identities.view',
+      'finoo_identities.manage',
+    ],
   },
 }
 

@@ -28,6 +28,17 @@ const tsxBin = join(repoRoot, 'node_modules', '.bin', 'tsx')
 const intakeRunner = join(dirname(fileURLToPath(import.meta.url)), 'intake-runner.ts')
 const signingSecret = 'integration-finoo-signing-secret-000000000000000000'
 const execFileAsync = promisify(execFile)
+const peselChecksumWeights = [1, 3, 7, 9, 1, 3, 7, 9, 1, 3] as const
+let peselSequence = 5000
+
+function nextValidPesel(): string {
+  const firstTenDigits = `900104${String(peselSequence++).padStart(4, '0')}`
+  const sum = peselChecksumWeights.reduce(
+    (total, weight, index) => total + Number(firstTenDigits[index]) * weight,
+    0,
+  )
+  return `${firstTenDigits}${(10 - (sum % 10)) % 10}`
+}
 
 type IntakeResponse = { ok?: boolean; duplicate?: boolean; intakeId?: string }
 
@@ -637,20 +648,27 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
         primaryPhone: '+48222000000',
       },
       profile: { firstName: 'Alicja', lastName: 'Final' },
-      _finooIdentities: {
-        isComplete: false,
-        statuses: {
-          pesel: 'complete',
-          documentType: 'missing',
-          issuingCountryCode: 'missing',
-          documentNumber: 'missing',
-          issuedOn: 'missing',
-          expiresOn: 'missing',
-        },
-      },
     })
     expect(JSON.stringify(personPayload)).not.toContain('90010100009')
     expect(JSON.stringify(personPayload)).not.toContain('90010200013')
+    const identityStatusResponse = await scopedApiRequest(
+      request,
+      scenario,
+      'GET',
+      `/api/finoo_identities/people/${graph[0]?.person_entity_id}/status`,
+    )
+    expect(identityStatusResponse.status()).toBe(200)
+    expect(await identityStatusResponse.json()).toEqual({
+      isComplete: false,
+      statuses: {
+        pesel: 'complete',
+        documentType: 'missing',
+        issuingCountryCode: 'missing',
+        documentNumber: 'missing',
+        issuedOn: 'missing',
+        expiresOn: 'missing',
+      },
+    })
     const dealResponse = await scopedApiRequest(
       request,
       scenario,
@@ -804,7 +822,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
       ...finalPayload,
       leadId: unrelatedPersonLeadId,
       email: existingPersonEmail,
-      pesel: undefined,
+      pesel: nextValidPesel(),
       nip: '4444444444',
       companyName: 'FINOO Unrelated Person Company',
       name: 'Attempted',
@@ -840,7 +858,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
       ...finalPayload,
       leadId: foreignLeadId,
       email: foreignEmail,
-      pesel: undefined,
+      pesel: nextValidPesel(),
       nip: '3333333333',
       companyName: 'FINOO Foreign Binding Company',
     }, `msg_${randomUUID()}`)
@@ -865,7 +883,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
       ...finalPayload,
       leadId: unrelatedCompanyLeadId,
       email: `company-owner-${randomUUID()}@example.invalid`,
-      pesel: undefined,
+      pesel: nextValidPesel(),
       nip: '2222222222',
       companyName: 'Attempted Existing Company Overwrite',
     }
@@ -901,7 +919,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
       leadId: representativeRecoveryLeadId,
       email: `recovery-applicant-${randomUUID()}@example.invalid`,
       nip: '1212121212',
-      pesel: undefined,
+      pesel: nextValidPesel(),
       companyName: 'FINOO Representative Recovery Company',
     }
     const representativeRecoveryDraft = await submit(
@@ -987,7 +1005,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
     const concurrentBase = {
       ...finalPayload,
       leadId: concurrentLeadId,
-      pesel: undefined,
+      pesel: nextValidPesel(),
       companyName: 'FINOO Concurrent Company',
     }
     const [concurrentA, concurrentB] = await Promise.all([
@@ -1039,7 +1057,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
         ...finalPayload,
         leadId: recoveryLeadId,
         email: `phase-recovery-${randomUUID()}@example.invalid`,
-        pesel: undefined,
+        pesel: nextValidPesel(),
         nip: phase.nip,
         companyName: `FINOO ${phase.kind} Recovery`,
       }
@@ -1146,7 +1164,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
       ...finalPayload,
       leadId: unavailableAffiliateLeadId,
       email: `affiliate-unavailable-${randomUUID()}@example.invalid`,
-      pesel: undefined,
+      pesel: nextValidPesel(),
       nip: '1616161616',
       companyName: 'FINOO Affiliate Unavailable',
       affiliate_code: `UNAVAILABLE-${randomUUID()}`,
@@ -1169,7 +1187,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
       ...finalPayload,
       leadId: retryLeadId,
       email: `retry-${randomUUID()}@example.invalid`,
-      pesel: undefined,
+      pesel: nextValidPesel(),
       nip: '6666666666',
       companyName: 'FINOO Retry Company',
       position: 'retry_job_position',

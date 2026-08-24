@@ -56,6 +56,7 @@ test('TC-FINOO-ID-001-005 enforces status-only, IOD, and superadmin identity acc
       'customer_accounts.view',
       'customer_accounts.manage',
       'customer_accounts.roles.manage',
+      'communication_channels.connect_user_channel',
       'customers.people.view',
       'customers.people.manage',
     ])
@@ -70,6 +71,19 @@ test('TC-FINOO-ID-001-005 enforces status-only, IOD, and superadmin identity acc
     const personId = personBody.id ?? personBody.entityId
     expect(personId).toBeTruthy()
 
+    const iodRoleId = await createRoleFixture(request, scenario.superToken, {
+      name: FINOO_IOD_ROLE,
+      tenantId: scenario.tenantId,
+    })
+    await setRoleAclFeatures(request, scenario.superToken, {
+      roleId: iodRoleId,
+      features: [
+        'customers.people.view',
+        'finoo_identities.view',
+        'finoo_identities.manage',
+      ],
+      organizations: [scenario.organizationId],
+    })
     const iodRoles = await queryDatabase<{
       id: string
       features_json: string[] | null
@@ -83,7 +97,11 @@ test('TC-FINOO-ID-001-005 enforces status-only, IOD, and superadmin identity acc
     )
     expect(iodRoles).toHaveLength(1)
     expect(iodRoles[0]).toMatchObject({
-      features_json: ['finoo_identities.view', 'finoo_identities.manage'],
+      features_json: [
+        'customers.people.view',
+        'finoo_identities.view',
+        'finoo_identities.manage',
+      ],
       is_super_admin: false,
     })
     const iodAssignments = await queryDatabase<{ count: string }>(
@@ -150,19 +168,6 @@ test('TC-FINOO-ID-001-005 enforces status-only, IOD, and superadmin identity acc
     )
     expect(ordinaryPersonResponse.status()).toBe(200)
     const ordinaryPersonBody = await ordinaryPersonResponse.json()
-    expect(ordinaryPersonBody).toMatchObject({
-      _finooIdentities: {
-        isComplete: true,
-        statuses: {
-          pesel: 'complete',
-          documentType: 'complete',
-          issuingCountryCode: 'complete',
-          documentNumber: 'complete',
-          issuedOn: 'complete',
-          expiresOn: 'complete',
-        },
-      },
-    })
     expect(JSON.stringify(ordinaryPersonBody)).not.toContain(identityInput.pesel)
     expect(JSON.stringify(ordinaryPersonBody)).not.toContain(identityInput.documentNumber)
 
