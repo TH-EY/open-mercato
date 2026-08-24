@@ -96,6 +96,11 @@ async function createFieldManifest(request: APIRequestContext, scenario: Scenari
   })
   await createFieldDefinition(request, scenario, {
     entityId: 'customers:customer_deal',
+    key: 'turnover',
+    kind: 'integer',
+  })
+  await createFieldDefinition(request, scenario, {
+    entityId: 'customers:customer_deal',
     key: 'traffic_source',
     kind: 'text',
   })
@@ -458,6 +463,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
       nip: '1234567890',
       pesel: '90010100009',
       businessType: 'company',
+      earnings: '50000',
       amount: '100000',
       acceptTerms: true,
       contactConsent: true,
@@ -655,7 +661,7 @@ test('TC-FINOO-APP-001 signed intake projects one encrypted, refreshable CRM gra
     const dealPayload = await dealResponse.json() as { deal?: Record<string, unknown>; customFields?: Record<string, unknown> }
     expect(dealPayload).toMatchObject({
       deal: { title: 'FINOO Final Company', pipelineStage: 'Submitted' },
-      customFields: { traffic_source: 'organic' },
+      customFields: { traffic_source: 'organic', earnings: 50000, turnover: 50000 },
     })
 
     const bindings = await queryDatabase<{ identity_kind: string; customer_entity_id: string | null }>(

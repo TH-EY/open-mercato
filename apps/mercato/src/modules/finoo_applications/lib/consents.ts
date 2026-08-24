@@ -2,9 +2,9 @@ export const FINOO_CONSENT_REGISTRY_VERSION = 'finoo-apply-2026-08-19-7e72cbeb'
 
 export const FINOO_CONSENT_REGISTRY_SOURCE = {
   page: 'https://finoo.pl/apply',
-  capturedAt: '2026-08-19',
-  appBundle: 'https://finoo.pl/assets/index-BnFiOo84.js',
-  appBundleSha256: '7e72cbeb84185992210acd39a9fae843ccaf351836f36e868809d52f18a4c906',
+  capturedAt: '2026-08-24',
+  appBundle: 'https://finoo.pl/assets/index-DcYdDW8y.js',
+  appBundleSha256: 'd7476e2c3fdb801466fdde3494111db6df0892af4877082cd535daf7dbf81b',
   registrySha256: 'b53f8ffac9d0aaf4b82f3d48951082e1201c1e85ac1c2bbed5dca95edad95c3c',
 } as const
 

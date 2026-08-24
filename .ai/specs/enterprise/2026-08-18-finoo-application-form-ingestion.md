@@ -139,6 +139,14 @@ Runtime QA uses signed synthetic calls and exact-SHA deployment, raw-DB/applicat
 - `TC-FINOO-APP-001` uses the repository-managed ephemeral environment and real Postgres, booted HTTP route discovery, module bootstrap, encrypted integration credentials, tenant encryption, local durable queue and customer commands. It covers draft -> final refresh, disqualified -> Closed, stale/terminal no-op warnings, digest duplicate/conflict, concurrent same-lead delivery with one Company/Person/Deal graph, unrelated and foreign-null identity bindings, changed-NIP non-overwrite, recovery of a source-owned representative after a partial create, and faithful Company/Person/Deal partial-core states that preserve the reserved core ID while removing projection/binding, custom-field and audit-event side effects before normal queue recovery. It also covers dictionary and phone-prefix mapping, optional affiliate unavailable/unknown, real CLI replay -> reconciler -> queue success, cross-scope payload stripping, retention of aged processed and failed encrypted payloads, append-only consent evidence, non-empty audit logs, existing-tenant plaintext backfill before exact encryption-map activation, raw ciphertext canaries and decrypted scoped API read-back.
 - Async Redis queue fault injection and production callback execution remain runtime rollout evidence, not local-test substitutes.
 
+### Current form E2E contract (THOM-110)
+
+The 2026-08-24 audit of `https://finoo.pl/apply` captured a three-step form (`Firma i kontakt`, `Wnioskodawca`, `Zgody`) with JDG/company branches and ID card/passport/mDowód document branches. The displayed consent registry remains byte-equivalent to the accepted server registry, so the consent version does not change; the current application bundle is `index-DcYdDW8y.js` with SHA-256 `d7476e2c3fdb801466fdde3494111db6df0892af4877082cd535daf7dbf81b`.
+
+The current public mapper is not the Open Mercato wire contract. Its contact/marketing channel OR operations lose consent provenance, its NovaLend clause keys use the legacy `jdg,jdg1,jdg2` and `legal,legal1` layout, and it does not supply `consentVersion`. The finoo.pl backend must preserve the three consent groups, translate clause keys to canonical `jdg1..jdg3` / `legal1..legal2`, add the deployed registry version, sign exact canonical bytes, and call the endpoint server-to-server. `monthlyTurnover` is sent as canonical `earnings` and projected to both existing CRM fields `earnings` and `turnover`. The UI-only `propertyCollateral` field has no prepared CRM destination and remains explicitly outside the wire contract until a field and mapping are approved.
+
+Executable THOM-110 scenarios cover all 27 step submissions across JDG/company × ID card/passport/mDowód plus the reachable arrears, too-young and combined automatic rejection paths. Live verification also covers same-body duplicate, message-ID conflict, missing consent version, invalid signature, stale timestamp, invalid media type and oversized body. Exact-host QA must read back intake/projection/Company/People/Deal/stage/custom-field/consent evidence and remove every synthetic graph by its run-scoped lead IDs.
+
 ## Production rollout decisions
 
 Security review rejects overwriting an unrelated Company solely from public NIP. Recommended: update only a Company already bound to this source; on first unrelated NIP match, link and record `existing_company_requires_review` without changing canonical fields. This supersedes the earlier “always update by NIP” decision only after explicit approval.
@@ -152,6 +160,7 @@ The current client decision is one Person-level retention clock for all user-lin
 ### 2026-08-24
 
 - Required valid PESEL for final projection, moved PESEL/document writes exclusively to the narrow FINOO identity import port, stopped projector writes to legacy identity custom fields, and bound identity-copy erasure to the external single Person-retention clock.
+- Added the current three-step form inventory, canonical legacy-consent translation, turnover projection, executable exact-host E2E matrix, and Polish finoo.pl backend integration handoff under THOM-110.
 
 ### 2026-08-18
 
