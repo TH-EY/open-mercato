@@ -101,7 +101,7 @@ Queue/dead-letter contains no PII. All encrypted intake payloads, projections, i
 
 Projector locks scope+lead and normalized identities in deterministic order. Before create it persists the reserved UUID. Company/Person/Deal create commands accept an additive optional system ID. If a command stops after core commit, retry finds that exact ID and completes it through update instead of creating a duplicate. Failure injection covers core/custom-field/event boundaries.
 
-Incoming state: `completed: true` plus `disqualified: true` -> `disqualified`; `completed: true` -> `completed`; `completed: false` -> `draft`. `completed` is a required strict boolean; missing or translated string values fail validation, and `disqualified: true` is invalid unless `completed: true`. Allowed are draft refresh/promotion and same-terminal refresh. Terminal-to-draft and conflicting terminal are no-op warnings. Older source timestamps cannot overwrite newer accepted state.
+Incoming state: `completed: true` plus `disqualified: true` -> `disqualified`; `completed: true` -> `completed`; `completed: false` -> `draft`. `completed` is a required strict boolean; missing or translated string values fail validation, the retired Polish completion field fails validation even when `completed` is present, and `disqualified: true` is invalid unless `completed: true`. Allowed are draft refresh/promotion and same-terminal refresh. Terminal-to-draft and conflicting terminal are no-op warnings. Older source timestamps cannot overwrite newer accepted state.
 
 ## Mapping
 

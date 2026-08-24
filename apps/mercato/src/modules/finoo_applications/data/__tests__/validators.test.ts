@@ -104,6 +104,14 @@ describe('FINOO application payload sanitization', () => {
     }, metadata)).toThrow()
   })
 
+  it('rejects the retired completion field even when completed is present', () => {
+    expect(() => parseAndSanitizeFinooApplicationPayload({
+      leadId: 'lead_12345678',
+      completed: false,
+      przeszedl_caly_wniosek: 'Tak',
+    }, metadata)).toThrow('retired_completion_field')
+  })
+
   it('rejects disqualification unless the submission is completed', () => {
     expect(() => parseAndSanitizeFinooApplicationPayload({
       leadId: 'lead_12345678',

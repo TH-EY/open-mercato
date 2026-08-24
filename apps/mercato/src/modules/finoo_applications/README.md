@@ -23,7 +23,7 @@ The receiver must run behind the configured trusted proxy chain and obtain a syn
 
 `leadId` must be a stable server-generated string matching `^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$`. Draft and final submissions reuse the same `leadId` but use a new message ID. Never send a numeric `leadId`.
 
-Every payload must include `completed` as a JSON boolean. Draft submissions use `false`; final and automatically disqualified submissions use `true`. Missing or string values are rejected.
+Every payload must include `completed` as a JSON boolean. Draft submissions use `false`; final and automatically disqualified submissions use `true`. Missing or string values are rejected. The retired Polish completion field is rejected even when `completed` is also present.
 
 Every final submission must include the exact current consent registry version in `consentVersion`. The current value is `finoo-apply-2026-08-19-7e72cbeb`. A missing or stale version is rejected with `400`; update the caller only after the receiver's immutable registry has been deployed for the new version.
 
