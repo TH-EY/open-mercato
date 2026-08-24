@@ -55,6 +55,7 @@ describe('FINOO application identity retention port', () => {
     expect(intake.payloadJson).toEqual({ name: 'Jan' })
     expect(persisted).toEqual([intake])
     expect(em.nativeDelete).toHaveBeenCalledWith(FinooApplicationIdentityBinding, expect.objectContaining({
+      identityKind: 'pesel',
       $or: expect.arrayContaining([
         { customerEntityId: 'ee823a18-e50c-4de4-9d71-4f516d7d754e' },
         { reservedEntityId: 'ee823a18-e50c-4de4-9d71-4f516d7d754e' },
@@ -82,6 +83,7 @@ describe('FINOO application identity retention port', () => {
     })
 
     expect(em.find.mock.calls[0]?.[1]).toMatchObject({
+      identityKind: 'pesel',
       $or: expect.arrayContaining([
         { reservedEntityId: 'ee823a18-e50c-4de4-9d71-4f516d7d754e' },
       ]),
@@ -107,5 +109,34 @@ describe('FINOO application identity retention port', () => {
       encryptionService,
     })).rejects.toThrow('identity_retention_payload_unreadable')
     expect(em.nativeDelete).not.toHaveBeenCalled()
+  })
+
+  it('does not follow a representative email binding to the applicant intake', async () => {
+    const em = {
+      find: jest.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]),
+      persist: jest.fn(),
+      nativeDelete: jest.fn(async () => 0),
+    }
+
+    const result = await eraseFinooApplicationIdentityCopies({
+      em: em as never,
+      tenantId: '5164d495-1865-4738-b459-2783999a761d',
+      organizationId: 'd0d98cb3-28cf-4376-a61c-d270020f166f',
+      personId: 'ee823a18-e50c-4de4-9d71-4f516d7d754e',
+      encryptionService,
+    })
+
+    expect(result).toEqual({ intakesRedacted: 0, bindingsDeleted: 0 })
+    expect(em.find.mock.calls[0]?.[1]).toMatchObject({ identityKind: 'pesel' })
+    expect(em.find.mock.calls[1]?.[1]).toMatchObject({
+      $or: [{ applicantEntityId: 'ee823a18-e50c-4de4-9d71-4f516d7d754e' }],
+    })
+    expect(findWithDecryption).not.toHaveBeenCalled()
+    expect(em.persist).not.toHaveBeenCalled()
+    expect(em.nativeDelete).toHaveBeenCalledWith(FinooApplicationIdentityBinding, expect.objectContaining({
+      identityKind: 'pesel',
+    }))
   })
 })

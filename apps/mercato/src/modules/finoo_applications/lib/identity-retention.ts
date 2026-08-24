@@ -42,6 +42,7 @@ export async function eraseFinooApplicationIdentityCopies(input: {
   if (!encryptedFields.includes('payload_json')) throw new Error('identity_retention_encryption_unavailable')
   const bindings = await input.em.find(FinooApplicationIdentityBinding, {
     ...scope,
+    identityKind: 'pesel',
     $or: [
       { customerEntityId: input.personId },
       { reservedEntityId: input.personId },
@@ -85,6 +86,7 @@ export async function eraseFinooApplicationIdentityCopies(input: {
   }
   const bindingsDeleted = await input.em.nativeDelete(FinooApplicationIdentityBinding, {
     ...scope,
+    identityKind: 'pesel',
     $or: [
       { customerEntityId: input.personId },
       { reservedEntityId: input.personId },

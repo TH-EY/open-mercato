@@ -6,10 +6,49 @@ import type { AppContainer } from '@open-mercato/shared/lib/di/container'
 import { invalidateCrudCache } from '@open-mercato/shared/lib/crud/cache'
 import { createLogger } from '@open-mercato/shared/lib/logger'
 import { FinooIdentityAuditEntry, FinooIdentityImportConflict, FinooPersonIdentity } from './data/entities'
-import { createFinooIdentityService } from './lib/service'
+import { createFinooIdentityService, type FinooIdentityMutationEvent } from './lib/service'
 import { emitFinooIdentityEvent } from './events'
 
 const logger = createLogger('finoo_identities').child({ component: 'mutation-effects' })
+
+export async function runFinooIdentityPostCommitEffects(
+  container: AppContainer,
+  event: FinooIdentityMutationEvent,
+): Promise<void> {
+  const effects = await Promise.allSettled([
+    invalidateCrudCache(
+      container,
+      'customers.person',
+      {
+        id: event.personId,
+        tenantId: event.tenantId,
+        organizationId: event.organizationId,
+      },
+      event.tenantId,
+      event.eventId,
+    ),
+    emitFinooIdentityEvent(event.eventId, {
+      tenantId: event.tenantId,
+      organizationId: event.organizationId,
+      personId: event.personId,
+      identityId: event.identityId,
+      conflictId: event.conflictId,
+      changedFields: event.changedFields,
+      isComplete: event.isComplete,
+      resolution: event.resolution,
+    }, { persistent: true }),
+  ])
+  for (const effect of effects) {
+    if (effect.status === 'rejected') {
+      logger.error('FINOO identity post-commit effect failed', {
+        error: effect.reason,
+        eventId: event.eventId,
+        tenantId: event.tenantId,
+        organizationId: event.organizationId,
+      })
+    }
+  }
+}
 
 export function register(container: AppContainer): void {
   container.register({
@@ -34,41 +73,7 @@ export function register(container: AppContainer): void {
           NonNullable<Parameters<typeof createFinooIdentityService>[0]['resolveApplicationIdentityRetention']>
         >
       },
-      afterMutation: async (event) => {
-        const effects = await Promise.allSettled([
-          invalidateCrudCache(
-            container,
-            'customers.person',
-            {
-              id: event.personId,
-              tenantId: event.tenantId,
-              organizationId: event.organizationId,
-            },
-            event.tenantId,
-            event.eventId,
-          ),
-          emitFinooIdentityEvent(event.eventId, {
-            tenantId: event.tenantId,
-            organizationId: event.organizationId,
-            personId: event.personId,
-            identityId: event.identityId,
-            conflictId: event.conflictId,
-            changedFields: event.changedFields,
-            isComplete: event.isComplete,
-            resolution: event.resolution,
-          }, { persistent: true }),
-        ])
-        for (const effect of effects) {
-          if (effect.status === 'rejected') {
-            logger.error('FINOO identity post-commit effect failed', {
-              error: effect.reason,
-              eventId: event.eventId,
-              tenantId: event.tenantId,
-              organizationId: event.organizationId,
-            })
-          }
-        }
-      },
+      afterMutation: (event) => runFinooIdentityPostCommitEffects(container, event),
     })).scoped().proxy(),
     finooIdentityTechnicalImport: asFunction(({
       finooIdentityService,
