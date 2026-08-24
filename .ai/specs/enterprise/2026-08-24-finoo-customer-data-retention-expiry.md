@@ -311,7 +311,7 @@ Errors are structured and translated by the UI: `400` invalid value/token shape,
 
 Register one stable organization-scoped interval schedule with a one-hour cadence targeting queue `finoo-customer-retention-reconcile`. The scheduler and worker use the repository queue abstractions; no OS or infrastructure CRON is introduced.
 
-Module setup registers schedules idempotently for all existing organizations. The organization-created lifecycle subscriber registers the same deterministic schedule for every organization created after deployment. Startup/setup reconciliation repairs a missing registration. Schedule registration and removal are both covered by scoped tests.
+Module setup and the organization-created lifecycle subscriber register the same deterministic schedule for newly initialized organizations. Existing deployments do not rerun `setup.seedDefaults` automatically. The Finoo upgrade therefore runs the private, idempotent, exact-scope command `mercato finoo_customer_retention ensure-organization-setup --tenant <uuid> --organization <uuid> --apply`; the command first verifies that the non-deleted organization belongs to the requested tenant, then ensures the disabled settings row and repairs the schedule. Global `seed:defaults` is rejected because it invokes unrelated, non-convergent module seeds; raw SQL is rejected because it would bypass the durable scheduler registration path. Schedule registration, repair, and invalid-scope rejection are covered by scoped tests.
 
 Flat payload:
 
@@ -398,7 +398,7 @@ Migration sequence:
 1. Add the two private tables and indexes with the private module snapshot.
 2. Deploy code with settings disabled by default.
 3. Seed/ensure the two read-only custom-field definitions idempotently.
-4. Register the hourly schedule idempotently for every organization.
+4. For Finoo's existing organization, run the exact-scope `ensure-organization-setup` command from the immutable upgrade script to create the disabled settings row and register the hourly schedule idempotently. New organizations use module lifecycle setup.
 5. Verify the live Finoo customer-status dictionary. Core setup normally idempotently ensures `active`, `inactive`, `pending`, and `archived`; deployment evidence must read back the live instance rather than infer it. Do not seed a CRM `expired` value.
 6. An administrator runs the mandatory preview before first enablement.
 
@@ -427,6 +427,7 @@ Expected private files:
 - `apps/mercato/src/modules/finoo_customer_retention/acl.ts`
 - `apps/mercato/src/modules/finoo_customer_retention/ce.ts`
 - `apps/mercato/src/modules/finoo_customer_retention/setup.ts`
+- `apps/mercato/src/modules/finoo_customer_retention/cli.ts`
 - `apps/mercato/src/modules/finoo_customer_retention/di.ts`
 - `apps/mercato/src/modules/finoo_customer_retention/data/entities.ts`
 - `apps/mercato/src/modules/finoo_customer_retention/data/validators.ts`
@@ -437,6 +438,7 @@ Expected private files:
 - `apps/mercato/src/modules/finoo_customer_retention/services/*.ts`
 - `apps/mercato/src/modules/finoo_customer_retention/migrations/*`
 - `apps/mercato/src/modules/finoo_customer_retention/i18n/{en,pl}.json`
+- `infra/aws-upstream-baseline/finoo-demo-upgrade.sh`
 
 Exact filenames may follow discovered module conventions, but ownership and public surface must remain as specified.
 
