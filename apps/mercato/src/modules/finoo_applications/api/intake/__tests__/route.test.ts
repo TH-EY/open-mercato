@@ -108,6 +108,16 @@ describe('FINOO intake route', () => {
     expect((await POST(rejected)).status).toBe(415)
   })
 
+  it('rejects the retired completion field when canonical completed is also present', async () => {
+    const response = await POST(signedRequest({
+      leadId: 'lead_12345678',
+      completed: false,
+      przeszedl_caly_wniosek: 'Tak',
+    }))
+    expect(response.status).toBe(400)
+    expect(createdRows).toHaveLength(0)
+  })
+
   it('honors integration revocation before receipt persistence', async () => {
     integrationEnabled.mockResolvedValueOnce(false)
     const response = await POST(signedRequest({ leadId: 'lead_12345678', completed: false }))

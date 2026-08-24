@@ -117,6 +117,18 @@ async function main(): Promise<void> {
     const negativeLeadId = `thom110_${runId}_negative`
     const missingConsentVersion = await send({ leadId: negativeLeadId, completed: false, acceptTerms: true }, messageId())
     requireStatus(missingConsentVersion.status, 400, 'missing consent version')
+    const missingCompleted = await send({ leadId: negativeLeadId }, messageId())
+    requireStatus(missingCompleted.status, 400, 'missing completed')
+    const stringCompleted = await send({ leadId: negativeLeadId, completed: 'true' }, messageId())
+    requireStatus(stringCompleted.status, 400, 'string completed')
+    const contradictoryDisqualification = await send({ leadId: negativeLeadId, completed: false, disqualified: true }, messageId())
+    requireStatus(contradictoryDisqualification.status, 400, 'contradictory disqualification')
+    const retiredCompletionField = await send({
+      leadId: negativeLeadId,
+      completed: false,
+      przeszedl_caly_wniosek: 'Tak',
+    }, messageId())
+    requireStatus(retiredCompletionField.status, 400, 'retired completion field')
     const invalidSignature = await send({ leadId: negativeLeadId }, messageId(), { secret: 'x'.repeat(32) })
     requireStatus(invalidSignature.status, 401, 'invalid signature')
     const staleTimestamp = String(Math.floor(Date.now() / 1000) - 301)
@@ -129,6 +141,10 @@ async function main(): Promise<void> {
     negativeStatuses = {
       conflict: conflict.status,
       missingConsentVersion: missingConsentVersion.status,
+      missingCompleted: missingCompleted.status,
+      stringCompleted: stringCompleted.status,
+      contradictoryDisqualification: contradictoryDisqualification.status,
+      retiredCompletionField: retiredCompletionField.status,
       invalidSignature: invalidSignature.status,
       staleTimestamp: stale.status,
       invalidContentType: invalidContentType.status,

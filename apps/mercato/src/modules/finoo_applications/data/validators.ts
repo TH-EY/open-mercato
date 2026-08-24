@@ -8,6 +8,7 @@ const MAX_REPRESENTATIVES = 20
 const LEAD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/
 const SAFE_UNKNOWN_FIELD_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
 const PESEL_WEIGHTS = [1, 3, 7, 9, 1, 3, 7, 9, 1, 3] as const
+const RETIRED_COMPLETION_FIELD = 'przeszedl_caly_wniosek'
 
 const optionalText = (max: number) => z.string().trim().max(max).optional()
 
@@ -215,6 +216,9 @@ export function parseAndSanitizeFinooApplicationPayload(
   metadata: { messageId: string; sourceTimestamp: number; receivedAt: string; sourceIp?: string },
 ): SanitizedFinooApplicationPayload {
   const source = input && typeof input === 'object' ? input as Record<string, unknown> : {}
+  if (Object.hasOwn(source, RETIRED_COMPLETION_FIELD)) {
+    throw new Error('retired_completion_field')
+  }
   const jdg = source.jdgConsent && typeof source.jdgConsent === 'object' ? source.jdgConsent as Record<string, unknown> : {}
   const legal = source.legalConsent && typeof source.legalConsent === 'object' ? source.legalConsent as Record<string, unknown> : {}
   if (!consentClauseMatchesRegistry('jdg1', jdg.jdg1)

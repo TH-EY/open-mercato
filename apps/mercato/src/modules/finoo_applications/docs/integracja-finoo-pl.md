@@ -24,7 +24,7 @@ Sekret HMAC zostanie przekazany osobnym, bezpiecznym kanałem. Nie wolno umieszc
 
 ## 2. Kiedy wysyłać dane
 
-Dla jednego wniosku backend finoo.pl generuje jeden stabilny `leadId`. Ten sam `leadId` jest używany w każdej kolejnej wysyłce, natomiast każda próba dostarczenia nowej wersji danych otrzymuje nowy `Finoo-Message-Id`. Każdy payload musi zawierać `completed` jako JSON boolean; brak pola albo wartość tekstowa powoduje `400`.
+Dla jednego wniosku backend finoo.pl generuje jeden stabilny `leadId`. Ten sam `leadId` jest używany w każdej kolejnej wysyłce, natomiast każda próba dostarczenia nowej wersji danych otrzymuje nowy `Finoo-Message-Id`. Każdy payload musi zawierać `completed` jako JSON boolean; brak pola albo wartość tekstowa powoduje `400`. Wycofane pole `przeszedl_caly_wniosek` jest odrzucane również wtedy, gdy payload zawiera poprawne `completed`.
 
 | Zdarzenie formularza | Wartość `completed` | Oczekiwany etap CRM |
 |---|---:|---|
