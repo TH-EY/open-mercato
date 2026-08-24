@@ -200,7 +200,7 @@ describe('FINOO legacy identity migration', () => {
       id: `${key}-id`,
       key,
       isActive: true,
-      deletedAt: null,
+      deletedAt: null as Date | null,
       updatedAt: new Date('2026-08-24T10:00:00.000Z'),
     }))
     const persisted: unknown[] = []
@@ -249,6 +249,41 @@ describe('FINOO legacy identity migration', () => {
     expect(em.persist).not.toHaveBeenCalled()
   })
 
+  it('reactivates all six legacy definitions idempotently when no post-cutover identity write exists', async () => {
+    const definitions = LEGACY_IDENTITY_FIELD_KEYS.map((key) => ({
+      id: `${key}-id`,
+      key,
+      isActive: false,
+      deletedAt: new Date('2026-08-24T12:00:00.000Z'),
+      updatedAt: new Date('2026-08-24T12:00:00.000Z'),
+    }))
+    const persist = jest.fn()
+    const em: Record<string, unknown> = {
+      find: jest.fn(async () => definitions),
+      count: jest.fn(async () => 0),
+      persist,
+      flush: jest.fn(async () => undefined),
+    }
+    em.transactional = async (callback: (transactionalEm: unknown) => Promise<unknown>) => callback(em)
+    const input = {
+      em: em as never,
+      encryptionService: migrationEncryptionService() as never,
+      scope: { tenantId, organizationId },
+      active: true,
+    }
+
+    await expect(setLegacyIdentityCutover(input)).resolves.toEqual({
+      changedDefinitions: 6,
+      activeDefinitions: 6,
+    })
+    await expect(setLegacyIdentityCutover(input)).resolves.toEqual({
+      changedDefinitions: 0,
+      activeDefinitions: 6,
+    })
+    expect(persist).toHaveBeenCalledTimes(6)
+    expect(definitions.every((definition) => definition.isActive && definition.deletedAt === null)).toBe(true)
+  })
+
   it('reports purge counts without deleting values in dry-run mode', async () => {
     const definitions = LEGACY_IDENTITY_FIELD_KEYS.map((key) => ({
       id: `${key}-id`,
@@ -274,9 +309,103 @@ describe('FINOO legacy identity migration', () => {
       mode: 'dry-run',
     })
 
-    expect(report).toEqual({ mode: 'dry-run', values: 9, definitions: 6 })
+    expect(report).toEqual({
+      mode: 'dry-run',
+      values: 9,
+      definitions: 6,
+      residualValues: 9,
+      residualDefinitions: 6,
+    })
     expect(em.transactional).not.toHaveBeenCalled()
     expect(execute.mock.calls.some(([query]) => String(query).includes('delete from'))).toBe(false)
+  })
+
+  it('purges values in separately committed batches and proves zero residual rows', async () => {
+    const definitions = LEGACY_IDENTITY_FIELD_KEYS.map((key) => ({
+      id: `${key}-id`,
+      key,
+      isActive: false,
+      deletedAt: new Date('2026-08-24T12:00:00.000Z'),
+    }))
+    let valueCount = 5
+    let definitionCount = definitions.length
+    const execute = jest.fn(async (query: string) => {
+      if (query.includes('from customer_people profile')) return []
+      if (query.includes('select count(*) as count') && query.includes('from custom_field_values')) {
+        return [{ count: String(valueCount) }]
+      }
+      if (query.includes('delete from custom_field_values')) {
+        const deletedCount = Math.min(valueCount, 2)
+        valueCount -= deletedCount
+        return Array.from({ length: deletedCount }, (_, index) => ({ id: `value-${valueCount}-${index}` }))
+      }
+      if (query.includes('delete from custom_field_defs')) {
+        definitionCount = 0
+        return []
+      }
+      if (query.includes('select count(*) as count') && query.includes('from custom_field_defs')) {
+        return [{ count: String(definitionCount) }]
+      }
+      throw new Error(`Unexpected SQL: ${query}`)
+    })
+    const em: Record<string, unknown> = {
+      getConnection: () => ({ execute }),
+      find: jest.fn(async () => definitions),
+    }
+    em.transactional = jest.fn(async (callback: (transactionalEm: unknown) => Promise<unknown>) => callback(em))
+
+    await expect(purgeLegacyIdentityFields({
+      em: em as never,
+      encryptionService: migrationEncryptionService() as never,
+      scope: { tenantId, organizationId },
+      mode: 'apply',
+      batchSize: 2,
+    })).resolves.toEqual({
+      mode: 'apply',
+      values: 5,
+      definitions: 6,
+      residualValues: 0,
+      residualDefinitions: 0,
+    })
+    expect(em.transactional).toHaveBeenCalledTimes(4)
+  })
+
+  it('fails closed when post-purge read-back finds a residual definition', async () => {
+    const definitions = LEGACY_IDENTITY_FIELD_KEYS.map((key) => ({
+      id: `${key}-id`,
+      key,
+      isActive: false,
+      deletedAt: new Date('2026-08-24T12:00:00.000Z'),
+    }))
+    let valueCount = 1
+    const execute = jest.fn(async (query: string) => {
+      if (query.includes('from customer_people profile')) return []
+      if (query.includes('select count(*) as count') && query.includes('from custom_field_values')) {
+        return [{ count: String(valueCount) }]
+      }
+      if (query.includes('delete from custom_field_values')) {
+        valueCount = 0
+        return [{ id: 'value-1' }]
+      }
+      if (query.includes('delete from custom_field_defs')) return []
+      if (query.includes('select count(*) as count') && query.includes('from custom_field_defs')) {
+        return [{ count: '1' }]
+      }
+      throw new Error(`Unexpected SQL: ${query}`)
+    })
+    const em: Record<string, unknown> = {
+      getConnection: () => ({ execute }),
+      find: jest.fn(async () => definitions),
+    }
+    em.transactional = async (callback: (transactionalEm: unknown) => Promise<unknown>) => callback(em)
+
+    await expect(purgeLegacyIdentityFields({
+      em: em as never,
+      encryptionService: migrationEncryptionService() as never,
+      scope: { tenantId, organizationId },
+      mode: 'apply',
+      batchSize: 2,
+    })).rejects.toThrow('legacy_identity_purge_incomplete')
   })
 
   it('refuses purge when the legacy definition set is incomplete', async () => {

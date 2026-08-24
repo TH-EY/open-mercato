@@ -105,6 +105,7 @@ The separate retention capability owns one Person-level `retentionExpiresAt`; th
 defaultRoleFeatures: {
   superadmin: ['finoo_identities.*'],
   'IOD — Inspektor ochrony danych': [
+    'customers.people.view',
     'finoo_identities.view',
     'finoo_identities.manage',
   ],
@@ -551,6 +552,14 @@ Fixture PESEL/document canaries are scanned across responses, logs, events, CLI 
 - `.ai/ds-rules.md`
 - `.ai/ui-components.md`
 
+### Verification Evidence — 2026-08-25
+
+- PostgreSQL `TC-FINOO-ID-001-005`: PASS for ordinary status-only access, automatically provisioned IOD role with the exact three features and zero automatic assignments, IOD raw access, and superadmin wildcard access.
+- PostgreSQL `TC-FINOO-APP-001`: PASS for signed intake, mandatory PESEL, encrypted projection, retry/conflict/recovery/concurrency/retention, and corrupt-state fail-closed behavior.
+- Headed desktop QA: PASS for ordinary status-only, IOD raw identity, and superadmin raw identity views; ordinary 390x844 QA also exposes six statuses and no raw controls.
+- Current task-tree PostgreSQL integration, unit tests, typecheck, lint, generation, and application build: PASS after integration of `origin/fork/finoo`. Headed role QA predates that final merge, whose production-code delta is the separate fail-closed rejection of a retired completion field.
+- Production migration, cutover, rollback, retention execution, and permanent purge were not run. Purge apply remains separately approval-gated.
+
 ### Compliance Matrix
 
 | Rule source | Rule | Status | Notes |
@@ -564,7 +573,7 @@ Fixture PESEL/document canaries are scanned across responses, logs, events, CLI 
 | core | Commands and route guards | Compliant with documented exception | Raw values stay out of generic command surfaces; routes pass safe changed-field metadata to mutation guards and service supplies locks/audit/cache/events. |
 | core | Sanctioned integration seams | Compliant | Enricher/interceptor/widgets/DI. |
 | shared/UI | API helpers/i18n/CrudForm/DS | Compliant | Planned canonical primitives. |
-| QA/spec | API/UI integration coverage | Partial | Unit coverage and API integration artifacts exist; PostgreSQL execution, cutover exercise, and headed 012 QA remain rollout gates. |
+| QA/spec | API/UI integration coverage | Compliant for in-scope paths | PostgreSQL API integration and headed ordinary/IOD/superadmin role QA passed; production cutover and purge execution remain rollout operations, not implementation acceptance. |
 | compatibility | Additive/staged removal | Compliant | Deactivate then separately approved purge. |
 
 ### Internal Consistency Check
@@ -585,7 +594,7 @@ Fixture PESEL/document canaries are scanned across responses, logs, events, CLI 
 
 ### Verdict
 
-- **Partially compliant:** private identity isolation is implemented, while runtime PostgreSQL execution, headed QA, and the separate People v2 filter-platform follow-up remain open rollout gates.
+- **Compliant for the THOM-108 private identity boundary:** PostgreSQL integration and headed role QA passed. The visible People v2 aggregate-filter extension remains a separate platform follow-up; production migration, cutover, retention invocation, and permanent purge remain unexecuted rollout operations.
 
 ## Changelog
 
@@ -594,12 +603,14 @@ Fixture PESEL/document canaries are scanned across responses, logs, events, CLI 
 - Added the FINOO-private identity-access design from the completed `grill-me` decisions and THOM-108 scope.
 - Defined encrypted current identity, safe completeness, IOD/superadmin authorization, write-only ingestion, conflicts, dedicated audit, staged migration/rollback/purge, and Person-retention integration.
 
-### Review — 2026-08-24
+### 2026-08-25
 
-- **Reviewer:** primary agent self-review; fresh-context subagent unavailable under active runtime delegation restriction.
-- **Security:** passed.
-- **Performance:** passed with explicit 200-match bound/fail-closed behavior.
-- **Cache:** passed.
-- **Mutation side effects:** passed with the documented raw-command-surface exception.
-- **Risks:** passed.
-- **Verdict:** approved for implementation.
+- Added PostgreSQL and headed role evidence, exact IOD provisioning grants, successful rollback coverage, and bounded permanent-purge transactions with zero-residual read-back.
+
+### Review — 2026-08-25
+
+- **Primary deep review:** initial purge, recovery/provisioning-test, and evidence-documentation findings were fixed; targeted follow-up passed with no unresolved finding.
+- **Security review:** passed after the purge/provisioning hardening; no authorization, privacy, raw-data disclosure, scope, or resumability regression found.
+- **Performance:** passed with explicit 200-match identity-filter bound and bounded purge transactions.
+- **Cache and mutation side effects:** passed with the documented raw-command-surface exception.
+- **Verdict:** approved for private branch publication and later FINOO rollout planning. Production deployment, migration, cutover, retention execution, and permanent purge remain separately gated.

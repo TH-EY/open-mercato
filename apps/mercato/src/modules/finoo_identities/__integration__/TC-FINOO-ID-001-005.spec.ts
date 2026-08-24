@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { expect, test, type APIRequestContext } from '@playwright/test'
 import { getAuthToken } from '@open-mercato/core/helpers/integration/api'
 import {
@@ -15,6 +18,11 @@ import {
 } from '../../finoo_intermediaries/__integration__/helpers'
 import { FINOO_IOD_ROLE } from '../setup'
 
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..', '..')
+const appDir = join(repoRoot, 'apps', 'mercato')
+const tsxBin = join(repoRoot, 'node_modules', '.bin', 'tsx')
+const setupRunner = join(dirname(fileURLToPath(import.meta.url)), 'setup-runner.ts')
+
 const identityInput = {
   pesel: '44051401458',
   documentType: 'identity_card',
@@ -25,6 +33,21 @@ const identityInput = {
 }
 
 type Actor = Pick<Scenario, 'organizationId'> & { token: string }
+
+function provisionIodRole(scenario: Scenario): void {
+  const output = execFileSync(tsxBin, [setupRunner], {
+    cwd: appDir,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      OM_FINOO_IDENTITY_TENANT_ID: scenario.tenantId,
+      OM_FINOO_IDENTITY_ORGANIZATION_ID: scenario.organizationId,
+      FORCE_COLOR: '0',
+      NODE_NO_WARNINGS: '1',
+    },
+  })
+  expect(output).toContain('FINOO_IDENTITY_SETUP_RESULT {"ok":true}')
+}
 
 async function createActor(
   request: APIRequestContext,
@@ -71,19 +94,7 @@ test('TC-FINOO-ID-001-005 enforces status-only, IOD, and superadmin identity acc
     const personId = personBody.id ?? personBody.entityId
     expect(personId).toBeTruthy()
 
-    const iodRoleId = await createRoleFixture(request, scenario.superToken, {
-      name: FINOO_IOD_ROLE,
-      tenantId: scenario.tenantId,
-    })
-    await setRoleAclFeatures(request, scenario.superToken, {
-      roleId: iodRoleId,
-      features: [
-        'customers.people.view',
-        'finoo_identities.view',
-        'finoo_identities.manage',
-      ],
-      organizations: [scenario.organizationId],
-    })
+    provisionIodRole(scenario)
     const iodRoles = await queryDatabase<{
       id: string
       features_json: string[] | null

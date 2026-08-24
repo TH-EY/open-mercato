@@ -462,34 +462,64 @@ export async function setLegacyIdentityCutover(input: {
   })
 }
 
+async function countLegacyIdentityValues(em: EntityManager, scope: LegacyIdentityScope): Promise<number> {
+  const rows = await em.getConnection().execute<Array<{ count: string | number }>>(
+    `select count(*) as count
+     from custom_field_values
+     where tenant_id = ? and organization_id = ? and entity_id = ?
+       and field_key in (${LEGACY_IDENTITY_FIELD_KEYS.map(() => '?').join(', ')})`,
+    [scope.tenantId, scope.organizationId, PERSON_PROFILE_ENTITY_ID, ...LEGACY_IDENTITY_FIELD_KEYS],
+  )
+  return Number(rows[0]?.count ?? 0)
+}
+
+async function countLegacyIdentityDefinitions(em: EntityManager, scope: LegacyIdentityScope): Promise<number> {
+  const rows = await em.getConnection().execute<Array<{ count: string | number }>>(
+    `select count(*) as count
+     from custom_field_defs
+     where tenant_id = ? and organization_id = ? and entity_id = ?
+       and "key" in (${LEGACY_IDENTITY_FIELD_KEYS.map(() => '?').join(', ')})`,
+    [scope.tenantId, scope.organizationId, PERSON_PROFILE_ENTITY_ID, ...LEGACY_IDENTITY_FIELD_KEYS],
+  )
+  return Number(rows[0]?.count ?? 0)
+}
+
 export async function purgeLegacyIdentityFields(input: {
   em: EntityManager
   encryptionService: TenantDataEncryptionService
   scope: LegacyIdentityScope
   mode: LegacyIdentityMigrationMode
   batchSize?: number
-}): Promise<{ mode: LegacyIdentityMigrationMode; values: number; definitions: number }> {
+}): Promise<{
+  mode: LegacyIdentityMigrationMode
+  values: number
+  definitions: number
+  residualValues: number
+  residualDefinitions: number
+}> {
   const verification = await verifyLegacyIdentityMigration(input.em, input.encryptionService, input.scope)
   if (verification.activeDefinitions > 0) throw new Error('legacy_identity_cutover_required')
   if (verification.unmigrated > 0) throw new Error('legacy_identity_migration_incomplete')
   if (verification.destinationConflicts > 0) throw new Error('legacy_identity_destination_conflicts')
-  if (verification.inactiveDefinitions !== LEGACY_IDENTITY_FIELD_KEYS.length) {
+  if (![0, LEGACY_IDENTITY_FIELD_KEYS.length].includes(verification.inactiveDefinitions)) {
     throw new Error('legacy_identity_definition_missing')
   }
-  const countRows = await input.em.getConnection().execute<Array<{ count: string | number }>>(
-    `select count(*) as count
-     from custom_field_values
-     where tenant_id = ? and organization_id = ? and entity_id = ?
-       and field_key in (${LEGACY_IDENTITY_FIELD_KEYS.map(() => '?').join(', ')})`,
-    [input.scope.tenantId, input.scope.organizationId, PERSON_PROFILE_ENTITY_ID, ...LEGACY_IDENTITY_FIELD_KEYS],
-  )
-  const values = Number(countRows[0]?.count ?? 0)
+  const values = await countLegacyIdentityValues(input.em, input.scope)
   const definitions = verification.inactiveDefinitions
-  if (input.mode === 'dry-run') return { mode: input.mode, values, definitions }
+  if (definitions === 0 && values > 0) throw new Error('legacy_identity_definition_missing')
+  if (input.mode === 'dry-run') {
+    return {
+      mode: input.mode,
+      values,
+      definitions,
+      residualValues: values,
+      residualDefinitions: definitions,
+    }
+  }
   const batchSize = Math.min(Math.max(input.batchSize ?? 500, 1), 1000)
-  await input.em.transactional(async (transactionalEm) => {
-    while (true) {
-      const deleted = await transactionalEm.getConnection().execute<Array<{ id: string }>>(
+  while (true) {
+    const deleted = await input.em.transactional(async (transactionalEm) => (
+      transactionalEm.getConnection().execute<Array<{ id: string }>>(
         `delete from custom_field_values
          where id in (
            select id from custom_field_values
@@ -506,8 +536,10 @@ export async function purgeLegacyIdentityFields(input: {
           batchSize,
         ],
       )
-      if (deleted.length < batchSize) break
-    }
+    ))
+    if (deleted.length < batchSize) break
+  }
+  await input.em.transactional(async (transactionalEm) => {
     await transactionalEm.getConnection().execute(
       `delete from custom_field_defs
        where tenant_id = ? and organization_id = ? and entity_id = ?
@@ -515,5 +547,8 @@ export async function purgeLegacyIdentityFields(input: {
       [input.scope.tenantId, input.scope.organizationId, PERSON_PROFILE_ENTITY_ID, ...LEGACY_IDENTITY_FIELD_KEYS],
     )
   })
-  return { mode: input.mode, values, definitions }
+  const residualValues = await countLegacyIdentityValues(input.em, input.scope)
+  const residualDefinitions = await countLegacyIdentityDefinitions(input.em, input.scope)
+  if (residualValues > 0 || residualDefinitions > 0) throw new Error('legacy_identity_purge_incomplete')
+  return { mode: input.mode, values, definitions, residualValues, residualDefinitions }
 }
