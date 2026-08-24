@@ -115,7 +115,7 @@ async function main(): Promise<void> {
     requireStatus(conflict.status, 409, 'message ID conflict')
 
     const negativeLeadId = `thom110_${runId}_negative`
-    const missingConsentVersion = await send({ leadId: negativeLeadId, acceptTerms: true }, messageId())
+    const missingConsentVersion = await send({ leadId: negativeLeadId, completed: false, acceptTerms: true }, messageId())
     requireStatus(missingConsentVersion.status, 400, 'missing consent version')
     const invalidSignature = await send({ leadId: negativeLeadId }, messageId(), { secret: 'x'.repeat(32) })
     requireStatus(invalidSignature.status, 401, 'invalid signature')

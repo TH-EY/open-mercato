@@ -77,6 +77,7 @@ describe('FINOO intake route', () => {
     dispatch.mockResolvedValueOnce(false)
     const response = await POST(signedRequest({
       leadId: 'lead_12345678',
+      completed: false,
       kontomatikToken: 'TOKEN_CANARY',
       unknownField: 'UNKNOWN_CANARY',
     }))
@@ -98,27 +99,27 @@ describe('FINOO intake route', () => {
   })
 
   it('accepts JSON parameters and rejects media-type prefix smuggling', async () => {
-    const accepted = signedRequest({ leadId: 'lead_12345678' })
+    const accepted = signedRequest({ leadId: 'lead_12345678', completed: false })
     accepted.headers.set('content-type', 'application/json; charset=utf-8')
     expect((await POST(accepted)).status).toBe(202)
 
-    const rejected = signedRequest({ leadId: 'lead_12345678' })
+    const rejected = signedRequest({ leadId: 'lead_12345678', completed: false })
     rejected.headers.set('content-type', 'application/jsonevil')
     expect((await POST(rejected)).status).toBe(415)
   })
 
   it('honors integration revocation before receipt persistence', async () => {
     integrationEnabled.mockResolvedValueOnce(false)
-    const response = await POST(signedRequest({ leadId: 'lead_12345678' }))
+    const response = await POST(signedRequest({ leadId: 'lead_12345678', completed: false }))
     expect(response.status).toBe(503)
     expect(createdRows).toHaveLength(0)
   })
 
   it('distinguishes malformed request metadata from authentication failure', async () => {
-    const malformedMetadata = await POST(signedRequest({ leadId: 'lead_12345678' }, 'short'))
+    const malformedMetadata = await POST(signedRequest({ leadId: 'lead_12345678', completed: false }, 'short'))
     expect(malformedMetadata.status).toBe(400)
 
-    const invalidSignatureRequest = signedRequest({ leadId: 'lead_12345678' })
+    const invalidSignatureRequest = signedRequest({ leadId: 'lead_12345678', completed: false })
     invalidSignatureRequest.headers.set('finoo-signature', `v1,${Buffer.alloc(32).toString('base64')}`)
     const invalidSignature = await POST(invalidSignatureRequest)
     expect(invalidSignature.status).toBe(401)
@@ -127,13 +128,13 @@ describe('FINOO intake route', () => {
 
   it('fails closed when the rate limiter is disabled or unavailable', async () => {
     rateLimitConsume.mockResolvedValueOnce({ allowed: true, remainingPoints: 120, msBeforeNext: 0, consumedPoints: 0 })
-    const response = await POST(signedRequest({ leadId: 'lead_12345678' }))
+    const response = await POST(signedRequest({ leadId: 'lead_12345678', completed: false }))
     expect(response.status).toBe(503)
     expect(createdRows).toHaveLength(0)
   })
 
   it('fails closed before rate limiting or persistence when no trusted source IP is available', async () => {
-    const request = signedRequest({ leadId: 'lead_12345678' })
+    const request = signedRequest({ leadId: 'lead_12345678', completed: false })
     request.headers.delete('x-forwarded-for')
     const response = await POST(request)
     expect(response.status).toBe(503)
@@ -142,7 +143,7 @@ describe('FINOO intake route', () => {
   })
 
   it('fails closed when the trusted proxy value is not an IP address', async () => {
-    const request = signedRequest({ leadId: 'lead_12345678' })
+    const request = signedRequest({ leadId: 'lead_12345678', completed: false })
     request.headers.set('x-forwarded-for', 'attacker-controlled-bucket')
     const response = await POST(request)
     expect(response.status).toBe(503)
@@ -173,20 +174,20 @@ describe('FINOO intake route', () => {
 
   it('fails closed before persistence when the intake encryption map is missing', async () => {
     encryptedFields.mockResolvedValueOnce([])
-    const response = await POST(signedRequest({ leadId: 'lead_12345678' }))
+    const response = await POST(signedRequest({ leadId: 'lead_12345678', completed: false }))
     expect(response.status).toBe(503)
     expect(createdRows).toHaveLength(0)
   })
 
   it('fails closed before persistence when the tenant DEK is unavailable', async () => {
     getDek.mockResolvedValueOnce(null)
-    const response = await POST(signedRequest({ leadId: 'lead_12345678' }))
+    const response = await POST(signedRequest({ leadId: 'lead_12345678', completed: false }))
     expect(response.status).toBe(503)
     expect(createdRows).toHaveLength(0)
   })
 
   it('returns duplicate only for the same digest and repairs delivery', async () => {
-    const request = signedRequest({ leadId: 'lead_12345678' })
+    const request = signedRequest({ leadId: 'lead_12345678', completed: false })
     const body = new Uint8Array(await request.clone().arrayBuffer())
     const digest = await crypto.subtle.digest('SHA-256', body)
     findOne.mockResolvedValueOnce({

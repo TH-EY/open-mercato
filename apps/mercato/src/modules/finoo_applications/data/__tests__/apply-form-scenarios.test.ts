@@ -15,6 +15,7 @@ describe('current finoo.pl/apply server contract', () => {
     expect(scenarios.flatMap(({ steps }) => steps)).toHaveLength(27)
     for (const scenario of scenarios) {
       expect(scenario.steps.map(({ step }) => step)).toEqual([1, 2, 3])
+      expect(scenario.steps.map(({ payload }) => payload.completed)).toEqual([false, false, true])
       for (const formStep of scenario.steps) {
         expect(() => parseAndSanitizeFinooApplicationPayload(formStep.payload, metadata)).not.toThrow()
       }

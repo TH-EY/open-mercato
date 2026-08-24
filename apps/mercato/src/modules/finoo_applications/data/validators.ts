@@ -43,8 +43,7 @@ const representativesInputSchema = z.union([
 const rawApplicationObjectSchema = z.object({
   leadId: z.string().trim().regex(LEAD_ID_PATTERN),
   consentVersion: z.literal(FINOO_CONSENT_REGISTRY_VERSION).optional(),
-  przeszedl_caly_wniosek: z.enum(['Tak', 'Nie']).optional(),
-  completed: formBooleanSchema.optional(),
+  completed: z.boolean(),
   leadType: z.literal('business').optional(),
   name: optionalText(100),
   surname: optionalText(100),
@@ -130,7 +129,7 @@ function validateFinalSubmission(
   value: z.infer<typeof rawApplicationObjectSchema>,
   context: z.RefinementCtx,
 ): void {
-  const completed = value.completed ?? value.przeszedl_caly_wniosek === 'Tak'
+  const completed = value.completed === true
   const hasConsentDecision = [
     value.emailConsent,
     value.smsConsent,
@@ -149,6 +148,9 @@ function validateFinalSubmission(
   ].some((decision) => decision !== undefined)
   if ((completed || hasConsentDecision) && value.consentVersion !== FINOO_CONSENT_REGISTRY_VERSION) {
     context.addIssue({ code: 'custom', path: ['consentVersion'], message: 'Current consent version is required when consent is present' })
+  }
+  if (value.disqualified && !completed) {
+    context.addIssue({ code: 'custom', path: ['completed'], message: 'Completed must be true for a disqualified submission' })
   }
   if (!completed) return
   const required: Array<keyof typeof value> = ['companyName', 'name', 'surname']

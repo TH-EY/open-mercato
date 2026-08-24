@@ -41,7 +41,7 @@ describe('FINOO application ingress contract', () => {
   it('strips token, unknown values, and unsafe unknown key names', () => {
     const tokenCanary = 'KONTOMATIK_SECRET_CANARY_123'
     const sanitized = parseAndSanitizeFinooApplicationPayload({
-      leadId: 'lead_12345678', kontomatikCompleted: '1', kontomatikToken: tokenCanary,
+      leadId: 'lead_12345678', completed: false, kontomatikCompleted: '1', kontomatikToken: tokenCanary,
       unexpectedField: 'must-not-survive', 'SECRET_VALUE_AS_A_KEY!': 'must-not-survive-either',
     }, { messageId, sourceTimestamp: nowSeconds })
     expect(sanitized).not.toHaveProperty('kontomatikToken')
@@ -52,7 +52,7 @@ describe('FINOO application ingress contract', () => {
   })
 
   it('rejects numeric lead IDs and incomplete finals', () => {
-    expect(() => parseAndSanitizeFinooApplicationPayload({ leadId: 9007199254740992 }, { messageId, sourceTimestamp: nowSeconds })).toThrow()
+    expect(() => parseAndSanitizeFinooApplicationPayload({ leadId: 9007199254740992, completed: false }, { messageId, sourceTimestamp: nowSeconds })).toThrow()
     expect(() => parseAndSanitizeFinooApplicationPayload({ leadId: 'lead_12345678', completed: true }, { messageId, sourceTimestamp: nowSeconds })).toThrow()
   })
 })

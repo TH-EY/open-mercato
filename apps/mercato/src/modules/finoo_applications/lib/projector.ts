@@ -44,7 +44,7 @@ function projectionSource(projectionId: string): string {
 }
 
 function deriveState(payload: SanitizedFinooApplicationPayload): FinooApplicationProjectionState {
-  const completed = payload.completed ?? payload.przeszedl_caly_wniosek === 'Tak'
+  const completed = payload.completed === true
   if (completed && payload.disqualified) return 'disqualified'
   return completed ? 'completed' : 'draft'
 }

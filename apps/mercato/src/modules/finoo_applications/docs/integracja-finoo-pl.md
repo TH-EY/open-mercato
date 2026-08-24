@@ -24,14 +24,14 @@ Sekret HMAC zostanie przekazany osobnym, bezpiecznym kanałem. Nie wolno umieszc
 
 ## 2. Kiedy wysyłać dane
 
-Dla jednego wniosku backend finoo.pl generuje jeden stabilny `leadId`. Ten sam `leadId` jest używany w każdej kolejnej wysyłce, natomiast każda próba dostarczenia nowej wersji danych otrzymuje nowy `Finoo-Message-Id`.
+Dla jednego wniosku backend finoo.pl generuje jeden stabilny `leadId`. Ten sam `leadId` jest używany w każdej kolejnej wysyłce, natomiast każda próba dostarczenia nowej wersji danych otrzymuje nowy `Finoo-Message-Id`. Każdy payload musi zawierać `completed` jako JSON boolean; brak pola albo wartość tekstowa powoduje `400`.
 
-| Zdarzenie formularza | Wartość `przeszedl_caly_wniosek` | Oczekiwany etap CRM |
+| Zdarzenie formularza | Wartość `completed` | Oczekiwany etap CRM |
 |---|---:|---|
-| Przejście z kroku 1 „Firma i kontakt” do kroku 2 | `Nie` | Brak Deala, dopóki brakuje danych wnioskodawcy; intake zostaje zapisany |
-| Przejście z kroku 2 „Wnioskodawca” do kroku 3 | `Nie` | `Created` |
-| Wysłanie kroku 3 „Zgody” | `Tak` | `Submitted` |
-| Automatyczna dyskwalifikacja | `Tak` + `disqualified: true` | `Closed` |
+| Przejście z kroku 1 „Firma i kontakt” do kroku 2 | `false` | Brak Deala, dopóki brakuje danych wnioskodawcy; intake zostaje zapisany |
+| Przejście z kroku 2 „Wnioskodawca” do kroku 3 | `false` | `Created` |
+| Wysłanie kroku 3 „Zgody” | `true` | `Submitted` |
+| Automatyczna dyskwalifikacja | `true` + `disqualified: true` | `Closed` |
 
 Wnioski zdyskwalifikowane zapisujemy. Aktualnie osiągalne w UI przyczyny automatyczne to zaległości ZUS/US, działalność krótsza niż sześć miesięcy oraz połączenie obu warunków. Wariant „obrót poniżej 5 000 zł” istnieje w logice strony, ale przy obecnych opcjach formularza nie jest osiągalny.
 
@@ -186,7 +186,7 @@ Nie wysyłamy tekstów zgód, czasu z przeglądarki ani nazwy użytkownika. Open
 |---|---|---|
 | ukończenie połączenia | `kontomatikCompleted` | Boolean |
 | token Kontomatik | nie wysyłać | Token nie może trafić do CRM, logów ani durable outboxa integratora |
-| ukończenie formularza | `przeszedl_caly_wniosek` | `Tak` albo `Nie` |
+| ukończenie formularza | `completed` | Boolean; `true` dla ukończonego formularza, `false` dla draftu |
 | automatyczna dyskwalifikacja | `disqualified` | Boolean; dla dyskwalifikacji `true` |
 | powód dyskwalifikacji | `disqualification_message` | Tekst przeznaczony do pola statusu Deala |
 | kod afiliacyjny | `affiliate_code` | Opcjonalny |
@@ -198,7 +198,7 @@ Nie wysyłamy tekstów zgód, czasu z przeglądarki ani nazwy użytkownika. Open
 {
   "leadId": "finoo_01j6example01",
   "consentVersion": "finoo-apply-2026-08-19-7e72cbeb",
-  "przeszedl_caly_wniosek": "Tak",
+  "completed": true,
   "leadType": "business",
   "companyName": "Przykładowa Firma",
   "nip": "1234567890",
@@ -268,7 +268,7 @@ Nie logować: body, podpisu, sekretu, NIP, PESEL, numeru dokumentu, telefonu, e-
 
 - Backend generuje stabilny string `leadId` i przechowuje podpisane żądania w outboxie.
 - Draft po kroku 1 i draft po kroku 2 używają tego samego `leadId`, ale różnych `Finoo-Message-Id`.
-- Final albo automatyczne odrzucenie ma `przeszedl_caly_wniosek: "Tak"`.
+- Final albo automatyczne odrzucenie ma `completed: true`.
 - Każda decyzja dotycząca zgody ma aktualny `consentVersion`.
 - Zgody kontaktowe, marketingowe FINOO.PL i partnerskie pozostają rozdzielone.
 - Stare klucze zgód NovaLend są przemapowane na układ kanoniczny.
