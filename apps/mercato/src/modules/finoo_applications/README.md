@@ -2,6 +2,8 @@
 
 The caller is the FINOO website backend. Browser-direct calls are prohibited.
 
+Polish implementation handoff for the finoo.pl developers: [docs/integracja-finoo-pl.md](docs/integracja-finoo-pl.md).
+
 ## Request
 
 `POST https://finoo.om.they.dev/api/finoo_applications/intake`

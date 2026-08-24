@@ -308,7 +308,10 @@ function dealCustomFields(
   return {
     external_id: payload.leadId,
     form_complete: state !== 'draft',
-    ...(payload.earnings ? { earnings: Number(payload.earnings.replace(/\D/g, '')) } : {}),
+    ...(payload.earnings ? {
+      earnings: Number(payload.earnings.replace(/\D/g, '')),
+      turnover: Number(payload.earnings.replace(/\D/g, '')),
+    } : {}),
     ...(payload.arrearsUsZus !== undefined ? { arrears: payload.arrearsUsZus } : {}),
     ...(payload.amount ? { amount: Number(payload.amount.replace(/\D/g, '')) } : {}),
     ...(payload.months ? { months: Number(payload.months.replace(/\D/g, '')) } : {}),
