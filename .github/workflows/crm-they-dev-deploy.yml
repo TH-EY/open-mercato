@@ -234,10 +234,8 @@ jobs:
           DATA_SYNC_QUEUE_CONCURRENCY=1
           OPENROUTER_API_KEY=${openrouter_api_key}
           MCP_SERVER_API_KEY=${mcp_server_api_key}
-          OM_AI_CUSTOMERS_PROVIDER=openrouter
-          OM_AI_CUSTOMERS_MODEL=meta-llama/llama-3.3-70b-instruct
-          OM_AI_CATALOG_PROVIDER=openrouter
-          OM_AI_CATALOG_MODEL=meta-llama/llama-3.3-70b-instruct
+          OM_AI_PROVIDER=openrouter
+          OM_AI_MODEL=meta-llama/llama-3.3-70b-instruct
           OM_GMAIL_PUBSUB_TOPIC=projects/crm-they-dev/topics/gmail
           OM_GMAIL_PUBSUB_AUDIENCE=https://crm.they.dev/api/communication_channels/webhooks/gmail
           OM_GMAIL_PUBSUB_SERVICE_ACCOUNT_EMAIL=gmail-api-push@system.gserviceaccount.com

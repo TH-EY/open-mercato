@@ -11,6 +11,7 @@ const TERRAFORM_PATH = path.resolve(
   'infra/terraform/modules/single_ec2_rds_crm/main.tf',
 )
 const DEPLOY_SCRIPT_PATH = path.resolve(ROOT, 'scripts/crm/deploy-crm-they-dev.sh')
+const DEPLOY_WORKFLOW_PATH = path.resolve(ROOT, '.github/workflows/crm-they-dev-deploy.yml')
 const INFRA_WORKFLOW_PATH = path.resolve(ROOT, '.github/workflows/crm-they-dev-infra.yml')
 
 const SERVICE_LOG_GROUPS = {
@@ -126,6 +127,35 @@ test('standalone CRM deployments publish SSM output to the managed group', () =>
     /up -d --no-build --remove-orphans "\$\{active_services\[@\]\}"/,
   )
   assert.doesNotMatch(script, /active_services=\([^)]*opencode/)
+})
+
+test('CRM deployments use the canonical global OpenRouter configuration', () => {
+  for (const filePath of [DEPLOY_SCRIPT_PATH, DEPLOY_WORKFLOW_PATH]) {
+    const source = fs.readFileSync(filePath, 'utf8')
+
+    assert.match(source, /^\s*OM_AI_PROVIDER=openrouter$/m)
+    assert.match(
+      source,
+      /^\s*OM_AI_MODEL=meta-llama\/llama-3\.3-70b-instruct$/m,
+    )
+    assert.doesNotMatch(
+      source,
+      /^\s*OM_AI_(?:CATALOG|CUSTOMERS)_(?:PROVIDER|MODEL)=/m,
+    )
+  }
+
+  const compose = fs.readFileSync(COMPOSE_PATH, 'utf8')
+  for (const serviceName of ['app', 'worker']) {
+    const service = readService(compose, serviceName)
+
+    assert.match(service, /^      OPENROUTER_API_KEY: \$\{OPENROUTER_API_KEY:-\}$/m)
+    assert.match(service, /^      OM_AI_PROVIDER: \$\{OM_AI_PROVIDER:-\}$/m)
+    assert.match(service, /^      OM_AI_MODEL: \$\{OM_AI_MODEL:-\}$/m)
+    assert.doesNotMatch(
+      service,
+      /^      OM_AI_(?:CATALOG|CUSTOMERS)_(?:PROVIDER|MODEL):/m,
+    )
+  }
 })
 
 test('CRM infrastructure workflow cannot execute an unrestricted apply', () => {
