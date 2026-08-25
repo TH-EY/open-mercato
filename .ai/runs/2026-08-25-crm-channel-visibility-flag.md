@@ -58,31 +58,31 @@ Verified: `message_channel_links` has **no** `channel_id`, so there is no shorte
 
 ### Phase 1: Interaction → channel resolution
 
-- [ ] 1.1 Add `customer_interactions.channel_id` to the entity and extend the email-visibility partial index to cover it
-- [x] 1.2 Write channel_id at ingestion — 5478094ea in link-channel-message-handler (all three persist sites)
-- [ ] 1.3 Migration: add column, extend index, backfill via the verified chain; update the customers snapshot
+- 1.1 Add `customer_interactions.channel_id` to the entity and extend the email-visibility partial index to cover it
+- 1.2 Write channel_id at ingestion
+- 1.3 Migration: add column, extend index, backfill via the verified chain; update the customers snapshot
 
 ### Phase 2: Channel visibility flag
 
-- [ ] 2.1 Add CommunicationChannel.visibility with the same-migration UPDATE for tenant-wide rows; update the channels snapshot
-- [ ] 2.2 Declare the ACL feature, setup grant, and the channel visibility_changed event
-- [ ] 2.3 Add the command and the owner-only PATCH route with optimistic locking
+- 2.1 Add CommunicationChannel.visibility with the same-migration UPDATE for tenant-wide rows; update the channels snapshot
+- 2.2 Declare the ACL feature, setup grant, and the channel visibility_changed event
+- 2.3 Add the command and the owner-only PATCH route with optimistic locking
 
 ### Phase 3: Read widening
 
-- [ ] 3.1 Add a fail-closed sharedChannelIds arm to both predicates and the hidden-email complement
-- [ ] 3.2 Add the shared-channel lookup service and wire it into every email read path
+- 3.1 Add a fail-closed sharedChannelIds arm to both predicates and the hidden-email complement
+- 3.2 Add the shared-channel lookup service and wire it into every email read path
 
 ### Phase 4: UI and i18n
 
-- [ ] 4.1 Add the channel shared/private toggle with confirm dialog to the profile channels page
-- [ ] 4.2 Add i18n keys to all five locale files
+- 4.1 Add the channel shared/private toggle with confirm dialog to the profile channels page
+- 4.2 Add i18n keys to all five locale files
 
 ### Phase 5: Tests and gate
 
-- [ ] 5.1 Unit tests for the channel arm, the fail-closed default, and the migration default rule
-- [ ] 5.2 Integration test TC-CRM-EMAIL-VISIBILITY-004
-- [ ] 5.3 Run the full validation gate and fix fallout
+- 5.1 Unit tests for the channel arm, the fail-closed default, and the migration default rule
+- 5.2 Integration test TC-CRM-EMAIL-VISIBILITY-004
+- 5.3 Run the full validation gate and fix fallout
 
 ## Progress
 
@@ -91,14 +91,14 @@ Verified: `message_channel_links` has **no** `channel_id`, so there is no shorte
 ### Phase 1: Interaction → channel resolution
 
 - [x] 1.1 Add customer_interactions.channel_id and extend the partial index — 5478094ea
-- [ ] 1.2 Write channel_id at ingestion
+- [x] 1.2 Write channel_id at ingestion — 5478094ea
 - [x] 1.3 Migration with backfill and snapshot — 5478094ea
 
 ### Phase 2: Channel visibility flag
 
-- [ ] 2.1 Add CommunicationChannel.visibility with the tenant-wide UPDATE
-- [ ] 2.2 ACL feature, setup grant, event
-- [ ] 2.3 Command and owner-only PATCH route
+- [x] 2.1 Add CommunicationChannel.visibility with the tenant-wide UPDATE — 65d36b0dd
+- [x] 2.2 ACL feature, setup grant, event — 65d36b0dd
+- [x] 2.3 Command and owner-only PATCH route — 65d36b0dd
 
 ### Phase 3: Read widening
 
