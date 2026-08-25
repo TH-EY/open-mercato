@@ -313,6 +313,8 @@ Register one stable organization-scoped interval schedule with a one-hour cadenc
 
 Module setup and the organization-created lifecycle subscriber register the same deterministic schedule for newly initialized organizations. Existing deployments do not rerun `setup.seedDefaults` automatically. The Finoo upgrade therefore runs the private, idempotent, exact-scope command `mercato finoo_customer_retention ensure-organization-setup --tenant <uuid> --organization <uuid> --apply`; the command first verifies that the non-deleted organization belongs to the requested tenant, then ensures the disabled settings row and repairs the schedule. Global `seed:defaults` is rejected because it invokes unrelated, non-convergent module seeds; raw SQL is rejected because it would bypass the durable scheduler registration path. Schedule registration, repair, and invalid-scope rejection are covered by scoped tests.
 
+The upgrade also provisions a dedicated credential for the pre-existing Finoo administrator because the same email exists in multiple tenants and an unscoped login can select the wrong tenant. A new Finoo-only Secrets Manager value is piped over stdin to `ensure-admin-credential`, which requires the exact Finoo tenant, organization, user ID, expected email, `--password-stdin`, and `--apply`. Its private command locks and revalidates that exact row inside the same transaction that hashes the password and revokes sessions; it no-ops when the value already matches, invalidates user access caches after a change, and uses `skipLog` so plaintext never enters command redo/audit storage. The smoke login includes the exact tenant ID in both the login URL and form body and verifies the `Finoo Superadmin` role. Existing bootstrap and smoke-role secrets are neither rotated nor modified by this delivery.
+
 Flat payload:
 
 ```ts
@@ -399,8 +401,9 @@ Migration sequence:
 2. Deploy code with settings disabled by default.
 3. Seed/ensure the two read-only custom-field definitions idempotently.
 4. For Finoo's existing organization, run the exact-scope `ensure-organization-setup` command from the immutable upgrade script to create the disabled settings row and register the hourly schedule idempotently. New organizations use module lifecycle setup.
-5. Verify the live Finoo customer-status dictionary. Core setup normally idempotently ensures `active`, `inactive`, `pending`, and `archived`; deployment evidence must read back the live instance rather than infer it. Do not seed a CRM `expired` value.
-6. An administrator runs the mandatory preview before first enablement.
+5. After all non-mutating candidate gates pass, create/use the dedicated Finoo-only administrator secret and apply it through the private exact-scope transactional command. Verify tenant-bound login and the `Finoo Superadmin` role; do not read, rotate, or modify any existing secret.
+6. Verify the live Finoo customer-status dictionary. Core setup normally idempotently ensures `active`, `inactive`, `pending`, and `archived`; deployment evidence must read back the live instance rather than infer it. Do not seed a CRM `expired` value.
+7. An administrator runs the mandatory preview before first enablement.
 
 Rollback:
 
@@ -408,7 +411,8 @@ Rollback:
 - while the module remains active, leave the stable hourly schedule registered; disabled-policy jobs read the current generation/policy and perform no expiry transition;
 - leave private tables/mirrors intact for recoverability;
 - before module deactivation, unregister its deterministic schedules, then confirm no jobs are running or pending before removing the private UI/module activation;
-- do not automatically reactivate sticky expired subjects during rollback.
+- do not automatically reactivate sticky expired subjects during rollback;
+- the new dedicated Finoo administrator credential and its session revocation intentionally persist if the application image is rolled back, because no prior Finoo-specific secret exists to restore. Both in-stage failure cleanup and the later rollback decision path must re-run tenant-scoped login against the restored/retained container before removing pending state and fail if that credential is not proven.
 
 Rollback acceptance includes an old-generation continuation arriving after disablement: it must no-op without touching projections or mirrors. The private schema remains recoverable and can be re-enabled with a new preview/reconciliation generation. Implementation still follows `BACKWARD_COMPATIBILITY.md` for the module's additive auto-discovery and database surfaces.
 
@@ -478,6 +482,7 @@ Unit/component tests cover:
 - active/expired/excluded transitions and sticky policy semantics;
 - preview hashing, TTL, invalidation, lock/version mismatch, and recomputed-count mismatch;
 - tenant/organization isolation and fail-closed optional-provider behavior;
+- exact-scope Finoo admin credential parsing, account/email guard, stdin handling, idempotent command path, and tenant-bound authenticated smoke;
 - projection serialization plus eventual repair when a customer source commit overlaps an evaluation;
 - idempotent schedule registration, generation invalidation, keyset continuation, retries, and mirror repair;
 - standard custom-field column rendering and unchanged DataTable behavior.
@@ -508,6 +513,7 @@ Fixtures are created through API/setup helpers and removed in `finally`; tests c
 | Optional partner provider unavailable | High | Distinguish absent peer from provider failure; fail closed on enabled-peer failure. |
 | CRM status/process regression | High | Never write `CustomerEntity.status`/`isActive`; integration assertions. |
 | Migration or release drift | High | Generated SQL/snapshot review, immutable candidate verification, staged deploy and rollback evidence. |
+| Administrator credential leaks or crosses scope | High | Stdin-only secret transport, no command log/redo payload, exact row lock and transactional scope revalidation, session revocation, tenant-bound smoke, and rollback re-verification. |
 | Large organization creates long jobs | Medium | 200-row keyset pages, continuation jobs, progress, constant query budget. |
 | Scheduler unavailable or delayed | Medium | Queue health/read-back, structured failure evidence, alert on overdue successful schedule run, and idempotent recovery on the next run. |
 
@@ -593,6 +599,7 @@ None.
 - Replaced cross-bundle `instanceof` error matching with a constrained structural guard for the three allowed retention settings errors; the stale preview count race now returns exact `409 preview_stale` end to end.
 - Replaced the contradictory eight-read-per-page budget with bounded post-lock per-subject reads. The original budget required batching facts before acquiring each subject lock, while the accepted concurrency invariant requires reloading those facts after the lock and holding only one subject lock at a time. Correct retention status wins over the lower query count; page size remains capped at 200 and no queue job performs an unbounded scan.
 - Replaced the planned custom-route API interceptor seam with command interceptors. The relevant customer routes all converge on commands, while custom-route after-interception is opt-in and failures can turn an already-committed CRM write into an HTTP 500. Command after-hooks are swallowed/logged on failure and the hourly worker repairs missed refreshes, preserving the original CRM response.
+- Corrected the deployment authentication gate after headed QA proved that the unscoped shared email selected the Acme tenant. The upgrade now creates/uses only a new dedicated Finoo administrator secret, applies it to the exact Finoo tenant/organization/user through the standard auth command, and requires tenant-scoped smoke for the `Finoo Superadmin` role. Per maintainer direction, no existing secret is rotated or modified.
 
 - 2026-08-24: Initial THOM-109 specification from the accepted Finoo retention requirements and repository analysis.
 - 2026-08-24: Fresh-context review returned `SPLIT`; removed public customer-event and DataTable changes after maintainer approval and replaced them with private subscribers/interceptors plus standard custom fields.
