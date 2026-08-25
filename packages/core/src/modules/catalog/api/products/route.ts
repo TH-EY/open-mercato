@@ -186,6 +186,14 @@ export async function buildProductFilters(
     organizationId: ctx.selectedOrganizationId ?? ctx.auth?.orgId ?? null,
     tenantId: ctx.auth?.tenantId ?? null,
   };
+  const filterScope = {
+    ...(scope.organizationId
+      ? { organizationId: scope.organizationId }
+      : Array.isArray(ctx.organizationIds)
+        ? { organizationIds: ctx.organizationIds }
+        : {}),
+    tenantId: scope.tenantId,
+  };
   const term = sanitizeSearchTerm(query.search);
   const channelFilterIds = parseIdList(query.channelIds);
   const categoryFilterIds = parseIdList(query.categoryIds);
@@ -209,9 +217,7 @@ export async function buildProductFilters(
     const searchMatches = await findWithDecryption(
       em,
       CatalogProduct,
-      {
-        ...scope,
-        ...(query.withDeleted ? {} : { deletedAt: null }),
+      buildScopedWhere({
         $or: [
           { title: { $ilike: like } },
           { subtitle: { $ilike: like } },
@@ -219,7 +225,10 @@ export async function buildProductFilters(
           { sku: { $ilike: like } },
           { handle: { $ilike: like } },
         ],
-      },
+      }, {
+        ...filterScope,
+        softDeleteField: query.withDeleted ? null : undefined,
+      }),
       { fields: ["id"] },
       scope,
     );
@@ -233,11 +242,10 @@ export async function buildProductFilters(
     const offerRows = await findWithDecryption(
       em,
       CatalogOffer,
-      {
+      buildScopedWhere({
         channelId: { $in: channelFilterIds },
         deletedAt: null,
-        ...scope,
-      },
+      }, { ...filterScope, softDeleteField: null }),
       { fields: ["id", "product"] },
       scope,
     );
@@ -255,7 +263,10 @@ export async function buildProductFilters(
     const assignments = await findWithDecryption(
       em,
       CatalogProductCategoryAssignment,
-      { category: { $in: categoryFilterIds }, ...scope },
+      buildScopedWhere(
+        { category: { $in: categoryFilterIds } },
+        { ...filterScope, softDeleteField: null },
+      ),
       { fields: ["id", "product"] },
       scope,
     );
@@ -273,7 +284,10 @@ export async function buildProductFilters(
     const assignments = await findWithDecryption(
       em,
       CatalogProductTagAssignment,
-      { tag: { $in: tagFilterIds }, ...scope },
+      buildScopedWhere(
+        { tag: { $in: tagFilterIds } },
+        { ...filterScope, softDeleteField: null },
+      ),
       { fields: ["id", "product"] },
       scope,
     );
