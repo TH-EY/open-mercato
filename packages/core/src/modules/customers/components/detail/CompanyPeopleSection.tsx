@@ -6,6 +6,7 @@ import { apiCallOrThrow, readApiResultOrThrow } from '@open-mercato/ui/backend/u
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { createTranslatorWithFallback } from '@open-mercato/shared/lib/i18n/translate'
 import { useAppEvent } from '@open-mercato/ui/backend/injection/useAppEvent'
+import type { AppEventPayload } from '@open-mercato/shared/modules/widgets/injection'
 import type { SectionAction, TabEmptyStateConfig, Translator } from './types'
 import { CreatePersonDialog } from './CreatePersonDialog'
 import { coerceDisplayName } from '../../lib/displayName'
@@ -254,12 +255,18 @@ export function CompanyPeopleSection({
     [companyId, translate],
   )
 
-  useAppEvent('customers.person_company_link.deleted', (event) => {
+  const reloadOnCompanyDetach = React.useCallback((event: AppEventPayload) => {
     const payload = event.payload as { companyEntityId?: string | null } | null | undefined
     if (payload && payload.companyEntityId === companyId) {
       requestRefresh()
     }
   }, [companyId, requestRefresh])
+
+  useAppEvent('customers.person_company_link.deleted', reloadOnCompanyDetach, [reloadOnCompanyDetach])
+  // Legacy profile-only assignments have no link row, so their detach broadcasts this sibling
+  // event instead of `customers.person_company_link.deleted` (#5114). Without it, other viewers
+  // of the same company keep listing a person who is already gone.
+  useAppEvent('customers.person.company_assignment.detached', reloadOnCompanyDetach, [reloadOnCompanyDetach])
 
   const applyPeopleChange = React.useCallback(
     (updater: (current: CompanyPersonSummary[]) => CompanyPersonSummary[]) => {

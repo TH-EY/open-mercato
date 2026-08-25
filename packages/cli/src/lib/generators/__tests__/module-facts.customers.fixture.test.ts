@@ -18,9 +18,12 @@ describe('module-facts customers fixture (T1 anti-drift guard)', () => {
 
   it('locks the source-derived customers entity surface in colon-form ids', () => {
     expect(facts.module).toBe('customers')
-    expect(facts.entities).toHaveLength(25)
+    expect(facts.entities).toHaveLength(26)
     expect(facts.entities.every((entity) => entity.id.startsWith('customers:'))).toBe(true)
     expect(facts.entities[0]).toMatchObject({ id: 'customers:customer_entity' })
+    expect(facts.entities).toContainEqual(
+      expect.objectContaining({ id: 'customers:customer_email_conversation_share' }),
+    )
     for (const entity of facts.entities) {
       expect(entity.class.length).toBeGreaterThan(0)
       expect(entity.table.length).toBeGreaterThan(0)
@@ -28,8 +31,15 @@ describe('module-facts customers fixture (T1 anti-drift guard)', () => {
   })
 
   it('locks customers events, acl, search, and notification surfaces', () => {
-    expect(facts.events).toHaveLength(49)
-    expect(facts.aclFeatures).toHaveLength(21)
+    // 51 since the private CRM fork also declares the conversation visibility event alongside
+    // upstream's profile-only company assignment detach event. Bump deliberately: this guard
+    // exists to make an event-surface change visible, not to be silenced.
+    expect(facts.events).toHaveLength(51)
+    expect(facts.events).toContainEqual(
+      expect.objectContaining({ id: 'customers.email.conversation_visibility_changed' }),
+    )
+    expect(facts.aclFeatures).toHaveLength(22)
+    expect(facts.aclFeatures).toContain('customers.email.share_conversation')
     expect(facts.searchEntities).toEqual([
       'customers:customer_person_profile',
       'customers:customer_company_profile',
