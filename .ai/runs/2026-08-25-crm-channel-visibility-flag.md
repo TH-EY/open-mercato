@@ -3,7 +3,7 @@
 **Engine:** om-auto-create-pr (steps: 14, --loop: no)
 **Branch:** `feat/crm-channel-visibility-flag`
 **Base:** `feat/crm-channel-shared-visibility` (stacked on PR #23; retargets to `fork/crm-they-dev` when #23 merges)
-**Status:** in-progress
+**Status:** complete
 
 ## Goal
 
@@ -86,6 +86,8 @@ Verified: `message_channel_links` has **no** `channel_id`, so there is no shorte
 
 ## Progress
 
+PR: #25
+
 > Convention: `- [ ]` pending, `- [x]` done. Append ` — <commit sha>` when a step lands. Do not rename step titles.
 
 ### Phase 1: Interaction → channel resolution
@@ -113,6 +115,6 @@ Verified: `message_channel_links` has **no** `channel_id`, so there is no shorte
 ### Phase 5: Tests and gate
 
 - [x] 5.1 Unit tests — c1fd6af98
-- [ ] 5.2 Integration test TC-CRM-EMAIL-VISIBILITY-004
-- [ ] 5.3 Full validation gate
+- [x] 5.2 Integration test TC-CRM-EMAIL-VISIBILITY-004 — 2e33cdc57
+- [x] 5.3 Full validation gate — 2e33cdc57
 </content>
