@@ -46,6 +46,9 @@ type FinooIdentityServiceDependencies = {
       bindingsDeleted: number
     }>
   } | undefined
+  invalidateIdentityErasureCompletion: (
+    input: FinooIdentitySubjectScope & { em: EntityManager },
+  ) => Promise<void>
   afterMutation?: (event: FinooIdentityMutationEvent) => Promise<void>
 }
 
@@ -401,6 +404,12 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
       await requireRawDataEncryption(request.scope)
       const input = finooIdentityInputSchema.parse(request.input)
       const mutation = await dependencies.em.transactional(async (transactionalEm) => {
+        await dependencies.invalidateIdentityErasureCompletion({
+          tenantId: request.scope.tenantId,
+          organizationId: request.scope.organizationId,
+          personId: request.scope.personId,
+          em: transactionalEm,
+        })
         await lockScopedPerson(transactionalEm, request.scope)
         await requireScopedPerson(transactionalEm, request.scope)
         const scope = {
@@ -486,6 +495,12 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
       await requireRawDataEncryption(request)
       const input = finooIdentityInputSchema.parse(request.input)
       const mutation = await dependencies.em.transactional(async (transactionalEm) => {
+        await dependencies.invalidateIdentityErasureCompletion({
+          tenantId: request.tenantId,
+          organizationId: request.organizationId,
+          personId: request.personId,
+          em: transactionalEm,
+        })
         await lockScopedPerson(transactionalEm, request)
         await requireScopedPerson(transactionalEm, request)
         const scope = { tenantId: request.tenantId, organizationId: request.organizationId }
@@ -761,7 +776,7 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
           tenantId: request.scope.tenantId,
           organizationId: request.scope.organizationId,
         }
-        const conflict = await findOneWithDecryption(
+        const conflictScope = await findOneWithDecryption(
           transactionalEm,
           FinooIdentityImportConflict,
           {
@@ -769,14 +784,33 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
             ...scope,
             state: 'open',
           },
+          { fields: ['personId'] },
+          scope,
+        )
+        if (!conflictScope) throw new CrudHttpError(404, { error: 'identity_conflict_not_found' })
+        const actorScope: FinooIdentityActorScope = {
+          ...request.scope,
+          personId: conflictScope.personId,
+        }
+        await dependencies.invalidateIdentityErasureCompletion({
+          tenantId: actorScope.tenantId,
+          organizationId: actorScope.organizationId,
+          personId: actorScope.personId,
+          em: transactionalEm,
+        })
+        const conflict = await findOneWithDecryption(
+          transactionalEm,
+          FinooIdentityImportConflict,
+          {
+            id: request.conflictId,
+            ...scope,
+            personId: actorScope.personId,
+            state: 'open',
+          },
           { lockMode: LockMode.PESSIMISTIC_WRITE },
           scope,
         )
         if (!conflict) throw new CrudHttpError(404, { error: 'identity_conflict_not_found' })
-        const actorScope: FinooIdentityActorScope = {
-          ...request.scope,
-          personId: conflict.personId,
-        }
         await lockScopedPerson(transactionalEm, actorScope)
         const identity = await findOneWithDecryption(
           transactionalEm,

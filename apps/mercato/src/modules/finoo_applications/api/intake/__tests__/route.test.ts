@@ -6,6 +6,7 @@ const encryptedFields = jest.fn(async () => ['payload_json'])
 const encryptionEnabled = jest.fn(() => true)
 const getDek = jest.fn(async () => ({ key: 'dek' }))
 const rateLimitConsume = jest.fn(async () => ({ allowed: true, remainingPoints: 119, msBeforeNext: 60_000, consumedPoints: 1 }))
+const invalidateForRawWrite = jest.fn(async () => undefined)
 const secret = 's'.repeat(48)
 
 const em = {
@@ -16,10 +17,12 @@ const em = {
     return row
   },
   persist: () => ({ flush: async () => undefined }),
+  transactional: async (callback: (transactionalEm: unknown) => Promise<unknown>) => callback(em),
 }
 
 jest.mock('@open-mercato/shared/lib/di/container', () => ({
   createRequestContainer: async () => ({
+    hasRegistration: (name: string) => name === 'finooIdentityErasureCompletionGuard',
     resolve: (name: string) => {
       if (name === 'rateLimiterService') return { trustProxyDepth: 1, consume: rateLimitConsume }
       if (name === 'integrationStateService') return { isEnabled: integrationEnabled }
@@ -30,6 +33,7 @@ jest.mock('@open-mercato/shared/lib/di/container', () => ({
         getEncryptedFieldNames: encryptedFields,
       }
       if (name === 'em') return em
+      if (name === 'finooIdentityErasureCompletionGuard') return { invalidateForRawWrite }
       throw new Error(`unexpected ${name}`)
     },
   }),
@@ -71,6 +75,7 @@ describe('FINOO intake route', () => {
     encryptionEnabled.mockReset().mockReturnValue(true)
     getDek.mockReset().mockResolvedValue({ key: 'dek' })
     rateLimitConsume.mockReset().mockResolvedValue({ allowed: true, remainingPoints: 119, msBeforeNext: 60_000, consumedPoints: 1 })
+    invalidateForRawWrite.mockReset().mockResolvedValue(undefined)
   })
 
   it('durably accepts a sanitized row even when enqueue is unavailable', async () => {
@@ -87,6 +92,22 @@ describe('FINOO intake route', () => {
     expect(persisted).not.toContain('TOKEN_CANARY')
     expect(persisted).not.toContain('UNKNOWN_CANARY')
     expect(persisted).toContain('unknownField')
+  })
+
+  it('invalidates erasure completion in the intake transaction for an existing applicant', async () => {
+    findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ applicantEntityId: '33333333-3333-4333-8333-333333333333' })
+
+    const response = await POST(signedRequest({ leadId: 'lead_12345678', completed: false }))
+
+    expect(response.status).toBe(202)
+    expect(invalidateForRawWrite).toHaveBeenCalledWith({
+      tenantId,
+      organizationId,
+      customerEntityId: '33333333-3333-4333-8333-333333333333',
+      em,
+    })
   })
 
   it('rejects an oversized body with 413 before integration or persistence', async () => {

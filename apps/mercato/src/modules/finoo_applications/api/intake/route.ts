@@ -11,7 +11,7 @@ import type { RateLimiterService } from '@open-mercato/shared/lib/ratelimit/serv
 import type { CredentialsService } from '@open-mercato/core/modules/integrations/lib/credentials-service'
 import type { IntegrationStateService } from '@open-mercato/core/modules/integrations/lib/state-service'
 import type { TenantDataEncryptionService } from '@open-mercato/shared/lib/encryption/tenantDataEncryptionService'
-import { FinooApplicationIntake } from '../../data/entities'
+import { FinooApplicationIntake, FinooApplicationProjection } from '../../data/entities'
 import { finooApplicationPayloadSchema, parseAndSanitizeFinooApplicationPayload } from '../../data/validators'
 import { FINOO_APPLICATION_INTEGRATION_ID } from '../../integration'
 import { FinooApplicationBodyTooLargeError, FinooApplicationInvalidUtf8Error, decodeFinooApplicationBody, hasOversizedFinooApplicationContentLength, readFinooApplicationBody } from '../../lib/body'
@@ -145,16 +145,45 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ ok: true, duplicate: true, intakeId: existing.id })
   }
 
-  const intake = em.create(FinooApplicationIntake, {
-    ...scope,
-    messageId: verified.messageId,
-    bodyDigest: digest,
-    externalLeadId: payload.leadId,
-    sourceTimestamp: new Date(verified.sourceTimestamp * 1000),
-    payloadJson: payload,
-  })
+  let intake: FinooApplicationIntake
   try {
-    await em.persist(intake).flush()
+    intake = await em.transactional(async (transactionalEm) => {
+      const projection = await findOneWithDecryption(
+        transactionalEm,
+        FinooApplicationProjection,
+        { ...scope, externalLeadId: payload.leadId },
+        { fields: ['id', 'applicantEntityId'] },
+        scope,
+      )
+      if (projection?.applicantEntityId) {
+        if (!container.hasRegistration('finooIdentityErasureCompletionGuard')) {
+          throw new Error('[internal] Finoo identity erasure completion guard is unavailable')
+        }
+        const guard = container.resolve<{
+          invalidateForRawWrite(input: {
+            tenantId: string
+            organizationId: string
+            customerEntityId: string
+            em: EntityManager
+          }): Promise<void>
+        }>('finooIdentityErasureCompletionGuard')
+        await guard.invalidateForRawWrite({
+          ...scope,
+          customerEntityId: projection.applicantEntityId,
+          em: transactionalEm,
+        })
+      }
+      const created = transactionalEm.create(FinooApplicationIntake, {
+        ...scope,
+        messageId: verified.messageId,
+        bodyDigest: digest,
+        externalLeadId: payload.leadId,
+        sourceTimestamp: new Date(verified.sourceTimestamp * 1000),
+        payloadJson: payload,
+      })
+      await transactionalEm.persist(created).flush()
+      return created
+    })
   } catch (error) {
     const duplicate = await findOneWithDecryption(em.fork(), FinooApplicationIntake, { ...scope, messageId: verified.messageId }, undefined, scope)
     if (!duplicate) throw error

@@ -73,6 +73,25 @@ export function register(container: AppContainer): void {
           NonNullable<Parameters<typeof createFinooIdentityService>[0]['resolveApplicationIdentityRetention']>
         >
       },
+      invalidateIdentityErasureCompletion: async (input) => {
+        if (!container.hasRegistration('finooIdentityErasureCompletionGuard')) {
+          throw new Error('[internal] Finoo identity erasure completion guard is unavailable')
+        }
+        const guard = container.resolve<{
+          invalidateForRawWrite(request: {
+            tenantId: string
+            organizationId: string
+            customerEntityId: string
+            em: EntityManager
+          }): Promise<void>
+        }>('finooIdentityErasureCompletionGuard')
+        await guard.invalidateForRawWrite({
+          tenantId: input.tenantId,
+          organizationId: input.organizationId,
+          customerEntityId: input.personId,
+          em: input.em,
+        })
+      },
       afterMutation: (event) => runFinooIdentityPostCommitEffects(container, event),
     })).scoped().proxy(),
     finooIdentityTechnicalImport: asFunction(({

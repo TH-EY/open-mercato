@@ -19,6 +19,7 @@ const encryptionService = {
         'candidate_expires_on',
       ]),
 }
+const noOpIdentityErasureCompletionInvalidation = async () => undefined
 
 jest.mock('@open-mercato/shared/lib/encryption/find', () => ({
   findOneWithDecryption: (...args: unknown[]) => findOneWithDecryption(...args),
@@ -64,6 +65,7 @@ describe('FinooIdentityService', () => {
       em: em as never,
       rbacService: rbacService as never,
       encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion: noOpIdentityErasureCompletionInvalidation,
     })
 
     let caught: unknown
@@ -113,6 +115,7 @@ describe('FinooIdentityService', () => {
       em: em as never,
       rbacService: { userHasAllFeatures: jest.fn(async () => true) } as never,
       encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion: noOpIdentityErasureCompletionInvalidation,
     })
 
     await expect(service.upsertForAuthorizedActor({
@@ -166,6 +169,7 @@ describe('FinooIdentityService', () => {
       em: em as never,
       rbacService: { userHasAllFeatures: jest.fn(async () => true) } as never,
       encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion: noOpIdentityErasureCompletionInvalidation,
     })
 
     const result = await service.readForAuthorizedActor({
@@ -223,6 +227,7 @@ describe('FinooIdentityService', () => {
       em: em as never,
       rbacService: { userHasAllFeatures: jest.fn(async (_userId, features) => features[0] === 'customers.people.view') } as never,
       encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion: noOpIdentityErasureCompletionInvalidation,
     })
 
     const result = await service.readStatusForPersonViewer({
@@ -260,6 +265,7 @@ describe('FinooIdentityService', () => {
       em: em as never,
       rbacService: { userHasAllFeatures: jest.fn(async () => false) } as never,
       encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion: noOpIdentityErasureCompletionInvalidation,
     })
 
     await expect(service.authorizeConflictManagementActor({
@@ -288,6 +294,7 @@ describe('FinooIdentityService', () => {
   it('creates valid identity data for an authorized manager and returns only safe write metadata', async () => {
     const persisted: unknown[] = []
     const afterMutation = jest.fn(async () => undefined)
+    const invalidateIdentityErasureCompletion = jest.fn(async () => undefined)
     const em: Record<string, unknown> = {}
     Object.assign(em, {
       create: (entity: unknown, data: Record<string, unknown>) => entity === FinooPersonIdentity
@@ -317,6 +324,7 @@ describe('FinooIdentityService', () => {
       em: em as never,
       rbacService: { userHasAllFeatures: jest.fn(async () => true) } as never,
       encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion,
       afterMutation,
     })
 
@@ -368,6 +376,12 @@ describe('FinooIdentityService', () => {
       isComplete: true,
     })
     expect(JSON.stringify(afterMutation.mock.calls)).not.toContain('44051401458')
+    expect(invalidateIdentityErasureCompletion).toHaveBeenCalledWith({
+      tenantId: '5164d495-1865-4738-b459-2783999a761d',
+      organizationId: 'd0d98cb3-28cf-4376-a61c-d270020f166f',
+      personId: 'ee823a18-e50c-4de4-9d71-4f516d7d754e',
+      em,
+    })
   })
 
   it('does not create identity data for a missing scoped Person', async () => {
@@ -388,6 +402,7 @@ describe('FinooIdentityService', () => {
       em: em as never,
       rbacService: { userHasAllFeatures: jest.fn(async () => true) } as never,
       encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion: noOpIdentityErasureCompletionInvalidation,
     })
 
     await expect(service.upsertForAuthorizedActor({
@@ -412,6 +427,7 @@ describe('FinooIdentityService', () => {
   it('allows a technical source to create identity data only when no identity exists', async () => {
     const persisted: unknown[] = []
     const afterMutation = jest.fn(async () => undefined)
+    const invalidateIdentityErasureCompletion = jest.fn(async () => undefined)
     const em: Record<string, unknown> = {}
     Object.assign(em, {
       create: (entity: unknown, data: Record<string, unknown>) => entity === FinooPersonIdentity
@@ -435,6 +451,7 @@ describe('FinooIdentityService', () => {
       em: em as never,
       rbacService: { userHasAllFeatures: jest.fn(async () => { throw new Error('technical imports do not use human RBAC') }) } as never,
       encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion,
       afterMutation,
     })
 
@@ -473,6 +490,12 @@ describe('FinooIdentityService', () => {
       isComplete: true,
     }))
     expect(JSON.stringify(afterMutation.mock.calls)).not.toContain('44051401458')
+    expect(invalidateIdentityErasureCompletion).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: '5164d495-1865-4738-b459-2783999a761d',
+      organizationId: 'd0d98cb3-28cf-4376-a61c-d270020f166f',
+      personId: 'ee823a18-e50c-4de4-9d71-4f516d7d754e',
+      em,
+    }))
   })
 
   it('rejects every technical source except the FINOO application projector before accessing storage', async () => {
@@ -480,6 +503,7 @@ describe('FinooIdentityService', () => {
       em: {} as never,
       rbacService: { userHasAllFeatures: jest.fn() } as never,
       encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion: noOpIdentityErasureCompletionInvalidation,
     })
 
     await expect(service.createFromTechnicalImport({
@@ -530,6 +554,7 @@ describe('FinooIdentityService', () => {
       em: em as never,
       rbacService: { userHasAllFeatures: jest.fn(async () => true) } as never,
       encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion: noOpIdentityErasureCompletionInvalidation,
     })
 
     const result = await service.createFromTechnicalImport({
@@ -587,6 +612,7 @@ describe('FinooIdentityService', () => {
       em: em as never,
       rbacService: { userHasAllFeatures: jest.fn(async () => true) } as never,
       encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion: noOpIdentityErasureCompletionInvalidation,
     })
 
     const result = await service.listAuditForAuthorizedActor({
@@ -661,6 +687,7 @@ describe('FinooIdentityService', () => {
       em: em as never,
       rbacService: { userHasAllFeatures: jest.fn(async () => true) } as never,
       encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion: noOpIdentityErasureCompletionInvalidation,
     })
 
     const result = await service.listConflictsForAuthorizedActor({
@@ -692,6 +719,10 @@ describe('FinooIdentityService', () => {
   })
 
   it('replaces identity data from a reviewed conflict and clears every candidate value', async () => {
+    const lockOrder: string[] = []
+    const invalidateIdentityErasureCompletion = jest.fn(async () => {
+      lockOrder.push('retention-lock')
+    })
     const identity = {
       id: '4e5f6a45-e7fd-40df-85b5-ad8a6e82d5b5',
       personId: 'ee823a18-e50c-4de4-9d71-4f516d7d754e',
@@ -724,18 +755,30 @@ describe('FinooIdentityService', () => {
       create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'audit-entry-id', ...data }),
       persist: (entity: unknown) => persisted.push(entity),
       flush: jest.fn(async () => undefined),
-      getConnection: () => ({ execute: jest.fn(async () => []) }),
+      getConnection: () => ({ execute: jest.fn(async () => {
+        lockOrder.push('identity-lock')
+        return []
+      }) }),
       transactional: async (callback: (transactionalEm: unknown) => Promise<unknown>) => callback(em),
     })
+    let conflictReads = 0
     findOneWithDecryption.mockImplementation(async (_em: unknown, entity: unknown) => {
-      if (entity === FinooIdentityImportConflict) return conflict
-      if (entity === FinooPersonIdentity) return identity
+      if (entity === FinooIdentityImportConflict) {
+        conflictReads += 1
+        lockOrder.push(conflictReads === 1 ? 'conflict-scope-read' : 'conflict-write-lock')
+        return conflict
+      }
+      if (entity === FinooPersonIdentity) {
+        lockOrder.push('identity-write-lock')
+        return identity
+      }
       return null
     })
     const service = createFinooIdentityService({
       em: em as never,
       rbacService: { userHasAllFeatures: jest.fn(async () => true) } as never,
       encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion,
     })
 
     const result = await service.resolveConflictForAuthorizedActor({
@@ -769,6 +812,19 @@ describe('FinooIdentityService', () => {
       changedFields: ['documentNumber'],
     })
     expect(JSON.stringify(persisted[0])).not.toContain('CANDIDATE456')
+    expect(invalidateIdentityErasureCompletion).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: '5164d495-1865-4738-b459-2783999a761d',
+      organizationId: 'd0d98cb3-28cf-4376-a61c-d270020f166f',
+      personId: identity.personId,
+      em,
+    }))
+    expect(lockOrder).toEqual([
+      'conflict-scope-read',
+      'retention-lock',
+      'conflict-write-lock',
+      'identity-lock',
+      'identity-write-lock',
+    ])
   })
 
   it('fails closed before erasure when the application retention port is unavailable', async () => {
@@ -777,6 +833,7 @@ describe('FinooIdentityService', () => {
       em: { transactional } as never,
       rbacService: { userHasAllFeatures: jest.fn() } as never,
       encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion: noOpIdentityErasureCompletionInvalidation,
     })
 
     await expect(service.anonymizeAndDeleteForPerson({
@@ -811,6 +868,7 @@ describe('FinooIdentityService', () => {
       em: em as never,
       rbacService: { userHasAllFeatures: jest.fn() } as never,
       encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion: noOpIdentityErasureCompletionInvalidation,
       resolveApplicationIdentityRetention: () => ({ erasePersonIdentityCopies }) as never,
       afterMutation,
     })

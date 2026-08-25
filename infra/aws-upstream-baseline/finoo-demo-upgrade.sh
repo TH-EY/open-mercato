@@ -179,7 +179,8 @@ pending_file=.finoo-upgrade-pending
 env_backup=".env.rollback-${deploy_token}"
 commit_backup=".finoo-active-commit.rollback-${deploy_token}"
 digest_backup=".finoo-active-image-digest.rollback-${deploy_token}"
-rollback_container="${active_container}-rollback-thom88-${deploy_commit:0:12}"
+rollback_container="${active_container}-rollback-thom108-${deploy_commit:0:12}"
+recovery_container="${active_container}-recovery-thom108-${deploy_commit:0:12}"
 test ! -e "$pending_file"
 test ! -e "$env_backup"
 test ! -e "$commit_backup"
@@ -192,6 +193,7 @@ test "$(docker inspect --format '{{.State.Running}}' "$active_container")" = tru
 curl -fsS --max-time 10 -o /dev/null "http://127.0.0.1:${live_port}/login"
 test -z "$(docker ps -aq --filter "name=^/${candidate_container}$")"
 test -z "$(docker ps -aq --filter "name=^/${rollback_container}$")"
+test -z "$(docker ps -aq --filter "name=^/${recovery_container}$")"
 test -z "$(ss -ltnH "sport = :${candidate_port}")"
 
 old_container_id="$(docker inspect --format '{{.Id}}' "$active_container")"
@@ -203,6 +205,8 @@ test "$compose_service" = app
 new_image_id=""
 candidate_created=false
 cutover_started=false
+legacy_cutover_attempted=false
+preserve_new_runtime=false
 env_modified=false
 stage_complete=false
 immutable_image="${deploy_app_image%:*}@${deploy_app_digest}"
@@ -240,12 +244,203 @@ wait_for_login() {
   return 1
 }
 
+assert_identity_migration_report() {
+  local report="$1"
+  local expected_mode="$2"
+  python3 - "$report" "$expected_mode" <<'PY'
+import json
+import sys
+
+expected_keys = {
+    'mode', 'scanned', 'eligible', 'wouldCreate', 'created', 'unchanged',
+    'destinationConflicts', 'invalidPesel', 'unknownDocumentType',
+    'unknownCountry', 'invalidIssuedOn', 'invalidExpiresOn',
+}
+report = json.loads(sys.argv[1])
+if set(report) != expected_keys or report.get('mode') != sys.argv[2]:
+    raise SystemExit('Unexpected FINOO identity migration report shape')
+if any(not isinstance(value, int) or value < 0 for key, value in report.items() if key != 'mode'):
+    raise SystemExit('FINOO identity migration report must contain counts only')
+if report['destinationConflicts'] != 0:
+    raise SystemExit('FINOO identity migration has destination conflicts')
+PY
+}
+
+assert_identity_verification_report() {
+  local report="$1"
+  local expected_active="$2"
+  local expected_inactive="$3"
+  python3 - "$report" "$expected_active" "$expected_inactive" <<'PY'
+import json
+import sys
+
+expected_keys = {
+    'scanned', 'migrated', 'unmigrated', 'destinationConflicts',
+    'activeDefinitions', 'inactiveDefinitions',
+}
+report = json.loads(sys.argv[1])
+if set(report) != expected_keys:
+    raise SystemExit('Unexpected FINOO identity verification report shape')
+if any(not isinstance(value, int) or value < 0 for value in report.values()):
+    raise SystemExit('FINOO identity verification report must contain counts only')
+if report['unmigrated'] != 0 or report['destinationConflicts'] != 0:
+    raise SystemExit('FINOO identity migration verification failed')
+if report['activeDefinitions'] != int(sys.argv[2]) or report['inactiveDefinitions'] != int(sys.argv[3]):
+    raise SystemExit('FINOO identity legacy definition count is not exact')
+PY
+}
+
+run_preserved_new_cli() {
+  local source_container="$1"
+  shift
+  local command_env
+  local status
+  command_env="$(mktemp)"
+  chmod 600 "$command_env"
+  docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$source_container" > "$command_env"
+  if docker run --rm \
+    --network mercato-network-finoo \
+    --volumes-from "$source_container" \
+    --env-file "$command_env" \
+    --workdir /app/apps/mercato \
+    --user 0 \
+    "$immutable_image" \
+    yarn mercato "$@"; then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f -- "$command_env"
+  return "$status"
+}
+
+read_identity_definition_state() {
+  local source_container="$1"
+  local verification_report
+  verification_report="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
+    --tenant "$finoo_tenant_id" \
+    --organization "$finoo_organization_id")" || return 1
+  python3 - "$verification_report" <<'PY'
+import json
+import sys
+
+expected_keys = {
+    'scanned', 'migrated', 'unmigrated', 'destinationConflicts',
+    'activeDefinitions', 'inactiveDefinitions',
+}
+report = json.loads(sys.argv[1])
+if set(report) != expected_keys or any(not isinstance(value, int) or value < 0 for value in report.values()):
+    raise SystemExit('Unexpected FINOO identity definition-state report')
+if report['unmigrated'] != 0 or report['destinationConflicts'] != 0:
+    raise SystemExit('FINOO identity migration is not safe for rollback')
+active = report['activeDefinitions']
+inactive = report['inactiveDefinitions']
+if (active, inactive) not in {(6, 0), (0, 6)}:
+    raise SystemExit('FINOO identity definitions are in a partial state')
+print(f'{active} {inactive}')
+PY
+}
+
+ensure_legacy_identity_state_for_old() {
+  local source_container="$1"
+  local definition_state
+  definition_state="$(read_identity_definition_state "$source_container")" || return 1
+  if [[ "$definition_state" == "0 6" ]]; then
+    run_preserved_new_cli "$source_container" finoo_identities rollback-legacy \
+      --tenant "$finoo_tenant_id" \
+      --organization "$finoo_organization_id" \
+      --apply \
+      --maintenance-window \
+      --confirm THOM-108 || return 1
+    definition_state="$(read_identity_definition_state "$source_container")" || return 1
+  fi
+  [[ "$definition_state" == "6 0" ]] || return 1
+  run_preserved_new_cli "$source_container" configs cache structural \
+    --tenant "$finoo_tenant_id" \
+    --json || return 1
+}
+
+restore_identity_cutover_for_new() {
+  local source_container="$1"
+  local verification_report
+  run_preserved_new_cli "$source_container" finoo_identities cutover-legacy \
+    --tenant "$finoo_tenant_id" \
+    --organization "$finoo_organization_id" \
+    --apply \
+    --maintenance-window \
+    --confirm THOM-108 || return 1
+  verification_report="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
+    --tenant "$finoo_tenant_id" \
+    --organization "$finoo_organization_id")" || return 1
+  assert_identity_verification_report "$verification_report" 0 6 || return 1
+  run_preserved_new_cli "$source_container" configs cache structural \
+    --tenant "$finoo_tenant_id" \
+    --json || return 1
+}
+
+restore_preserved_new_runtime() {
+  local source_container="$1"
+  if [[ "$source_container" != "$recovery_container" ]]; then
+    preserve_new_runtime=true
+    echo "The FINOO candidate runtime remains available for manual recovery" >&2
+    return 1
+  fi
+  docker stop --time 30 "$active_container" >/dev/null 2>&1 || true
+  if docker inspect "$active_container" >/dev/null 2>&1; then
+    docker rename "$active_container" "$rollback_container" >/dev/null 2>&1 || return 1
+  fi
+  docker rename "$recovery_container" "$active_container" || return 1
+  docker start "$active_container" >/dev/null || return 1
+  wait_for_login "$live_port" || return 1
+  preserve_new_runtime=true
+}
+
 restore_old() {
   local failed=false
   local current_id=""
+  local preserved_new=""
   current_id="$(docker inspect --format '{{.Id}}' "$active_container" 2>/dev/null || true)"
+  if [[ "$current_id" == "$old_container_id" && \
+        "$(docker inspect --format '{{.State.Running}}' "$active_container" 2>/dev/null || true)" == true ]]; then
+    docker stop --time 30 "$active_container" >/dev/null || {
+      echo "Finoo old writer could not be stopped before identity rollback" >&2
+      return 1
+    }
+  fi
   if [[ -n "$current_id" && "$current_id" != "$old_container_id" ]]; then
-    docker rm -f "$active_container" >/dev/null || failed=true
+    if ! docker rename "$active_container" "$recovery_container"; then
+      preserve_new_runtime=true
+      return 1
+    fi
+    if ! docker stop --time 30 "$recovery_container" >/dev/null; then
+      docker rename "$recovery_container" "$active_container" >/dev/null 2>&1 || true
+      preserve_new_runtime=true
+      return 1
+    fi
+    preserved_new="$recovery_container"
+  elif docker inspect "$candidate_container" >/dev/null 2>&1; then
+    docker stop --time 30 "$candidate_container" >/dev/null || {
+      preserve_new_runtime=true
+      return 1
+    }
+    preserved_new="$candidate_container"
+  fi
+  if [[ -z "$preserved_new" ]]; then
+    echo "No preserved new runtime is available for the identity rollback command" >&2
+    preserve_new_runtime=true
+    return 1
+  fi
+  if [[ "$(docker inspect --format '{{.State.Running}}' "$rollback_container" 2>/dev/null || true)" == true ]]; then
+    docker stop --time 30 "$rollback_container" >/dev/null || {
+      echo "Finoo rollback writer could not be stopped before identity rollback" >&2
+      preserve_new_runtime=true
+      return 1
+    }
+  fi
+  if ! ensure_legacy_identity_state_for_old "$preserved_new"; then
+    echo "FINOO identity definition state is partial or unreadable; both runtime writers remain stopped" >&2
+    preserve_new_runtime=true
+    return 1
   fi
   if docker inspect "$rollback_container" >/dev/null 2>&1; then
     if docker inspect "$active_container" >/dev/null 2>&1; then
@@ -266,8 +461,17 @@ restore_old() {
     chmod 600 .env || failed=true
   fi
   if [[ "$failed" == true ]]; then
+    docker stop --time 30 "$active_container" >/dev/null 2>&1 || true
+    if restore_identity_cutover_for_new "$preserved_new"; then
+      restore_preserved_new_runtime "$preserved_new" || true
+    else
+      echo "FINOO cutover could not be restored after old-runtime failure; both runtime writers remain stopped" >&2
+    fi
     echo "Finoo rollback failed; manual recovery required" >&2
     return 1
+  fi
+  if docker inspect "$recovery_container" >/dev/null 2>&1; then
+    docker rm -f "$recovery_container" >/dev/null
   fi
 }
 
@@ -304,7 +508,7 @@ cleanup() {
   if [[ "$stage_complete" != true && "$cleanup_failed" != true ]]; then
     rm -f -- "$env_backup" "$commit_backup" "$digest_backup" "$pending_file"
   fi
-  if [[ "$candidate_created" == true ]]; then
+  if [[ "$candidate_created" == true && "$preserve_new_runtime" != true ]]; then
     docker rm -f "$candidate_container" >/dev/null 2>&1 || true
   fi
   docker logout "${deploy_app_image%%/*}" >/dev/null 2>&1 || true
@@ -336,11 +540,14 @@ immutable_image=${immutable_image}
 old_container_id=${old_container_id}
 old_image_id=${old_image_id}
 rollback_container=${rollback_container}
+recovery_container=${recovery_container}
+candidate_container=${candidate_container}
 env_backup=${env_backup}
 commit_backup=${commit_backup}
 digest_backup=${digest_backup}
 prior_commit_present=${prior_commit_present}
 prior_digest_present=${prior_digest_present}
+legacy_cutover_attempted=false
 EOF_PENDING
 chmod 600 "$pending_file"
 
@@ -408,6 +615,26 @@ if ! wait_for_login "$candidate_port"; then
   echo "Finoo candidate did not become reachable" >&2
   exit 1
 fi
+docker exec "$candidate_container" yarn mercato entities seed-encryption \
+  --tenant "$finoo_tenant_id" \
+  --organization "$finoo_organization_id"
+echo "[finoo-identities] Exact-scope encryption maps seeded"
+docker exec "$candidate_container" yarn mercato finoo_identities ensure-organization-setup \
+  --tenant "$finoo_tenant_id" \
+  --organization "$finoo_organization_id" \
+  --apply
+echo "[finoo-identities] Existing organization role and ACL setup verified"
+identity_dry_run_report="$(docker exec "$candidate_container" yarn mercato finoo_identities migrate-legacy \
+  --tenant "$finoo_tenant_id" \
+  --organization "$finoo_organization_id" \
+  --dry-run)"
+assert_identity_migration_report "$identity_dry_run_report" dry-run
+printf '[finoo-identities] migration_dry_run=%s\n' "$identity_dry_run_report"
+docker exec "$candidate_container" yarn mercato finoo_customer_retention ensure-organization-setup \
+  --tenant "$finoo_tenant_id" \
+  --organization "$finoo_organization_id" \
+  --apply
+echo "[finoo-retention] Organization settings and hourly reconciliation schedule verified"
 docker exec "$candidate_container" yarn mercato channel_ses assert-env-preset-exact
 echo "[finoo-email] Existing exact Amazon SES preset preserved"
 docker exec "$candidate_container" yarn mercato channel_ses assert-explicit-credentials \
@@ -465,6 +692,34 @@ for key, value in labels.items():
 docker tag "$immutable_image" open-mercato/app:finoo
 cutover_started=true
 docker stop --time 30 "$active_container" >/dev/null
+identity_apply_report="$(docker exec "$candidate_container" yarn mercato finoo_identities migrate-legacy \
+  --tenant "$finoo_tenant_id" \
+  --organization "$finoo_organization_id" \
+  --apply)"
+assert_identity_migration_report "$identity_apply_report" apply
+printf '[finoo-identities] migration_apply=%s\n' "$identity_apply_report"
+identity_verification_report="$(docker exec "$candidate_container" yarn mercato finoo_identities verify-legacy \
+  --tenant "$finoo_tenant_id" \
+  --organization "$finoo_organization_id")"
+assert_identity_verification_report "$identity_verification_report" 6 0
+printf '[finoo-identities] migration_verify=%s\n' "$identity_verification_report"
+legacy_cutover_attempted=true
+printf 'legacy_cutover_attempted=true\n' >> "$pending_file"
+sync "$pending_file"
+docker exec "$candidate_container" yarn mercato finoo_identities cutover-legacy \
+  --tenant "$finoo_tenant_id" \
+  --organization "$finoo_organization_id" \
+  --apply \
+  --maintenance-window \
+  --confirm THOM-108
+identity_cutover_report="$(docker exec "$candidate_container" yarn mercato finoo_identities verify-legacy \
+  --tenant "$finoo_tenant_id" \
+  --organization "$finoo_organization_id")"
+assert_identity_verification_report "$identity_cutover_report" 0 6
+docker exec "$candidate_container" yarn mercato configs cache structural \
+  --tenant "$finoo_tenant_id" \
+  --json
+printf '[finoo-identities] cutover_verify=%s\n' "$identity_cutover_report"
 docker rename "$active_container" "$rollback_container"
 docker create \
   --name "$active_container" \
@@ -533,7 +788,7 @@ if [[ "$(docker inspect --format '{{.Image}}' "$active_container")" != "$new_ima
   exit 1
 fi
 stage_complete=true
-echo "remote_finoo_stage=pending-public-verification"
+echo "remote_finoo_stage=pending-private-verification"
 EOF_REMOTE
   echo 'EOF_FINOO_UPGRADE'
 } > "$REMOTE_SCRIPT"
@@ -663,6 +918,113 @@ restore_staged_ses_credentials() {
   rm -f -- "$restore_env"
   return 1
 }
+run_preserved_new_cli() {
+  local source_container="$1"
+  shift
+  local command_env
+  local status
+  command_env="$(mktemp)"
+  chmod 600 "$command_env"
+  docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$source_container" > "$command_env"
+  if docker run --rm \
+    --network mercato-network-finoo \
+    --volumes-from "$source_container" \
+    --env-file "$command_env" \
+    --workdir /app/apps/mercato \
+    --user 0 \
+    "$immutable_image" \
+    yarn mercato "$@"; then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f -- "$command_env"
+  return "$status"
+}
+read_identity_definition_state() {
+  local source_container="$1"
+  local verification_report
+  verification_report="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
+    --tenant "$finoo_tenant_id" \
+    --organization "$finoo_organization_id")" || return 1
+  python3 - "$verification_report" <<'PY'
+import json
+import sys
+
+expected_keys = {
+    'scanned', 'migrated', 'unmigrated', 'destinationConflicts',
+    'activeDefinitions', 'inactiveDefinitions',
+}
+report = json.loads(sys.argv[1])
+if set(report) != expected_keys or any(not isinstance(value, int) or value < 0 for value in report.values()):
+    raise SystemExit('Unexpected FINOO identity rollback verification report')
+if report['unmigrated'] != 0 or report['destinationConflicts'] != 0:
+    raise SystemExit('FINOO identity migration is not safe for rollback')
+active = report['activeDefinitions']
+inactive = report['inactiveDefinitions']
+if (active, inactive) not in {(6, 0), (0, 6)}:
+    raise SystemExit('FINOO identity definitions are in a partial state')
+print(f'{active} {inactive}')
+PY
+}
+ensure_legacy_identity_state_for_old() {
+  local source_container="$1"
+  local definition_state
+  definition_state="$(read_identity_definition_state "$source_container")" || return 1
+  if [[ "$definition_state" == "0 6" ]]; then
+    run_preserved_new_cli "$source_container" finoo_identities rollback-legacy \
+      --tenant "$finoo_tenant_id" \
+      --organization "$finoo_organization_id" \
+      --apply \
+      --maintenance-window \
+      --confirm THOM-108 || return 1
+    definition_state="$(read_identity_definition_state "$source_container")" || return 1
+  fi
+  [[ "$definition_state" == "6 0" ]] || return 1
+  run_preserved_new_cli "$source_container" configs cache structural \
+    --tenant "$finoo_tenant_id" \
+    --json || return 1
+}
+restore_identity_cutover_for_new() {
+  local source_container="$1"
+  local verification_report
+  run_preserved_new_cli "$source_container" finoo_identities cutover-legacy \
+    --tenant "$finoo_tenant_id" \
+    --organization "$finoo_organization_id" \
+    --apply \
+    --maintenance-window \
+    --confirm THOM-108 || return 1
+  verification_report="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
+    --tenant "$finoo_tenant_id" \
+    --organization "$finoo_organization_id")" || return 1
+  python3 - "$verification_report" <<'PY'
+import json
+import sys
+
+report = json.loads(sys.argv[1])
+if report.get('unmigrated') != 0 or report.get('destinationConflicts') != 0:
+    raise SystemExit('FINOO identity migration is not safe for new runtime restore')
+if report.get('activeDefinitions') != 0 or report.get('inactiveDefinitions') != 6:
+    raise SystemExit('FINOO identity cutover was not restored exactly')
+PY
+  run_preserved_new_cli "$source_container" configs cache structural \
+    --tenant "$finoo_tenant_id" \
+    --json || return 1
+}
+restore_preserved_new_runtime() {
+  local source_container="$1"
+  if [[ "$source_container" != "$recovery_container" ]]; then
+    echo "The FINOO candidate runtime remains available for manual recovery" >&2
+    return 1
+  fi
+  docker stop --time 30 "$active_container" >/dev/null 2>&1 || true
+  if docker inspect "$active_container" >/dev/null 2>&1; then
+    docker rename "$active_container" "$rollback_container" >/dev/null 2>&1 || return 1
+  fi
+  docker rename "$recovery_container" "$active_container" || return 1
+  docker start "$active_container" >/dev/null || return 1
+  wait_for_login || return 1
+}
 if [[ "$decision" == finalize ]]; then
   test "$(docker inspect --format '{{.Image}}' "$active_container")" = "$new_image_id"
   test "$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "$active_container")" = unless-stopped
@@ -685,9 +1047,46 @@ if [[ "$decision" == finalize ]]; then
 fi
 
 failed=false
+preserved_new=""
 current_id="$(docker inspect --format '{{.Id}}' "$active_container" 2>/dev/null || true)"
+if [[ "$current_id" == "$old_container_id" && \
+      "$(docker inspect --format '{{.State.Running}}' "$active_container" 2>/dev/null || true)" == true ]]; then
+  docker stop --time 30 "$active_container" >/dev/null || {
+    echo "Finoo old writer could not be stopped before identity rollback" >&2
+    exit 70
+  }
+fi
 if [[ -n "$current_id" && "$current_id" != "$old_container_id" ]]; then
-  docker rm -f "$active_container" >/dev/null || failed=true
+  if ! docker rename "$active_container" "$recovery_container"; then
+    echo "Finoo rollback could not preserve the new runtime" >&2
+    exit 70
+  fi
+  if ! docker stop --time 30 "$recovery_container" >/dev/null; then
+    docker rename "$recovery_container" "$active_container" >/dev/null 2>&1 || true
+    echo "Finoo rollback could not stop the preserved new runtime" >&2
+    exit 70
+  fi
+  preserved_new="$recovery_container"
+elif docker inspect "$candidate_container" >/dev/null 2>&1; then
+  docker stop --time 30 "$candidate_container" >/dev/null || {
+    echo "Finoo rollback could not stop the candidate writer" >&2
+    exit 70
+  }
+  preserved_new="$candidate_container"
+fi
+if [[ -z "$preserved_new" ]]; then
+  echo "No preserved new runtime is available for the identity rollback command" >&2
+  exit 70
+fi
+if [[ "$(docker inspect --format '{{.State.Running}}' "$rollback_container" 2>/dev/null || true)" == true ]]; then
+  docker stop --time 30 "$rollback_container" >/dev/null || {
+    echo "Finoo rollback writer could not be stopped before identity rollback" >&2
+    exit 70
+  }
+fi
+if ! ensure_legacy_identity_state_for_old "$preserved_new"; then
+  echo "FINOO identity definition state is partial or unreadable; both runtime writers remain stopped" >&2
+  exit 70
 fi
 if docker inspect "$rollback_container" >/dev/null 2>&1; then
   docker rename "$rollback_container" "$active_container" || failed=true
@@ -714,8 +1113,20 @@ else
   rm -f -- .finoo-active-image-digest
 fi
 if [[ "$failed" == true ]]; then
+  docker stop --time 30 "$active_container" >/dev/null 2>&1 || true
+  if restore_identity_cutover_for_new "$preserved_new"; then
+    restore_preserved_new_runtime "$preserved_new" || true
+  else
+    echo "FINOO cutover could not be restored after old-runtime failure; both runtime writers remain stopped" >&2
+  fi
   echo "Finoo rollback failed; manual recovery required" >&2
   exit 70
+fi
+if docker inspect "$recovery_container" >/dev/null 2>&1; then
+  docker rm -f "$recovery_container" >/dev/null
+fi
+if docker inspect "$candidate_container" >/dev/null 2>&1; then
+  docker rm -f "$candidate_container" >/dev/null
 fi
 rm -f -- "$env_backup" "$commit_backup" "$digest_backup" "$pending_file"
 echo "remote_finoo_rolled_back=true"
@@ -724,7 +1135,7 @@ EOF_DECISION
   } > "$output_path"
 }
 
-STAGE_COMMAND_ID="$(send_command 'THOM-88 stage immutable Finoo upgrade' "$REMOTE_SCRIPT")"
+STAGE_COMMAND_ID="$(send_command 'THOM-108 stage immutable private Finoo upgrade' "$REMOTE_SCRIPT")"
 if wait_for_command "$STAGE_COMMAND_ID" 360; then
   stage_status=0
 else
@@ -737,31 +1148,31 @@ if [[ "$stage_status" != 0 ]]; then
   fi
   rollback_script="$(mktemp)"
   build_decision_script rollback "$rollback_script"
-  rollback_command_id="$(send_command 'THOM-88 rollback failed Finoo stage' "$rollback_script")"
+  rollback_command_id="$(send_command 'THOM-108 rollback failed Finoo stage' "$rollback_script")"
   wait_for_command "$rollback_command_id" 180
   rm -f -- "$rollback_script"
   exit 1
 fi
 
-public_ok=true
+private_runtime_ok=true
 aws elbv2 wait target-in-service \
   --region "$AWS_REGION" \
   --target-group-arn "$TARGET_GROUP_ARN" \
-  --targets "Id=${INSTANCE_ID},Port=${PORT}" || public_ok=false
-curl -fsS --max-time 15 -o /dev/null "https://${HOSTNAME}/login" || public_ok=false
+  --targets "Id=${INSTANCE_ID},Port=${PORT}" || private_runtime_ok=false
+curl -fsS --max-time 15 -o /dev/null "https://${HOSTNAME}/login" || private_runtime_ok=false
 if signup_code="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' -X POST "https://${HOSTNAME}/api/customer_accounts/signup")"; then
   if [[ "$signup_code" != 404 && "$signup_code" != 405 ]]; then
-    public_ok=false
+    private_runtime_ok=false
   fi
 else
-  public_ok=false
+  private_runtime_ok=false
 fi
 
 decision=finalize
-if [[ "$public_ok" != true ]]; then decision=rollback; fi
+if [[ "$private_runtime_ok" != true ]]; then decision=rollback; fi
 DECISION_SCRIPT="$(mktemp)"
 build_decision_script "$decision" "$DECISION_SCRIPT"
-DECISION_COMMAND_ID="$(send_command "THOM-88 ${decision} Finoo upgrade" "$DECISION_SCRIPT")"
+DECISION_COMMAND_ID="$(send_command "THOM-108 ${decision} private Finoo upgrade" "$DECISION_SCRIPT")"
 if wait_for_command "$DECISION_COMMAND_ID" 180; then
   decision_status=0
 else
@@ -771,7 +1182,7 @@ rm -f -- "$DECISION_SCRIPT"
 if [[ "$decision_status" != 0 && "$decision" == finalize ]]; then
   rollback_script="$(mktemp)"
   build_decision_script rollback "$rollback_script"
-  rollback_command_id="$(send_command 'THOM-88 rollback failed Finoo finalization' "$rollback_script")"
+  rollback_command_id="$(send_command 'THOM-108 rollback failed Finoo finalization' "$rollback_script")"
   wait_for_command "$rollback_command_id" 180
   rm -f -- "$rollback_script"
   exit 1
@@ -780,7 +1191,7 @@ if [[ "$decision_status" != 0 ]]; then
   exit 1
 fi
 if [[ "$decision" != finalize ]]; then
-  echo "Finoo public verification failed and the previous container was restored" >&2
+  echo "Finoo private runtime verification failed and the previous container was restored" >&2
   exit 1
 fi
 

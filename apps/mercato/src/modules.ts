@@ -163,6 +163,7 @@ export const enabledModules: ModuleEntry[] = [
     },
   },
   { id: 'finoo_identities', from: '@app' },
+  { id: 'finoo_customer_retention', from: '@app' },
   { id: 'finoo_applications', from: '@app' },
   {
     id: 'example',

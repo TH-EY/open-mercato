@@ -12,6 +12,7 @@ import {
   FinooPayoutPreview,
 } from "./data/entities";
 import { createFinooAffiliateService } from "./lib/service";
+import { createFinooAffiliateRetentionEligibilityProvider } from './lib/retentionEligibilityProvider'
 
 export function register(container: AppContainer) {
   container.register({
@@ -28,5 +29,8 @@ export function register(container: AppContainer) {
     )
       .scoped()
       .proxy(),
+    finooAffiliateRetentionEligibilityProvider: asFunction(
+      ({ em }: { em: EntityManager }) => createFinooAffiliateRetentionEligibilityProvider(em),
+    ).scoped().proxy(),
   });
 }

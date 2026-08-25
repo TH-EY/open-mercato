@@ -90,7 +90,7 @@ Add the FINOO-private app module `finoo_identities`. It owns encrypted identity 
 
 ### Retention boundary
 
-The separate retention capability owns one Person-level `retentionExpiresAt`; this module adds no second clock. `anonymizeAndDeleteForPerson({ systemActor: true })` is the retention-owned execution seam. In one transaction it deletes the active identity and conflicts, redacts Person-linked identity keys from encrypted `finoo_application_intakes`, deletes the PESEL binding and any unpurged legacy values, nulls audit `person_id`, and retains only a value-free subject digest. No scheduler is added here; expiry only flags until the external retention owner invokes the separately authorized erasure.
+The separate retention capability owns one Person-level `retentionExpiresAt`; this module adds no second clock. `anonymizeAndDeleteForPerson({ systemActor: true })` is the retention-owned execution seam. In one transaction it deletes the active identity and conflicts, redacts Person-linked identity keys from encrypted `finoo_application_intakes`, deletes the PESEL binding and any unpurged legacy values, nulls audit `person_id`, and retains only a value-free subject digest. No scheduler is added here; expiry only flags until an operator separately authorizes `finoo_customer_retention erase-expired-identities`. Its dry-run is count-only, while apply requires exact tenant/organization scope, a bounded batch, a maintenance-window declaration, and confirmation token `THOM-108`.
 
 ## Authorization Model
 
@@ -146,7 +146,7 @@ Person retention erasure -> identity/conflicts/copies removed; audit subject lin
 - New module: `apps/mercato/src/modules/finoo_identities/`.
 - Scalar `personId` only; no ORM relationship to `customers`.
 - The identity module owns customer glue through response enrichers, API interceptors, and widget injection.
-- `finoo_applications` resolves the narrow `finooIdentityTechnicalImport` DI port with a local structural interface and never imports identity entities. The external Person-retention owner will call the equally narrow `finooIdentityRetention` port; it must not resolve the full identity service.
+- `finoo_applications` resolves the narrow `finooIdentityTechnicalImport` DI port with a local structural interface and never imports identity entities. The private `finoo_customer_retention` operator executor selects due `expired` states from its single Person-level clock and calls the equally narrow `finooIdentityRetention` port; it does not resolve the full identity service or run from hourly reconciliation.
 - Missing identity service fails projection closed with `identity_service_unavailable`; encrypted intake remains retryable and custom fields are not used as fallback.
 - Customer widgets declare `requiredModules: ['customers']`.
 
@@ -406,6 +406,8 @@ Run generation/targeted checks/typecheck/lint/build/reviews, deploy exact SHA to
 |---|---|---|
 | `apps/mercato/src/modules/finoo_identities/**` | Create | Domain, API, UI, migration, tests. |
 | `apps/mercato/src/modules/finoo_applications/**` | Modify | Write-only integration/legacy removal. |
+| `apps/mercato/src/modules/finoo_customer_retention/**` | Modify | Separately authorized, count-only/dry-run-gated identity erasure executor using the single Person retention clock. |
+| `infra/aws-upstream-baseline/finoo-demo-upgrade.sh` | Modify | Existing-tenant encryption/setup/backfill/cutover and safe legacy rollback gates for private FINOO. |
 | `apps/mercato/src/modules.ts` | Modify | Activate private module. |
 | Module locale files | Create | Polish/English UI/errors. |
 | `.ai/specs/enterprise/2026-08-18-finoo-application-form-ingestion.md` | Modify | Replace custom-field assumptions. |
@@ -434,7 +436,7 @@ Integration tests create/clean their own tenant, org, users/roles, Person, maps,
 | `TC-FINOO-ID-008` | Resolve/dismiss clears candidate ciphertext. |
 | `TC-FINOO-ID-009` | Invalid legacy preservation/status and idempotent mapping. |
 | `TC-FINOO-ID-010` | Cutover removes keys from customer/search/export/report and blocks writes. |
-| `TC-FINOO-ID-011` | Future erasure seam removes values/nulls audit Person link. |
+| `TC-FINOO-ID-011` | Separately authorized retention executor selects only due scoped `expired` states; identity erasure removes values and nulls the audit Person link. |
 | `TC-FINOO-ID-012` | Headed list/detail/form QA for ordinary/IOD/superadmin. |
 
 Fixture PESEL/document canaries are scanned across responses, logs, events, CLI output, and audit; zero occurrences are allowed outside authorized raw responses.

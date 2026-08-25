@@ -1,9 +1,14 @@
 import { z } from 'zod'
 import type { CacheStrategy } from '@open-mercato/cache'
 import type { EntityManager } from '@mikro-orm/postgresql'
+import type { AwilixContainer } from 'awilix'
+import { Role, RoleAcl, UserRole } from '@open-mercato/core/modules/auth/data/entities'
+import { ensureCustomRoleAcls } from '@open-mercato/core/modules/auth/lib/setup-app'
+import { Organization, Tenant } from '@open-mercato/core/modules/directory/data/entities'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import type { TenantDataEncryptionService } from '@open-mercato/shared/lib/encryption/tenantDataEncryptionService'
-import type { ModuleCli } from '@open-mercato/shared/modules/registry'
+import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import type { Module, ModuleCli } from '@open-mercato/shared/modules/registry'
 import { invalidateDefinitionsCache } from '@open-mercato/core/modules/entities/api/definitions.cache'
 import {
   migrateLegacyIdentities,
@@ -11,12 +16,28 @@ import {
   setLegacyIdentityCutover,
   verifyLegacyIdentityMigration,
 } from './lib/legacy-migration'
+import setup, { FINOO_IOD_ROLE } from './setup'
 
 const scopeSchema = z.object({
   tenantId: z.string().uuid(),
   organizationId: z.string().uuid(),
 })
 const CONFIRMATION_TOKEN = 'THOM-108'
+const ensureOrganizationSetupUsage = 'mercato finoo_identities ensure-organization-setup --tenant <uuid> --organization <uuid> --apply'
+const identityModule: Module = { id: 'finoo_identities', setup }
+const IOD_FEATURES = [
+  'customers.people.view',
+  'finoo_identities.view',
+  'finoo_identities.manage',
+]
+
+function expectedIodFeatures(): string[] {
+  const features = setup.defaultRoleFeatures?.[FINOO_IOD_ROLE]
+  if (!features || JSON.stringify(features) !== JSON.stringify(IOD_FEATURES)) {
+    throw new Error('[internal] FINOO IOD role features are not configured exactly')
+  }
+  return [...IOD_FEATURES]
+}
 
 function readOption(args: string[], name: string): string | null {
   const index = args.indexOf(`--${name}`)
@@ -33,6 +54,115 @@ function parseScope(args: string[]) {
     organizationId: readOption(args, 'organization'),
   })
   return parsed.success ? parsed.data : null
+}
+
+export function parseEnsureOrganizationSetupArgs(args: string[]) {
+  const allowed = new Set(['--tenant', '--organization', '--apply'])
+  const flags = args.filter((argument) => argument.startsWith('--'))
+  if (args.length !== 5
+    || !args.includes('--apply')
+    || !hasExactlyOne(args, 'tenant')
+    || !hasExactlyOne(args, 'organization')
+    || args.filter((argument) => argument === '--apply').length !== 1
+    || flags.some((flag) => !allowed.has(flag))) return null
+  return parseScope(args)
+}
+
+export async function ensureExistingOrganizationSetup(input: {
+  em: EntityManager
+  container: AwilixContainer
+  tenantId: string
+  organizationId: string
+}): Promise<{
+  iodFeatures: string[]
+  assignedUsers: number
+  automaticUserAssignments: 0
+}> {
+  return input.em.transactional(async (transactionalEm) => {
+    const tenant = await transactionalEm.findOne(Tenant, {
+      id: input.tenantId,
+      deletedAt: null,
+    })
+    if (!tenant) throw new Error('[internal] Tenant does not exist in the requested scope')
+
+    const organization = await transactionalEm.findOne(Organization, {
+      id: input.organizationId,
+      tenant: input.tenantId,
+      deletedAt: null,
+    })
+    if (!organization) {
+      throw new Error('[internal] Organization does not exist in the requested tenant scope')
+    }
+
+    const roleBefore = await findOneWithDecryption(
+      transactionalEm,
+      Role,
+      { name: FINOO_IOD_ROLE, tenantId: input.tenantId, deletedAt: null },
+      {},
+      { tenantId: input.tenantId, organizationId: null },
+    )
+    const assignmentsBefore = roleBefore
+      ? await transactionalEm.count(UserRole, { role: roleBefore, deletedAt: null })
+      : 0
+
+    if (!setup.seedDefaults) throw new Error('[internal] FINOO identity defaults setup is unavailable')
+    await setup.seedDefaults({
+      em: transactionalEm,
+      container: input.container,
+      tenantId: input.tenantId,
+      organizationId: input.organizationId,
+    })
+    await ensureCustomRoleAcls(transactionalEm, input.tenantId, [identityModule])
+
+    const role = await findOneWithDecryption(
+      transactionalEm,
+      Role,
+      { name: FINOO_IOD_ROLE, tenantId: input.tenantId, deletedAt: null },
+      {},
+      { tenantId: input.tenantId, organizationId: null },
+    )
+    if (!role) throw new Error('[internal] FINOO IOD role setup failed')
+
+    const activeAcls = await findWithDecryption(
+      transactionalEm,
+      RoleAcl,
+      { role, tenantId: input.tenantId, deletedAt: null },
+      {},
+      { tenantId: input.tenantId, organizationId: null },
+    )
+    if (activeAcls.length !== 1) {
+      throw new Error('[internal] FINOO IOD role must have exactly one active ACL')
+    }
+    const features = expectedIodFeatures()
+    const acl = activeAcls[0]
+    acl.featuresJson = features
+    acl.isSuperAdmin = false
+    acl.organizationsJson = [input.organizationId]
+    await transactionalEm.persist(acl).flush()
+
+    const assignmentsAfter = await transactionalEm.count(UserRole, { role, deletedAt: null })
+    if (assignmentsAfter !== assignmentsBefore) {
+      throw new Error('[internal] FINOO IOD setup must not assign users automatically')
+    }
+    const verifiedAcl = await findOneWithDecryption(
+      transactionalEm,
+      RoleAcl,
+      { role, tenantId: input.tenantId, deletedAt: null },
+      {},
+      { tenantId: input.tenantId, organizationId: null },
+    )
+    if (!verifiedAcl
+      || verifiedAcl.isSuperAdmin
+      || JSON.stringify(verifiedAcl.featuresJson) !== JSON.stringify(features)
+      || JSON.stringify(verifiedAcl.organizationsJson) !== JSON.stringify([input.organizationId])) {
+      throw new Error('[internal] FINOO IOD ACL verification failed')
+    }
+    return {
+      iodFeatures: features,
+      assignedUsers: assignmentsAfter,
+      automaticUserAssignments: 0,
+    }
+  })
 }
 
 export function parseLegacyMigrationArgs(args: string[]) {
@@ -139,6 +269,25 @@ const migrateLegacy: ModuleCli = {
   },
 }
 
+const ensureOrganizationSetup: ModuleCli = {
+  command: 'ensure-organization-setup',
+  async run(args) {
+    const scope = parseEnsureOrganizationSetupArgs(args)
+    if (!scope) throw new Error(`[internal] Invalid arguments. Usage: ${ensureOrganizationSetupUsage}`)
+    const container = await createRequestContainer()
+    try {
+      const result = await ensureExistingOrganizationSetup({
+        em: (container.resolve('em') as EntityManager).fork(),
+        container,
+        ...scope,
+      })
+      console.log(JSON.stringify({ ...scope, configured: true, ...result }))
+    } finally {
+      await (container as unknown as { dispose?: () => Promise<void> }).dispose?.()
+    }
+  },
+}
+
 const verifyLegacy: ModuleCli = {
   command: 'verify-legacy',
   async run(args) {
@@ -203,6 +352,7 @@ const purgeLegacy: ModuleCli = {
 }
 
 const commands = [
+  ensureOrganizationSetup,
   migrateLegacy,
   verifyLegacy,
   cutoverCommand('cutover-legacy', false),
