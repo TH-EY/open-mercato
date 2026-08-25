@@ -10,7 +10,7 @@ import { Button } from '@open-mercato/ui/primitives/button'
 import { Avatar } from '@open-mercato/ui/primitives/avatar'
 import { IconButton } from '@open-mercato/ui/primitives/icon-button'
 import { Popover, PopoverContent, PopoverTrigger } from '@open-mercato/ui/primitives/popover'
-import type { CompanyPersonSummary } from './CompanyPeopleSection'
+import type { LinkedPersonSummary } from './LinkedPeopleSection'
 import { formatDate, formatFallbackLabel } from './utils'
 
 const sourceColorMap: Record<string, string> = {
@@ -52,7 +52,7 @@ function splitSourceTags(source: string | null | undefined): string[] {
 }
 
 interface PersonCardProps {
-  person: CompanyPersonSummary
+  person: LinkedPersonSummary
   isStarred?: boolean
   onToggleStar?: (personId: string) => void
   onUnlink?: (personId: string) => void
