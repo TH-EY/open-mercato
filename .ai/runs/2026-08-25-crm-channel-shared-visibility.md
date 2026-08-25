@@ -58,9 +58,9 @@ Prerequisite for everything after it — makes the widening safe.
 
 ### Phase 1: Consolidate enforcement
 
-- [ ] 1.1 Fix the filter-fragment contract to an opaque FilterQuery; convert all four MikroORM callers; unit-test non-$or arm survival
-- [ ] 1.2 Route the two inline visibility defaults in link-channel-message-handler onto resolveVisibility()
-- [ ] 1.3 Move privateEmailCountEnricher and interactionEmailCardEnricher onto the shared predicate
+- [x] 1.1 Fix the filter-fragment contract to an opaque FilterQuery; convert all four MikroORM callers; unit-test non-$or arm survival — 81736cfc1
+- [x] 1.2 Route the two inline visibility defaults in link-channel-message-handler onto resolveVisibility() — 81736cfc1
+- [x] 1.3 Move privateEmailCountEnricher and interactionEmailCardEnricher onto the shared predicate — 81736cfc1
 
 ### Phase 2: Share model and write path
 
