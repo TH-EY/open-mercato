@@ -45,6 +45,10 @@ jobs:
         with:
           ref: ${{ github.event.inputs.branch || github.ref_name }}
 
+      - name: Resolve deployment commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -70,7 +74,7 @@ jobs:
             --query 'repositories[0].repositoryUri' \
             --output text)"
           echo "repository_url=${REPOSITORY_URL}" >> "$GITHUB_OUTPUT"
-          echo "image_uri=${REPOSITORY_URL}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "image_uri=${REPOSITORY_URL}:${{ steps.source.outputs.sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full' }}
@@ -151,6 +155,7 @@ jobs:
         env:
           APP_IMAGE: ${{ steps.ecr.outputs.image_uri }}
           BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
+          DEPLOY_SHA: ${{ steps.source.outputs.sha }}
           DEPLOY_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'full' }}
           APP_URL: https://crm.they.dev
           APP_PORT: 3001
@@ -159,6 +164,7 @@ jobs:
         run: |
           {
             printf 'branch=%q\n' "${BRANCH}"
+            printf 'deployment_sha=%q\n' "${DEPLOY_SHA}"
             printf 'deploy_mode=%q\n' "${DEPLOY_MODE}"
             printf 'app_image=%q\n' "${APP_IMAGE}"
             printf 'app_url=%q\n' "${APP_URL}"
@@ -184,12 +190,19 @@ jobs:
               exit 1
             fi
             rm -rf "${workdir}"
-            git clone --branch "${branch}" --single-branch "${repo_url}" "${workdir}"
-          elif [[ "${deploy_mode}" == "full" ]]; then
+            git clone --no-checkout "${repo_url}" "${workdir}"
+          fi
+
+          if [[ "${deploy_mode}" == "full" ]]; then
             git -C "${workdir}" remote set-url origin "${repo_url}"
             git -C "${workdir}" fetch origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" --prune
-            git -C "${workdir}" checkout -B "${branch}" "origin/${branch}"
-            git -C "${workdir}" reset --hard "origin/${branch}"
+            remote_sha="$(git -C "${workdir}" rev-parse "origin/${branch}")"
+            if [[ "${remote_sha}" != "${deployment_sha}" ]]; then
+              echo "Requested branch moved during the build: expected ${deployment_sha}, found ${remote_sha}." >&2
+              exit 1
+            fi
+            git -C "${workdir}" checkout -B "${branch}" "${deployment_sha}"
+            git -C "${workdir}" reset --hard "${deployment_sha}"
             git -C "${workdir}" clean -fdx -e .env.crm
           fi
 
@@ -406,7 +419,7 @@ jobs:
             echo "- URL: https://crm.they.dev"
             echo "- Branch: \`${{ github.event.inputs.branch || github.ref_name }}\`"
             echo "- Deploy mode: \`${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode || 'full' }}\`"
-            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Commit: \`${{ steps.source.outputs.sha }}\`"
             echo "- Image: \`${{ steps.ecr.outputs.image_uri || 'unchanged config-restart image' }}\`"
             echo "- Build cache: GitHub Actions cache + ECR registry cache \`${{ steps.ecr.outputs.repository_url || 'n/a' }}:buildcache\`"
             echo "- Public smoke: \`${{ steps.public-smoke.outputs.status || 'not-run' }}\` in \`${{ steps.public-smoke.outputs.time_total || 'n/a' }}s\`"

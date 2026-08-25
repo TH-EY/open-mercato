@@ -170,6 +170,16 @@ test('CRM deployments fetch requested branches into remote-tracking refs', () =>
     deployScript,
     /fetch origin "\+refs\/heads\/\$branch:refs\/remotes\/origin\/\$branch" --prune/,
   )
+
+  assert.match(workflow, /id: source\n\s+run: echo "sha=\$\(git rev-parse HEAD\)"/)
+  assert.match(
+    workflow,
+    /image_uri=\$\{REPOSITORY_URL\}:\$\{\{ steps\.source\.outputs\.sha \}\}/,
+  )
+  assert.match(workflow, /DEPLOY_SHA: \$\{\{ steps\.source\.outputs\.sha \}\}/)
+  assert.match(workflow, /if \[\[ "\$\{remote_sha\}" != "\$\{deployment_sha\}" \]\]/)
+  assert.match(workflow, /checkout -B "\$\{branch\}" "\$\{deployment_sha\}"/)
+  assert.doesNotMatch(workflow, /image_uri=\$\{REPOSITORY_URL\}:\$\{GITHUB_SHA\}/)
 })
 
 test('CRM infrastructure workflow cannot execute an unrestricted apply', () => {
