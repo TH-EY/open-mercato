@@ -140,7 +140,7 @@ test('operator-invoked upgrade keeps the healthy live port until candidate smoke
   assert.match(upgradeScript, /immutable_image="\$\{deploy_app_image%:\*\}@\$\{deploy_app_digest\}"/)
   assert.match(upgradeScript, /org\.opencontainers\.image\.revision/)
   assert.match(upgradeScript, /image revision does not match the requested commit/)
-  assert.match(upgradeScript, /exact approved smoke-role password secret identifiers/)
+  assert.match(upgradeScript, /exact approved Finoo admin password secret identifier/)
   assert.match(upgradeScript, /checkout does not match the requested immutable commit/)
   assert.match(upgradeScript, /upgrade requires a clean checkout/)
   assert.match(upgradeScript, /Finoo rollback target is not healthy before upgrade/)
@@ -175,9 +175,32 @@ test('operator-invoked upgrade keeps the healthy live port until candidate smoke
   assert.match(upgradeScript, /if signup_code="\$\(curl/)
   assert.doesNotMatch(upgradeScript, /down --remove-orphans --volumes/)
   assert.doesNotMatch(upgradeScript, /delete-target-group|modify-rule|delete-rule/)
-  assert.doesNotMatch(upgradeScript, /FINOO_ADMIN_PASSWORD_SECRET_ID/)
-  assert.doesNotMatch(upgradeScript, /run_role_smoke admin/)
-  assert.match(upgradeScript, /Existing admin role assignment verified without password access/)
+  assert.match(upgradeScript, /FINOO_ADMIN_PASSWORD_SECRET_ID/)
+  assert.doesNotMatch(upgradeScript, /FINOO_(SUPERADMIN|EMPLOYEE)_PASSWORD_SECRET_ID/)
+  assert.doesNotMatch(upgradeScript, /superadmin-password|employee-password/)
+  assert.match(upgradeScript, /finoo-demo\/finoo-admin-password/)
+  assert.match(upgradeScript, /ensure-admin-credential/)
+  assert.match(upgradeScript, /--password-stdin/)
+  assert.match(upgradeScript, /SMOKE_TEST_TENANT_ID/)
+  assert.match(upgradeScript, /REQUIRE_TENANT_SCOPE=true/)
+  assert.match(upgradeScript, /run_finoo_admin_smoke/)
+  assert.match(upgradeScript, /admin_credential_attempted=false/)
+  assert.match(upgradeScript, /admin_credential_attempted=true/)
+  assert.match(upgradeScript, /admin_credential_applied=false/)
+  assert.match(upgradeScript, /admin_credential_applied=true/)
+  assert.match(upgradeScript, /persistent_finoo_admin_credential_verified_during_stage_cleanup=true/)
+  assert.match(upgradeScript, /persistent_finoo_admin_credential_verified_after_rollback=true/)
+  const credentialApply = upgradeScript.indexOf('docker exec -i "$candidate_container" yarn mercato finoo_customer_retention ensure-admin-credential')
+  const attemptedState = upgradeScript.indexOf('admin_credential_attempted=true')
+  const attemptedSync = upgradeScript.indexOf('sync "$pending_file"', attemptedState)
+  const appliedState = upgradeScript.indexOf('admin_credential_applied=true', credentialApply)
+  const cleanupVerifier = upgradeScript.indexOf('verify_stage_cleanup_admin_credential ||')
+  const cleanupPendingRemoval = upgradeScript.indexOf('rm -f -- "$env_backup" "$commit_backup" "$digest_backup" "$pending_file"')
+  assert.ok(attemptedState > -1 && attemptedSync > attemptedState && credentialApply > attemptedSync)
+  assert.ok(appliedState > credentialApply)
+  assert.match(upgradeScript, /if \[\[ "\$admin_credential_attempted" != true \]\]; then return 0; fi/)
+  assert.ok(cleanupVerifier > -1 && cleanupVerifier < cleanupPendingRemoval)
+  assert.doesNotMatch(upgradeScript, /auth list-users|run_role_smoke/)
 })
 
 test('upgrade configures Finoo attribution securely without logging credentials', () => {
@@ -230,9 +253,66 @@ test('authenticated smoke verifies email, role, and backend access', async () =>
       status: 200,
       headers: { 'set-cookie': 'auth_token=token; Path=/; HttpOnly' },
     }),
+    new Response(JSON.stringify({ email: 'admin@finoo.om.they.dev', roles: ['Finoo Superadmin'] }), { status: 200 }),
+    new Response('<html>backend</html>', { status: 200 }),
+  ]
+  const requests = []
+  await runSmoke({
+    env: {
+      BASE_URL: 'https://finoo.om.they.dev',
+      SMOKE_TEST_EMAIL: 'admin@finoo.om.they.dev',
+      SMOKE_TEST_PASSWORD: 'not-a-real-secret',
+      EXPECTED_ROLE: 'Finoo Superadmin',
+      SMOKE_TEST_TENANT_ID: '26d5dc28-6df5-4944-b0e9-0ff26a8bf8a6',
+      REQUIRE_TENANT_SCOPE: 'true',
+    },
+    fetch: async (url, options) => {
+      requests.push({ url, options })
+      return responses.shift()
+    },
+    log: () => {},
+  })
+  assert.equal(responses.length, 0)
+  assert.equal(
+    requests[0].url,
+    'https://finoo.om.they.dev/login?tenant=26d5dc28-6df5-4944-b0e9-0ff26a8bf8a6',
+  )
+  assert.equal(
+    requests[1].options.body.get('tenantId'),
+    '26d5dc28-6df5-4944-b0e9-0ff26a8bf8a6',
+  )
+})
+
+test('authenticated smoke requires an explicit tenant scope', async () => {
+  await assert.rejects(
+    runSmoke({
+      env: {
+        BASE_URL: 'https://finoo.om.they.dev',
+        SMOKE_TEST_EMAIL: 'admin@finoo.om.they.dev',
+        SMOKE_TEST_PASSWORD: 'not-a-real-secret',
+        EXPECTED_ROLE: 'Finoo Superadmin',
+        REQUIRE_TENANT_SCOPE: 'true',
+      },
+      fetch: async () => {
+        throw new Error('fetch must not run')
+      },
+      log: () => {},
+    }),
+    /SMOKE_TEST_TENANT_ID/,
+  )
+})
+
+test('authenticated smoke preserves first-provision compatibility outside strict tenant mode', async () => {
+  const responses = [
+    new Response('', { status: 200 }),
+    new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'set-cookie': 'auth_token=token; Path=/; HttpOnly' },
+    }),
     new Response(JSON.stringify({ email: 'admin@finoo.om.they.dev', roles: ['admin'] }), { status: 200 }),
     new Response('<html>backend</html>', { status: 200 }),
   ]
+  const requests = []
   await runSmoke({
     env: {
       BASE_URL: 'https://finoo.om.they.dev',
@@ -240,10 +320,14 @@ test('authenticated smoke verifies email, role, and backend access', async () =>
       SMOKE_TEST_PASSWORD: 'not-a-real-secret',
       EXPECTED_ROLE: 'admin',
     },
-    fetch: async () => responses.shift(),
+    fetch: async (url, options) => {
+      requests.push({ url, options })
+      return responses.shift()
+    },
     log: () => {},
   })
-  assert.equal(responses.length, 0)
+  assert.equal(requests[0].url, 'https://finoo.om.they.dev/login')
+  assert.equal(requests[1].options.body.has('tenantId'), false)
 })
 
 test('authenticated smoke rejects a mismatched role', async () => {
@@ -261,11 +345,13 @@ test('authenticated smoke rejects a mismatched role', async () => {
         BASE_URL: 'https://finoo.om.they.dev',
         SMOKE_TEST_EMAIL: 'employee@finoo.om.they.dev',
         SMOKE_TEST_PASSWORD: 'not-a-real-secret',
-        EXPECTED_ROLE: 'admin',
+        EXPECTED_ROLE: 'Finoo Superadmin',
+        SMOKE_TEST_TENANT_ID: '26d5dc28-6df5-4944-b0e9-0ff26a8bf8a6',
+        REQUIRE_TENANT_SCOPE: 'true',
       },
       fetch: async () => responses.shift(),
       log: () => {},
     }),
-    /did not prove admin access/,
+    /did not prove Finoo Superadmin access/,
   )
 })

@@ -43,23 +43,33 @@ export async function runSmoke(options = {}) {
   const email = env.SMOKE_TEST_EMAIL || ''
   const password = env.SMOKE_TEST_PASSWORD || ''
   const expectedRole = env.EXPECTED_ROLE || ''
+  const tenantId = env.SMOKE_TEST_TENANT_ID || ''
+  const requireTenantScope = env.REQUIRE_TENANT_SCOPE === 'true'
 
   if (!email) throw new Error('Missing required environment variable: SMOKE_TEST_EMAIL')
   if (!password) throw new Error('Missing required environment variable: SMOKE_TEST_PASSWORD')
   if (!expectedRole) throw new Error('Missing required environment variable: EXPECTED_ROLE')
+  if (requireTenantScope && !tenantId) {
+    throw new Error('Missing required environment variable: SMOKE_TEST_TENANT_ID')
+  }
 
-  const loginPageResponse = await fetchImpl(`${baseUrl}/login`, {
+  const loginUrl = tenantId
+    ? `${baseUrl}/login?tenant=${encodeURIComponent(tenantId)}`
+    : `${baseUrl}/login`
+  const loginPageResponse = await fetchImpl(loginUrl, {
     headers: { 'accept-language': 'en-US,en;q=0.9' },
   })
   if (!loginPageResponse.ok) throw new Error(`Login page returned HTTP ${loginPageResponse.status}`)
 
+  const loginBody = new URLSearchParams({ email, password, remember: '0' })
+  if (tenantId) loginBody.set('tenantId', tenantId)
   const loginResponse = await fetchImpl(`${baseUrl}/api/auth/login`, {
     method: 'POST',
     headers: {
       'content-type': 'application/x-www-form-urlencoded',
       'accept-language': 'en-US,en;q=0.9',
     },
-    body: new URLSearchParams({ email, password, remember: '0' }),
+    body: loginBody,
   })
   const loginText = await readText(loginResponse)
   let loginJson = null

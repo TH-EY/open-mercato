@@ -8,8 +8,7 @@ DEPLOY_APP_DIGEST="${DEPLOY_APP_DIGEST:-}"
 OM_FINOO_AFFILIATE_REDIRECT_HOSTS="${OM_FINOO_AFFILIATE_REDIRECT_HOSTS:-}"
 OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL="${OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL:-}"
 RATE_LIMIT_TRUST_PROXY_DEPTH="${RATE_LIMIT_TRUST_PROXY_DEPTH:-}"
-FINOO_SUPERADMIN_PASSWORD_SECRET_ID="${FINOO_SUPERADMIN_PASSWORD_SECRET_ID:-}"
-FINOO_EMPLOYEE_PASSWORD_SECRET_ID="${FINOO_EMPLOYEE_PASSWORD_SECRET_ID:-}"
+FINOO_ADMIN_PASSWORD_SECRET_ID="${FINOO_ADMIN_PASSWORD_SECRET_ID:-}"
 FINOO_SES_CREDENTIALS_STAGED="${FINOO_SES_CREDENTIALS_STAGED:-false}"
 SYSTEM_EMAIL_PROVIDER=ses
 AWS_SES_REGION=eu-west-2
@@ -28,6 +27,7 @@ ACTIVE_CONTAINER=demo-finoo-app-1
 CANDIDATE_CONTAINER=demo-finoo-app-candidate
 FINOO_TENANT_ID=26d5dc28-6df5-4944-b0e9-0ff26a8bf8a6
 FINOO_ORGANIZATION_ID=4ec19265-3d35-4e9f-bcd2-531e62cf8385
+FINOO_ADMIN_USER_ID=51d91b4b-622a-46d6-9207-a1a8d394b2c5
 
 require_value() {
   local name="$1"
@@ -42,7 +42,7 @@ for required_name in \
   DEPLOY_COMMIT DEPLOY_APP_IMAGE DEPLOY_APP_DIGEST \
   OM_FINOO_AFFILIATE_REDIRECT_HOSTS OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL \
   RATE_LIMIT_TRUST_PROXY_DEPTH \
-  FINOO_SUPERADMIN_PASSWORD_SECRET_ID FINOO_EMPLOYEE_PASSWORD_SECRET_ID; do
+  FINOO_ADMIN_PASSWORD_SECRET_ID; do
   require_value "$required_name" "${!required_name}"
 done
 
@@ -58,9 +58,8 @@ if [[ "$DEPLOY_APP_IMAGE" != *":finoo-${DEPLOY_COMMIT}" ]]; then
   echo "Finoo upgrade image tag must bind the exact deployment commit" >&2
   exit 1
 fi
-if [[ "$FINOO_SUPERADMIN_PASSWORD_SECRET_ID" != openmercato-upstream-baseline-dokploy/finoo-demo/superadmin-password || \
-      "$FINOO_EMPLOYEE_PASSWORD_SECRET_ID" != openmercato-upstream-baseline-dokploy/finoo-demo/employee-password ]]; then
-  echo "Finoo upgrade requires the exact approved smoke-role password secret identifiers" >&2
+if [[ "$FINOO_ADMIN_PASSWORD_SECRET_ID" != openmercato-upstream-baseline-dokploy/finoo-demo/finoo-admin-password ]]; then
+  echo "Finoo upgrade requires the exact approved Finoo admin password secret identifier" >&2
   exit 1
 fi
 if [[ "$OM_FINOO_AFFILIATE_REDIRECT_HOSTS" != finoo.pl ]]; then
@@ -155,11 +154,11 @@ trap 'rm -f -- "$REMOTE_SCRIPT"' EXIT
   printf 'ses_configuration_set=%q\n' "$AWS_SES_CONFIGURATION_SET"
   printf 'email_from=%q\n' "$EMAIL_FROM"
   printf 'notifications_email_from=%q\n' "$NOTIFICATIONS_EMAIL_FROM"
-  printf 'superadmin_secret_id=%q\n' "$FINOO_SUPERADMIN_PASSWORD_SECRET_ID"
-  printf 'employee_secret_id=%q\n' "$FINOO_EMPLOYEE_PASSWORD_SECRET_ID"
+  printf 'finoo_admin_secret_id=%q\n' "$FINOO_ADMIN_PASSWORD_SECRET_ID"
   printf 'ses_credentials_staged=%q\n' "$FINOO_SES_CREDENTIALS_STAGED"
   printf 'finoo_tenant_id=%q\n' "$FINOO_TENANT_ID"
   printf 'finoo_organization_id=%q\n' "$FINOO_ORGANIZATION_ID"
+  printf 'finoo_admin_user_id=%q\n' "$FINOO_ADMIN_USER_ID"
   printf 'workdir=%q\n' "$WORKDIR"
   printf 'live_port=%q\n' "$PORT"
   printf 'candidate_port=%q\n' "$CANDIDATE_PORT"
@@ -209,6 +208,8 @@ legacy_cutover_attempted=false
 preserve_new_runtime=false
 env_modified=false
 stage_complete=false
+admin_credential_attempted=false
+admin_credential_applied=false
 immutable_image="${deploy_app_image%:*}@${deploy_app_digest}"
 
 restore_staged_ses_credentials() {
@@ -475,6 +476,24 @@ restore_old() {
   fi
 }
 
+verify_stage_cleanup_admin_credential() {
+  if [[ "$admin_credential_attempted" != true ]]; then return 0; fi
+  docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"
+  aws secretsmanager get-secret-value \
+    --region "$aws_region" \
+    --secret-id "$finoo_admin_secret_id" \
+    --query SecretString \
+    --output text |
+    docker exec -i \
+      -e SMOKE_TEST_EMAIL=admin@finoo.om.they.dev \
+      -e 'EXPECTED_ROLE=Finoo Superadmin' \
+      -e "SMOKE_TEST_TENANT_ID=${finoo_tenant_id}" \
+      -e REQUIRE_TENANT_SCOPE=true \
+      -e BASE_URL=http://127.0.0.1:3000 \
+      "$active_container" sh -lc 'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /tmp/finoo-smoke-auth-dashboard.mjs --run-smoke'
+  echo "persistent_finoo_admin_credential_verified_during_stage_cleanup=true"
+}
+
 cleanup() {
   local status=$?
   local cleanup_failed=false
@@ -504,6 +523,13 @@ cleanup() {
       cleanup_failed=true
       status=70
     fi
+  fi
+  if [[ "$stage_complete" != true && "$cleanup_failed" != true ]]; then
+    verify_stage_cleanup_admin_credential || {
+      echo "Finoo persistent administrator credential could not be verified after stage recovery" >&2
+      cleanup_failed=true
+      status=72
+    }
   fi
   if [[ "$stage_complete" != true && "$cleanup_failed" != true ]]; then
     rm -f -- "$env_backup" "$commit_backup" "$digest_backup" "$pending_file"
@@ -536,6 +562,11 @@ deploy_app_digest=${deploy_app_digest}
 ses_credentials_staged=${ses_credentials_staged}
 finoo_tenant_id=${finoo_tenant_id}
 finoo_organization_id=${finoo_organization_id}
+finoo_admin_user_id=${finoo_admin_user_id}
+finoo_admin_secret_id=${finoo_admin_secret_id}
+aws_region=${aws_region}
+admin_credential_attempted=false
+admin_credential_applied=false
 immutable_image=${immutable_image}
 old_container_id=${old_container_id}
 old_image_id=${old_image_id}
@@ -649,6 +680,24 @@ if [[ "$signup_status" != 404 && "$signup_status" != 405 ]]; then
   echo "Finoo candidate still exposes customer self-registration" >&2
   exit 1
 fi
+admin_credential_attempted=true
+printf 'admin_credential_attempted=true\n' >> "$pending_file"
+sync "$pending_file"
+aws secretsmanager get-secret-value \
+  --region "$aws_region" \
+  --secret-id "$finoo_admin_secret_id" \
+  --query SecretString \
+  --output text |
+  docker exec -i "$candidate_container" yarn mercato finoo_customer_retention ensure-admin-credential \
+    --tenant "$finoo_tenant_id" \
+    --organization "$finoo_organization_id" \
+    --user "$finoo_admin_user_id" \
+    --password-stdin \
+    --apply
+admin_credential_applied=true
+printf 'admin_credential_applied=true\n' >> "$pending_file"
+sync "$pending_file"
+echo "[finoo-auth] Exact tenant-scoped Finoo admin credential verified"
 
 python3 - .env "$redirect_hosts" "$default_affiliate_destination" "$proxy_depth" "$system_email_provider" "$ses_region" "$ses_configuration_set" "$email_from" "$notifications_email_from" <<'PY'
 import os
@@ -748,40 +797,21 @@ docker rm -f "$candidate_container" >/dev/null
 candidate_created=false
 
 docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"
-run_role_smoke() {
-  local role="$1"
-  local email="$2"
-  local secret_id="$3"
-  local password
-  password="$(aws secretsmanager get-secret-value --region "$aws_region" --secret-id "$secret_id" --query SecretString --output text)"
-  printf '%s\n' "$password" |
+run_finoo_admin_smoke() {
+  aws secretsmanager get-secret-value \
+    --region "$aws_region" \
+    --secret-id "$finoo_admin_secret_id" \
+    --query SecretString \
+    --output text |
     docker exec -i \
-      -e "SMOKE_TEST_EMAIL=${email}" \
-      -e "EXPECTED_ROLE=${role}" \
+      -e SMOKE_TEST_EMAIL=admin@finoo.om.they.dev \
+      -e 'EXPECTED_ROLE=Finoo Superadmin' \
+      -e "SMOKE_TEST_TENANT_ID=${finoo_tenant_id}" \
+      -e REQUIRE_TENANT_SCOPE=true \
       -e BASE_URL=http://127.0.0.1:3000 \
       "$active_container" sh -lc 'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /tmp/finoo-smoke-auth-dashboard.mjs --run-smoke'
-  unset password
 }
-run_role_smoke superadmin superadmin@finoo.om.they.dev "$superadmin_secret_id"
-run_role_smoke employee employee@finoo.om.they.dev "$employee_secret_id"
-
-if ! user_listing="$(docker exec "$active_container" sh -lc 'yarn mercato auth list-users' 2>/dev/null)"; then
-  echo "Finoo admin account metadata could not be read" >&2
-  exit 1
-fi
-admin_roles="$(printf '%s\n' "$user_listing" | awk -F '|' '
-  $2 ~ /^[[:space:]]*admin@finoo[.]om[.]they[.]dev[[:space:]]*$/ {
-    gsub(/^[[:space:]]+|[[:space:]]+$/, "", $6)
-    print $6
-  }
-')"
-unset user_listing
-if ! printf '%s\n' "$admin_roles" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -Fxq admin; then
-  echo "Finoo admin account or role assignment is missing" >&2
-  exit 1
-fi
-unset admin_roles
-echo "[finoo-smoke] Existing admin role assignment verified without password access"
+run_finoo_admin_smoke
 
 if [[ "$(docker inspect --format '{{.Image}}' "$active_container")" != "$new_image_id" ]]; then
   echo "Finoo active container does not use the staged image" >&2
@@ -884,6 +914,7 @@ fi
 set -a
 source "$pending_file"
 set +a
+admin_credential_attempted="${admin_credential_attempted:-${admin_credential_applied:-false}}"
 if [[ "$deploy_token" != "$requested_token" ]]; then
   echo "Finoo deployment token mismatch" >&2
   exit 1
@@ -1025,6 +1056,23 @@ restore_preserved_new_runtime() {
   docker start "$active_container" >/dev/null || return 1
   wait_for_login || return 1
 }
+verify_persistent_finoo_admin_credential() {
+  if [[ "$admin_credential_attempted" != true ]]; then return 0; fi
+  docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"
+  aws secretsmanager get-secret-value \
+    --region "$aws_region" \
+    --secret-id "$finoo_admin_secret_id" \
+    --query SecretString \
+    --output text |
+    docker exec -i \
+      -e SMOKE_TEST_EMAIL=admin@finoo.om.they.dev \
+      -e 'EXPECTED_ROLE=Finoo Superadmin' \
+      -e "SMOKE_TEST_TENANT_ID=${finoo_tenant_id}" \
+      -e REQUIRE_TENANT_SCOPE=true \
+      -e BASE_URL=http://127.0.0.1:3000 \
+      "$active_container" sh -lc 'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /tmp/finoo-smoke-auth-dashboard.mjs --run-smoke'
+  echo "persistent_finoo_admin_credential_verified_after_rollback=true"
+}
 if [[ "$decision" == finalize ]]; then
   test "$(docker inspect --format '{{.Image}}' "$active_container")" = "$new_image_id"
   test "$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "$active_container")" = unless-stopped
@@ -1100,6 +1148,7 @@ if [[ -f "$env_backup" ]]; then
   chmod 600 .env || failed=true
 fi
 restore_staged_ses_credentials || failed=true
+verify_persistent_finoo_admin_credential || failed=true
 if [[ "$prior_commit_present" == true ]]; then
   cp -p -- "$commit_backup" .finoo-active-commit || failed=true
   chmod 600 .finoo-active-commit || failed=true
