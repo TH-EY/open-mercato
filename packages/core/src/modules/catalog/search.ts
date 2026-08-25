@@ -363,6 +363,7 @@ export const searchConfig: SearchModuleConfig = {
     },
     {
       entityId: 'catalog:catalog_service',
+      aclFeatures: ['catalog.services.view'],
       enabled: true,
       priority: 9,
       buildSource: async (ctx) => {
