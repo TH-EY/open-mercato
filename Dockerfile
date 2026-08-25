@@ -252,6 +252,7 @@ COPY --from=builder /app/apps/mercato/types ./apps/mercato/types
 
 # Copy runtime configuration files
 COPY --from=builder /app/newrelic.js ./
+COPY --from=builder /app/scripts/smoke-auth-dashboard.mjs ./scripts/smoke-auth-dashboard.mjs
 
 # Copy Railway entrypoint script
 COPY docker/scripts/railway-entrypoint.sh /app/docker/scripts/railway-entrypoint.sh

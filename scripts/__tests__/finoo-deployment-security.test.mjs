@@ -10,6 +10,7 @@ const workflow = fs.readFileSync(path.resolve('.github/workflows/fork-finoo-demo
 const deployScript = fs.readFileSync(path.resolve('infra/aws-upstream-baseline/finoo-demo-provision.sh'), 'utf8')
 const upgradeScript = fs.readFileSync(path.resolve('infra/aws-upstream-baseline/finoo-demo-upgrade.sh'), 'utf8')
 const provision = fs.readFileSync(path.resolve('infra/aws-upstream-baseline/docker-compose.finoo-provision.yml'), 'utf8')
+const dockerfile = fs.readFileSync(path.resolve('Dockerfile'), 'utf8')
 
 function extractShellFunctions(source, name) {
   return [...source.matchAll(new RegExp(`^${name}\\(\\) \\{\\n[\\s\\S]*?^\\}`, 'gm'))]
@@ -194,9 +195,13 @@ test('operator-invoked upgrade keeps the healthy live port until candidate smoke
   assert.match(upgradeScript, /SMOKE_TEST_TENANT_ID/)
   assert.match(upgradeScript, /REQUIRE_TENANT_SCOPE=true/)
   assert.match(upgradeScript, /run_finoo_admin_smoke/)
+  assert.equal((upgradeScript.match(/install_finoo_smoke_helper\(\)/g) ?? []).length, 2)
   assert.equal((upgradeScript.match(/wait_for_finoo_admin_smoke\(\)/g) ?? []).length, 2)
-  assert.match(upgradeScript, /for attempt in \$\(seq 1 24\)/)
-  assert.match(upgradeScript, /docker cp scripts\/smoke-auth-dashboard\.mjs "\$\{active_container\}:\/tmp\/finoo-smoke-auth-dashboard\.mjs"\nwait_for_finoo_admin_smoke "\$active_container"/)
+  assert.equal((upgradeScript.match(/for attempt in \$\(seq 1 6\); do\s+if run_finoo_admin_smoke "\$container"; then return 0; fi\s+sleep 65/g) ?? []).length, 2)
+  assert.match(upgradeScript, /install_finoo_smoke_helper "\$active_container"\nwait_for_finoo_admin_smoke "\$active_container"/)
+  assert.doesNotMatch(upgradeScript, /docker cp scripts\/smoke-auth-dashboard\.mjs/)
+  assert.equal((upgradeScript.match(/docker run --rm --entrypoint \/bin\/cat "\$immutable_image" \/app\/scripts\/smoke-auth-dashboard\.mjs/g) ?? []).length, 2)
+  assert.equal((upgradeScript.match(/"\$target_hash" == "\$source_hash"/g) ?? []).length, 2)
   assert.equal((upgradeScript.match(/timeout --signal=TERM --kill-after=5s 20s aws secretsmanager get-secret-value/g) ?? []).length, 2)
   assert.equal((upgradeScript.match(/timeout --signal=TERM --kill-after=5s 30s docker exec -i/g) ?? []).length, 2)
   assert.equal((upgradeScript.match(/-e SMOKE_REQUEST_TIMEOUT_MS=5000/g) ?? []).length, 2)
@@ -258,23 +263,35 @@ printf 'permanent_failure=true\\n'
   }
 })
 
-test('rollback credential proof fails closed when the reviewed smoke copy fails', () => {
+test('rollback credential proof fails closed when the immutable helper install fails', () => {
+  const installers = extractShellFunctions(upgradeScript, 'install_finoo_smoke_helper')
   const verifiers = [
     ...extractShellFunctions(upgradeScript, 'verify_stage_cleanup_admin_credential'),
     ...extractShellFunctions(upgradeScript, 'verify_persistent_finoo_admin_credential'),
   ]
+  assert.equal(installers.length, 2)
   assert.equal(verifiers.length, 2)
-  for (const verifier of verifiers) {
+  for (const [index, verifier] of verifiers.entries()) {
     const functionName = verifier.match(/^(\w+)\(\)/)?.[1]
     assert.ok(functionName)
     const result = runBash(`
 set -u
+${installers[index]}
 ${verifier}
 admin_credential_applied=true
 active_container=active
+immutable_image=immutable
 docker() {
-  if [[ "$1" == exec ]]; then return 0; fi
-  if [[ "$1" == cp ]]; then return 1; fi
+  if [[ "$1" == run && "$*" == *"/bin/sh"* ]]; then
+    printf 'reviewedhash  /app/scripts/smoke-auth-dashboard.mjs\\n'
+    return 0
+  fi
+  if [[ "$1" == exec && "$*" == *"rm -f"* ]]; then return 0; fi
+  if [[ "$1" == run && "$*" == *"/bin/cat"* ]]; then
+    printf 'reviewed helper'
+    return 0
+  fi
+  if [[ "$1" == exec && "$*" == *"umask 022; cat > /tmp/finoo-smoke-auth-dashboard.mjs"* ]]; then return 1; fi
   return 2
 }
 wait_for_finoo_admin_smoke() {
@@ -291,6 +308,52 @@ printf 'pending_removed=%s\\n' "$pending_removed"
     assert.match(result.stdout, /pending_removed=false/)
     assert.doesNotMatch(result.stdout, /stale_smoke_ran=true|persistent_finoo_admin_credential_verified/)
   }
+})
+
+test('rollback credential proof accepts only the hash-matched immutable helper', () => {
+  const installer = extractShellFunctions(upgradeScript, 'install_finoo_smoke_helper')[0]
+  const verifier = extractShellFunctions(upgradeScript, 'verify_stage_cleanup_admin_credential')[0]
+  const result = runBash(`
+set -uo pipefail
+${installer}
+${verifier}
+admin_credential_applied=true
+active_container=active
+immutable_image=immutable
+docker() {
+  if [[ "$1" == run && "$*" == *"/bin/sh"* ]]; then
+    printf 'reviewedhash  /app/scripts/smoke-auth-dashboard.mjs\\n'
+    return 0
+  fi
+  if [[ "$1" == exec && "$*" == *"rm -f"* ]]; then return 0; fi
+  if [[ "$1" == run && "$*" == *"/bin/cat"* ]]; then
+    printf 'reviewed helper'
+    return 0
+  fi
+  if [[ "$1" == exec && "$*" == *"umask 022; cat > /tmp/finoo-smoke-auth-dashboard.mjs"* ]]; then
+    cat >/dev/null
+    return 0
+  fi
+  if [[ "$1" == exec && "$*" == *"sha256sum /tmp/finoo-smoke-auth-dashboard.mjs"* ]]; then
+    printf 'reviewedhash  /tmp/finoo-smoke-auth-dashboard.mjs\\n'
+    return 0
+  fi
+  return 2
+}
+wait_for_finoo_admin_smoke() {
+  printf 'tenant_smoke_ran=true\\n'
+  return 0
+}
+verify_stage_cleanup_admin_credential
+`)
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /tenant_smoke_ran=true/)
+  assert.match(result.stdout, /persistent_finoo_admin_credential_verified_during_stage_cleanup=true/)
+})
+
+test('production image carries the reviewed authenticated smoke helper', () => {
+  const runnerStage = dockerfile.slice(dockerfile.indexOf('FROM node:24-alpine AS runner'))
+  assert.match(runnerStage, /COPY --from=builder \/app\/scripts\/smoke-auth-dashboard\.mjs \.\/scripts\/smoke-auth-dashboard\.mjs/)
 })
 
 test('upgrade configures Finoo attribution securely without logging credentials', () => {

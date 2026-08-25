@@ -241,6 +241,27 @@ wait_for_login() {
   return 1
 }
 
+install_finoo_smoke_helper() {
+  local container="$1"
+  local source_hash
+  local target_hash
+  if ! source_hash="$(docker run --rm --entrypoint /bin/sh "$immutable_image" -c 'sha256sum /app/scripts/smoke-auth-dashboard.mjs' | awk '{print $1}')"; then
+    return 1
+  fi
+  if [[ -z "$source_hash" ]]; then return 1; fi
+  if ! docker exec --user 0 "$container" rm -f -- /tmp/finoo-smoke-auth-dashboard.mjs; then
+    return 1
+  fi
+  if ! docker run --rm --entrypoint /bin/cat "$immutable_image" /app/scripts/smoke-auth-dashboard.mjs |
+    docker exec --user 0 -i "$container" sh -c 'umask 022; cat > /tmp/finoo-smoke-auth-dashboard.mjs'; then
+    return 1
+  fi
+  if ! target_hash="$(docker exec "$container" sha256sum /tmp/finoo-smoke-auth-dashboard.mjs | awk '{print $1}')"; then
+    return 1
+  fi
+  [[ "$target_hash" == "$source_hash" ]]
+}
+
 run_finoo_admin_smoke() {
   local container="$1"
   timeout --signal=TERM --kill-after=5s 20s aws secretsmanager get-secret-value \
@@ -262,9 +283,9 @@ run_finoo_admin_smoke() {
 
 wait_for_finoo_admin_smoke() {
   local container="$1"
-  for attempt in $(seq 1 24); do
+  for attempt in $(seq 1 6); do
     if run_finoo_admin_smoke "$container"; then return 0; fi
-    sleep 5
+    sleep 65
   done
   return 1
 }
@@ -302,10 +323,7 @@ restore_old() {
 
 verify_stage_cleanup_admin_credential() {
   if [[ "$admin_credential_applied" != true ]]; then return 0; fi
-  if ! docker exec --user 0 "$active_container" rm -f -- /tmp/finoo-smoke-auth-dashboard.mjs; then
-    return 1
-  fi
-  if ! docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"; then
+  if ! install_finoo_smoke_helper "$active_container"; then
     return 1
   fi
   if ! wait_for_finoo_admin_smoke "$active_container"; then
@@ -565,7 +583,7 @@ fi
 docker rm -f "$candidate_container" >/dev/null
 candidate_created=false
 
-docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"
+install_finoo_smoke_helper "$active_container"
 wait_for_finoo_admin_smoke "$active_container"
 
 if [[ "$(docker inspect --format '{{.Image}}' "$active_container")" != "$new_image_id" ]]; then
@@ -681,6 +699,26 @@ wait_for_login() {
   done
   return 1
 }
+install_finoo_smoke_helper() {
+  local container="$1"
+  local source_hash
+  local target_hash
+  if ! source_hash="$(docker run --rm --entrypoint /bin/sh "$immutable_image" -c 'sha256sum /app/scripts/smoke-auth-dashboard.mjs' | awk '{print $1}')"; then
+    return 1
+  fi
+  if [[ -z "$source_hash" ]]; then return 1; fi
+  if ! docker exec --user 0 "$container" rm -f -- /tmp/finoo-smoke-auth-dashboard.mjs; then
+    return 1
+  fi
+  if ! docker run --rm --entrypoint /bin/cat "$immutable_image" /app/scripts/smoke-auth-dashboard.mjs |
+    docker exec --user 0 -i "$container" sh -c 'umask 022; cat > /tmp/finoo-smoke-auth-dashboard.mjs'; then
+    return 1
+  fi
+  if ! target_hash="$(docker exec "$container" sha256sum /tmp/finoo-smoke-auth-dashboard.mjs | awk '{print $1}')"; then
+    return 1
+  fi
+  [[ "$target_hash" == "$source_hash" ]]
+}
 run_finoo_admin_smoke() {
   local container="$1"
   timeout --signal=TERM --kill-after=5s 20s aws secretsmanager get-secret-value \
@@ -701,9 +739,9 @@ run_finoo_admin_smoke() {
 }
 wait_for_finoo_admin_smoke() {
   local container="$1"
-  for attempt in $(seq 1 24); do
+  for attempt in $(seq 1 6); do
     if run_finoo_admin_smoke "$container"; then return 0; fi
-    sleep 5
+    sleep 65
   done
   return 1
 }
@@ -732,10 +770,7 @@ restore_staged_ses_credentials() {
 }
 verify_persistent_finoo_admin_credential() {
   if [[ "$admin_credential_applied" != true ]]; then return 0; fi
-  if ! docker exec --user 0 "$active_container" rm -f -- /tmp/finoo-smoke-auth-dashboard.mjs; then
-    return 1
-  fi
-  if ! docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"; then
+  if ! install_finoo_smoke_helper "$active_container"; then
     return 1
   fi
   if ! wait_for_finoo_admin_smoke "$active_container"; then
