@@ -78,8 +78,8 @@ Prerequisite for everything after it — makes the widening safe.
 
 ### Phase 4: UI and i18n
 
-- [ ] 4.1 Build the Emails-tab share switch, confirm dialog, and "Shared by" badge
-- [ ] 4.2 Add i18n keys to all five locale files
+- [x] 4.1 Build the Emails-tab share switch, confirm dialog, and "Shared by" badge — ef5853002
+- [x] 4.2 Add i18n keys to all five locale files — ef5853002
 
 ### Phase 5: Tests and gate
 
