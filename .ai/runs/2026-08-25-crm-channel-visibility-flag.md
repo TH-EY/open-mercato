@@ -59,7 +59,7 @@ Verified: `message_channel_links` has **no** `channel_id`, so there is no shorte
 ### Phase 1: Interaction → channel resolution
 
 - [ ] 1.1 Add `customer_interactions.channel_id` to the entity and extend the email-visibility partial index to cover it
-- [ ] 1.2 Write channel_id at ingestion in link-channel-message-handler (all three persist sites)
+- [x] 1.2 Write channel_id at ingestion — 5478094ea in link-channel-message-handler (all three persist sites)
 - [ ] 1.3 Migration: add column, extend index, backfill via the verified chain; update the customers snapshot
 
 ### Phase 2: Channel visibility flag
@@ -90,9 +90,9 @@ Verified: `message_channel_links` has **no** `channel_id`, so there is no shorte
 
 ### Phase 1: Interaction → channel resolution
 
-- [ ] 1.1 Add customer_interactions.channel_id and extend the partial index
+- [x] 1.1 Add customer_interactions.channel_id and extend the partial index — 5478094ea
 - [ ] 1.2 Write channel_id at ingestion
-- [ ] 1.3 Migration with backfill and snapshot
+- [x] 1.3 Migration with backfill and snapshot — 5478094ea
 
 ### Phase 2: Channel visibility flag
 
