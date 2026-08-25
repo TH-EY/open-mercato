@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { CacheStrategy } from '@open-mercato/cache'
-import type { EntityManager } from '@mikro-orm/postgresql'
+import { LockMode, type EntityManager } from '@mikro-orm/postgresql'
 import type { AwilixContainer } from 'awilix'
 import { Role, RoleAcl, UserRole } from '@open-mercato/core/modules/auth/data/entities'
 import { ensureCustomRoleAcls } from '@open-mercato/core/modules/auth/lib/setup-app'
@@ -16,7 +16,7 @@ import {
   setLegacyIdentityCutover,
   verifyLegacyIdentityMigration,
 } from './lib/legacy-migration'
-import setup, { FINOO_IOD_ROLE } from './setup'
+import setup, { FINOO_IOD_ROLE, FINOO_SUPERADMIN_ROLE } from './setup'
 
 const scopeSchema = z.object({
   tenantId: z.string().uuid(),
@@ -30,6 +30,7 @@ const IOD_FEATURES = [
   'finoo_identities.view',
   'finoo_identities.manage',
 ]
+const FINOO_SUPERADMIN_FEATURE = 'finoo_identities.*'
 
 function expectedIodFeatures(): string[] {
   const features = setup.defaultRoleFeatures?.[FINOO_IOD_ROLE]
@@ -77,8 +78,10 @@ export async function ensureExistingOrganizationSetup(input: {
   iodFeatures: string[]
   assignedUsers: number
   automaticUserAssignments: 0
+  finooSuperadminFeatures: string[]
+  finooSuperadminAssignedUsers: number
 }> {
-  return input.em.transactional(async (transactionalEm) => {
+  const result = await input.em.transactional(async (transactionalEm) => {
     const tenant = await transactionalEm.findOne(Tenant, {
       id: input.tenantId,
       deletedAt: null,
@@ -93,6 +96,45 @@ export async function ensureExistingOrganizationSetup(input: {
     if (!organization) {
       throw new Error('[internal] Organization does not exist in the requested tenant scope')
     }
+
+    const finooSuperadminRoles = await findWithDecryption(
+      transactionalEm,
+      Role,
+      { name: FINOO_SUPERADMIN_ROLE, tenantId: input.tenantId, deletedAt: null },
+      { lockMode: LockMode.PESSIMISTIC_WRITE },
+      { tenantId: input.tenantId, organizationId: null },
+    )
+    if (finooSuperadminRoles.length !== 1) {
+      throw new Error('[internal] FINOO Superadmin role must exist exactly once in the requested tenant')
+    }
+    const finooSuperadminRole = finooSuperadminRoles[0]
+    const finooSuperadminAcls = await findWithDecryption(
+      transactionalEm,
+      RoleAcl,
+      { role: finooSuperadminRole, tenantId: input.tenantId, deletedAt: null },
+      { lockMode: LockMode.PESSIMISTIC_WRITE },
+      { tenantId: input.tenantId, organizationId: null },
+    )
+    if (finooSuperadminAcls.length !== 1) {
+      throw new Error('[internal] FINOO Superadmin role must have exactly one active ACL')
+    }
+    const finooSuperadminAcl = finooSuperadminAcls[0]
+    if (!Array.isArray(finooSuperadminAcl.featuresJson)) {
+      throw new Error('[internal] FINOO Superadmin ACL features must be an array')
+    }
+    const finooSuperadminFeaturesBefore = [...finooSuperadminAcl.featuresJson]
+    const finooSuperadminOrganizationsBefore = Array.isArray(finooSuperadminAcl.organizationsJson)
+      ? [...finooSuperadminAcl.organizationsJson]
+      : finooSuperadminAcl.organizationsJson
+    const finooSuperadminFlagBefore = finooSuperadminAcl.isSuperAdmin
+    if (finooSuperadminFlagBefore !== false
+      || JSON.stringify(finooSuperadminOrganizationsBefore) !== JSON.stringify([input.organizationId])) {
+      throw new Error('[internal] FINOO Superadmin ACL is not restricted to the requested organization')
+    }
+    const finooSuperadminAssignmentsBefore = await transactionalEm.count(UserRole, {
+      role: finooSuperadminRole,
+      deletedAt: null,
+    })
 
     const roleBefore = await findOneWithDecryption(
       transactionalEm,
@@ -113,6 +155,11 @@ export async function ensureExistingOrganizationSetup(input: {
       organizationId: input.organizationId,
     })
     await ensureCustomRoleAcls(transactionalEm, input.tenantId, [identityModule])
+
+    finooSuperadminAcl.featuresJson = finooSuperadminFeaturesBefore.includes(FINOO_SUPERADMIN_FEATURE)
+      ? [...finooSuperadminFeaturesBefore]
+      : [...finooSuperadminFeaturesBefore, FINOO_SUPERADMIN_FEATURE]
+    await transactionalEm.persist(finooSuperadminAcl).flush()
 
     const role = await findOneWithDecryption(
       transactionalEm,
@@ -144,6 +191,29 @@ export async function ensureExistingOrganizationSetup(input: {
     if (assignmentsAfter !== assignmentsBefore) {
       throw new Error('[internal] FINOO IOD setup must not assign users automatically')
     }
+    const finooSuperadminAssignmentsAfter = await transactionalEm.count(UserRole, {
+      role: finooSuperadminRole,
+      deletedAt: null,
+    })
+    if (finooSuperadminAssignmentsAfter !== finooSuperadminAssignmentsBefore) {
+      throw new Error('[internal] FINOO Superadmin setup must not change user assignments')
+    }
+    const verifiedFinooSuperadminAcls = await findWithDecryption(
+      transactionalEm,
+      RoleAcl,
+      { role: finooSuperadminRole, tenantId: input.tenantId, deletedAt: null },
+      {},
+      { tenantId: input.tenantId, organizationId: null },
+    )
+    const expectedFinooSuperadminFeatures = finooSuperadminFeaturesBefore.includes(FINOO_SUPERADMIN_FEATURE)
+      ? [...finooSuperadminFeaturesBefore]
+      : [...finooSuperadminFeaturesBefore, FINOO_SUPERADMIN_FEATURE]
+    if (verifiedFinooSuperadminAcls.length !== 1
+      || verifiedFinooSuperadminAcls[0].isSuperAdmin !== finooSuperadminFlagBefore
+      || JSON.stringify(verifiedFinooSuperadminAcls[0].featuresJson) !== JSON.stringify(expectedFinooSuperadminFeatures)
+      || JSON.stringify(verifiedFinooSuperadminAcls[0].organizationsJson) !== JSON.stringify(finooSuperadminOrganizationsBefore)) {
+      throw new Error('[internal] FINOO Superadmin identity grant verification failed')
+    }
     const verifiedAcl = await findOneWithDecryption(
       transactionalEm,
       RoleAcl,
@@ -160,9 +230,16 @@ export async function ensureExistingOrganizationSetup(input: {
     return {
       iodFeatures: features,
       assignedUsers: assignmentsAfter,
-      automaticUserAssignments: 0,
+      automaticUserAssignments: 0 as const,
+      finooSuperadminFeatures: [FINOO_SUPERADMIN_FEATURE],
+      finooSuperadminAssignedUsers: finooSuperadminAssignmentsAfter,
     }
   })
+  const rbacService = input.container.resolve('rbacService') as {
+    invalidateTenantCache: (tenantId: string) => Promise<void> | void
+  }
+  await rbacService.invalidateTenantCache(input.tenantId)
+  return result
 }
 
 export function parseLegacyMigrationArgs(args: string[]) {

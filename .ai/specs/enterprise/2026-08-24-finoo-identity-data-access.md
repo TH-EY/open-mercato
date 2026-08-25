@@ -112,7 +112,7 @@ defaultRoleFeatures: {
 }
 ```
 
-No `admin`, `employee`, `import`, or automatic `UserRole` grant is added. Existing-tenant rollout runs module defaults and `auth sync-role-acls` after role creation.
+No generic `admin`, `employee`, `import`, or automatic `UserRole` grant is added. During the exact-scope existing-organization rollout, the pre-existing tenant role `Finoo Superadmin` receives `finoo_identities.*` through the private FINOO setup command. That command fails closed unless exactly one active role and one active ACL already exist, the ACL is restricted to the requested organization, and the platform-superadmin flag is false. It snapshots unrelated features, organization scope, the flag, and assignment count; merges only the identity wildcard; verifies every snapshot is otherwise unchanged; and invalidates the tenant RBAC cache after commit.
 
 | Operation | IOD | Superadmin | Ordinary staff | Projector |
 |---|---:|---:|---:|---:|
@@ -608,6 +608,7 @@ Fixture PESEL/document canaries are scanned across responses, logs, events, CLI 
 ### 2026-08-25
 
 - Added PostgreSQL and headed role evidence, exact IOD provisioning grants, successful rollback coverage, and bounded permanent-purge transactions with zero-residual read-back.
+- Added a FINOO-instance compatibility path for the pre-existing `Finoo Superadmin` role after live QA proved it is not the platform `superadmin`. The private exact-scope setup command now fail-closes on missing or ambiguous role/ACL state, preserves unrelated grants, organization scope, platform-superadmin flag, and assignments, and adds only `finoo_identities.*`. Prior platform-superadmin QA does not cover this custom role; live headed `Finoo Superadmin` verification remains pending until the follow-up commit is deployed.
 
 ### Review — 2026-08-25
 

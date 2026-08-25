@@ -2,6 +2,7 @@ import type { ModuleSetupConfig } from '@open-mercato/shared/modules/setup'
 import { ensureRoles } from '@open-mercato/core/modules/auth/lib/setup-app'
 
 export const FINOO_IOD_ROLE = 'IOD — Inspektor ochrony danych'
+export const FINOO_SUPERADMIN_ROLE = 'Finoo Superadmin'
 
 export const setup: ModuleSetupConfig = {
   async seedDefaults({ em, tenantId }) {
