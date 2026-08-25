@@ -28,6 +28,7 @@ const RAW_ENCRYPTED_LEGACY_KEYS = new Set<string>([
   'id_expiry_date',
 ])
 const ENCRYPTED_VALUE_PATTERN = /^[^:]+:[^:]+:[^:]+:v1$/
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const PERSON_PROFILE_ENTITY_ID = 'customers:customer_person_profile'
 
 export type LegacyIdentityScope = { tenantId: string; organizationId: string }
@@ -185,12 +186,13 @@ async function listCandidateProfiles(
   )
 }
 
-async function readDictionaryValue(
+async function readDictionaryOrDirectValue(
   em: EntityManager,
   scope: LegacyIdentityScope,
   entryId: string | null,
 ): Promise<string | null> {
   if (!entryId) return null
+  if (!UUID_PATTERN.test(entryId)) return entryId
   const rows = await em.getConnection().execute<Array<{ value: string; normalized_value: string }>>(
     `select value, normalized_value
      from dictionary_entries
@@ -237,8 +239,8 @@ async function readLegacyValues(
   const pesel = decoded.get('national_identification_number') ?? null
   const documentTypeReference = decoded.get('id_type') ?? null
   const countryReference = decoded.get('id_country_code') ?? null
-  const documentTypeValue = await readDictionaryValue(em, scope, documentTypeReference)
-  const countryValue = await readDictionaryValue(em, scope, countryReference)
+  const documentTypeValue = await readDictionaryOrDirectValue(em, scope, documentTypeReference)
+  const countryValue = await readDictionaryOrDirectValue(em, scope, countryReference)
   const documentType = mapLegacyDocumentType(documentTypeValue)
   const issuingCountryCode = countryValue && /^[A-Za-z]{2}$/.test(countryValue)
     ? countryValue.toUpperCase()

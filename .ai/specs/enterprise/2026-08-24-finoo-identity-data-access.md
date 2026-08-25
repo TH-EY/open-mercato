@@ -329,13 +329,13 @@ Add Polish/English keys for module/field/status/filter labels, form actions, con
 Entity `customers:customer_person_profile`:
 
 - `national_identification_number` → `pesel`;
-- `id_type` → `document_type` by explicit dictionary mapping;
-- `id_country_code` → `issuing_country_code` by explicit dictionary mapping;
+- `id_type` → `document_type` by explicit mapping from either a scoped dictionary-entry UUID or the legacy normalized value stored directly;
+- `id_country_code` → `issuing_country_code` from either a scoped dictionary-entry UUID or the two-letter legacy code stored directly;
 - `id_number` → `document_number`;
 - `id_issued_date` → `issued_on`;
 - `id_expiry_date` → `expires_on`.
 
-Legacy typo `idenitity_card` maps to `identity_card`. Unknown dictionary values increment a count-only diagnostic and yield a missing destination status; reports never print the value.
+Legacy typo `idenitity_card` maps to `identity_card`. Unknown dictionary or direct values increment a count-only diagnostic and yield a missing destination status; reports never print the value.
 
 ### Phase A — additive dark launch
 

@@ -37,7 +37,11 @@ function migrationEncryptionService() {
   }
 }
 
-function buildFixture(mode: 'dry-run' | 'apply', existingIdentity: Record<string, unknown> | null = null) {
+function buildFixture(
+  mode: 'dry-run' | 'apply',
+  existingIdentity: Record<string, unknown> | null = null,
+  referenceStyle: 'dictionary' | 'direct' = 'dictionary',
+) {
   const key = generateDek()
   let candidatePage = 0
   const persisted: unknown[] = []
@@ -49,8 +53,8 @@ function buildFixture(mode: 'dry-run' | 'apply', existingIdentity: Record<string
     if (query.includes('from custom_field_values')) {
       return [
         { field_key: 'national_identification_number', value_text: encrypted('44051401458', key), value_multiline: null, value_int: null, value_float: null, value_bool: null },
-        { field_key: 'id_type', value_text: documentTypeEntryId, value_multiline: null, value_int: null, value_float: null, value_bool: null },
-        { field_key: 'id_country_code', value_text: countryEntryId, value_multiline: null, value_int: null, value_float: null, value_bool: null },
+        { field_key: 'id_type', value_text: referenceStyle === 'dictionary' ? documentTypeEntryId : 'passport', value_multiline: null, value_int: null, value_float: null, value_bool: null },
+        { field_key: 'id_country_code', value_text: referenceStyle === 'dictionary' ? countryEntryId : 'de', value_multiline: null, value_int: null, value_float: null, value_bool: null },
         { field_key: 'id_number', value_text: encrypted('ABC123456', key), value_multiline: null, value_int: null, value_float: null, value_bool: null },
         { field_key: 'id_issued_date', value_text: encrypted('2024-01-10', key), value_multiline: null, value_int: null, value_float: null, value_bool: null },
         { field_key: 'id_expiry_date', value_text: encrypted('2034-01-10', key), value_multiline: null, value_int: null, value_float: null, value_bool: null },
@@ -137,6 +141,28 @@ describe('FINOO legacy identity migration', () => {
     expect(fixture.execute).toHaveBeenCalledWith(
       'select pg_advisory_xact_lock(hashtext(?))',
       [`finoo_identity:${tenantId}:${organizationId}:${personId}`],
+    )
+  })
+
+  it('accepts direct legacy document type and country values without dictionary lookup', async () => {
+    const fixture = buildFixture('apply', null, 'direct')
+
+    await migrateLegacyIdentities({
+      em: fixture.em as never,
+      encryptionService: fixture.encryptionService as never,
+      scope: { tenantId, organizationId },
+      mode: fixture.mode,
+      batchSize: 10,
+    })
+
+    expect(fixture.persisted[0]).toMatchObject({
+      entity: FinooPersonIdentity,
+      documentType: 'passport',
+      issuingCountryCode: 'DE',
+    })
+    expect(fixture.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('from dictionary_entries'),
+      expect.anything(),
     )
   })
 
