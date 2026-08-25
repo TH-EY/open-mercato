@@ -147,6 +147,20 @@ describe('catalog.catalog_assistant agent definition', () => {
       ],
     } as any)
 
+    expect(result).toEqual({ toolChoice: 'required' })
+  })
+
+  it('allows the model to answer after the first required tool call', async () => {
+    const result = await agent.loop!.prepareStep!({
+      stepNumber: 1,
+      messages: [
+        {
+          role: 'user',
+          content: 'Show me products that are missing prices.',
+        },
+      ],
+    } as any)
+
     expect(result).toBeUndefined()
   })
 
