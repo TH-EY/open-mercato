@@ -64,16 +64,16 @@ Prerequisite for everything after it — makes the widening safe.
 
 ### Phase 2: Share model and write path
 
-- [ ] 2.1 Add the CustomerEmailConversationShare entity
-- [ ] 2.2 Author the migration and update the module snapshot
-- [ ] 2.3 Declare the ACL feature, setup grant, and the new event id
-- [ ] 2.4 Add the conversation-share service and register it in DI
-- [ ] 2.5 Add the share command and the GET/PUT API route
+- [x] 2.1 Add the CustomerEmailConversationShare entity — d6ce590fb
+- [x] 2.2 Author the migration and update the module snapshot — d6ce590fb
+- [x] 2.3 Declare the ACL feature, setup grant, and the new event id — d6ce590fb
+- [x] 2.4 Add the conversation-share service and register it in DI — d6ce590fb
+- [x] 2.5 Add the share command and the GET/PUT API route — d6ce590fb
 
 ### Phase 3: Read widening
 
-- [ ] 3.1 Widen both shared predicates with an optional, fail-closed sharedConversations arm
-- [ ] 3.2 Wire the share lookup into every email read path
+- [x] 3.1 Widen both shared predicates with an optional, fail-closed sharedConversations arm — d6ce590fb
+- [x] 3.2 Wire the share lookup into every email read path — d6ce590fb
 - [ ] 3.3 Add the optional sharedVia / sharedByUserName response fields
 
 ### Phase 4: UI and i18n
