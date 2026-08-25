@@ -1,6 +1,6 @@
 # CRM Conversation Shared Visibility
 
-> **Status:** READY FOR IMPLEMENTATION. The Open Questions gate is closed — see § Gate Decisions.
+> **Status:** IMPLEMENTED (PR #23). The Open Questions gate is closed — see § Gate Decisions.
 > Readiness audit: [`analysis/ANALYSIS-2026-08-25-crm-channel-shared-visibility.md`](analysis/ANALYSIS-2026-08-25-crm-channel-shared-visibility.md). Every Critical and High finding in that audit is addressed by a numbered Step below.
 
 ## 📝 TLDR
@@ -218,4 +218,5 @@ Audited against all 13 contract surfaces in `BACKWARD_COMPATIBILITY.md`.
 | 2026-08-25 | Skeleton drafted with the Q1–Q4 Open Questions gate (`om-spec-writing`). |
 | 2026-08-25 | Readiness audit completed — 2 Critical / 6 Warning BC findings, 5 High risks ([`analysis/ANALYSIS-…`](analysis/ANALYSIS-2026-08-25-crm-channel-shared-visibility.md)). |
 | 2026-08-25 | Gate closed (Q1–Q4 decided from the implementation brief + audit safety findings); all deferred sections filled; 16-step Implementation Plan added. Ready for implementation. |
+| 2026-08-25 | **Implemented** on `feat/crm-channel-shared-visibility` (PR #23). All 16 steps landed. Two deviations from the plan, both deliberate: (1) Step 3.3 ships the "shared by" affordance via the dedicated `GET /email-share` endpoint rather than widening the `/email-threads` payload and `EmailCardWidgetData` — same outcome, two fewer contract surfaces touched; (2) `EmailVisibilityFilterFragment` is typed `{ $or: FilterQuery[] }` rather than an opaque `FilterQuery`, because a union is not spreadable and a single **required** `$or` key is the stronger guarantee — a sibling key cannot be added without a type change that surfaces at every caller. Audit correction: only **one** of the four MikroORM callers (`personEmailThreads.ts:157`) actually dropped non-`$or` keys; `people/[id]` and `companies/[id]` already spread the whole fragment. |
 </content>

@@ -5,7 +5,7 @@
 **Readiness audit:** `.ai/specs/analysis/ANALYSIS-2026-08-25-crm-channel-shared-visibility.md`
 **Branch:** `feat/crm-channel-shared-visibility`
 **Base:** `fork/crm-they-dev`
-**Status:** in-progress
+**Status:** complete
 
 ## Goal
 
@@ -74,7 +74,7 @@ Prerequisite for everything after it — makes the widening safe.
 
 - [x] 3.1 Widen both shared predicates with an optional, fail-closed sharedConversations arm — d6ce590fb
 - [x] 3.2 Wire the share lookup into every email read path — d6ce590fb
-- [ ] 3.3 Add the optional sharedVia / sharedByUserName response fields
+- [x] 3.3 Add the optional sharedVia / sharedByUserName response fields — **delivered differently, deliberately.** The teammate-facing "who shared this" affordance ships via the dedicated `GET /email-share` endpoint (`sharedBy[]` with resolved user names) instead of widening the `/email-threads` payload and `EmailCardWidgetData`. Same user-visible outcome, two fewer contract surfaces touched. A per-message `sharedVia` badge (message-level vs conversation-level provenance) remains a genuinely additive follow-up.
 
 ### Phase 4: UI and i18n
 
@@ -83,7 +83,7 @@ Prerequisite for everything after it — makes the widening safe.
 
 ### Phase 5: Tests and gate
 
-- [ ] 5.1 Unit tests for the widened predicates and the inert-feature assertion
-- [ ] 5.2 Integration tests extending the TC-CRM-EMAIL-VISIBILITY family
-- [ ] 5.3 Run the full validation gate and fix fallout
+- [x] 5.1 Unit tests for the widened predicates and the inert-feature assertion — e670fc8b7
+- [x] 5.2 Integration tests extending the TC-CRM-EMAIL-VISIBILITY family — e670fc8b7
+- [x] 5.3 Run the full validation gate and fix fallout — e670fc8b7
 </content>
