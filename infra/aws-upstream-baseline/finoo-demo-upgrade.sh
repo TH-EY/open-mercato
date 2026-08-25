@@ -174,11 +174,12 @@ if ! flock -n 9; then
 fi
 
 cd "$workdir"
+command -v timeout >/dev/null
 pending_file=.finoo-upgrade-pending
 env_backup=".env.rollback-${deploy_token}"
 commit_backup=".finoo-active-commit.rollback-${deploy_token}"
 digest_backup=".finoo-active-image-digest.rollback-${deploy_token}"
-rollback_container="${active_container}-rollback-thom88-${deploy_commit:0:12}"
+rollback_container="${active_container}-rollback-thom109-${deploy_commit:0:12}"
 test ! -e "$pending_file"
 test ! -e "$env_backup"
 test ! -e "$commit_backup"
@@ -240,6 +241,34 @@ wait_for_login() {
   return 1
 }
 
+run_finoo_admin_smoke() {
+  local container="$1"
+  timeout --signal=TERM --kill-after=5s 20s aws secretsmanager get-secret-value \
+    --region "$aws_region" \
+    --secret-id "$finoo_admin_secret_id" \
+    --cli-connect-timeout 5 \
+    --cli-read-timeout 10 \
+    --query SecretString \
+    --output text |
+    timeout --signal=TERM --kill-after=5s 30s docker exec -i \
+      -e SMOKE_TEST_EMAIL=admin@finoo.om.they.dev \
+      -e 'EXPECTED_ROLE=Finoo Superadmin' \
+      -e "SMOKE_TEST_TENANT_ID=${finoo_tenant_id}" \
+      -e REQUIRE_TENANT_SCOPE=true \
+      -e SMOKE_REQUEST_TIMEOUT_MS=5000 \
+      -e BASE_URL=http://127.0.0.1:3000 \
+      "$container" sh -lc 'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /tmp/finoo-smoke-auth-dashboard.mjs --run-smoke'
+}
+
+wait_for_finoo_admin_smoke() {
+  local container="$1"
+  for attempt in $(seq 1 24); do
+    if run_finoo_admin_smoke "$container"; then return 0; fi
+    sleep 5
+  done
+  return 1
+}
+
 restore_old() {
   local failed=false
   local current_id=""
@@ -273,19 +302,15 @@ restore_old() {
 
 verify_stage_cleanup_admin_credential() {
   if [[ "$admin_credential_applied" != true ]]; then return 0; fi
-  docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"
-  aws secretsmanager get-secret-value \
-    --region "$aws_region" \
-    --secret-id "$finoo_admin_secret_id" \
-    --query SecretString \
-    --output text |
-    docker exec -i \
-      -e SMOKE_TEST_EMAIL=admin@finoo.om.they.dev \
-      -e 'EXPECTED_ROLE=Finoo Superadmin' \
-      -e "SMOKE_TEST_TENANT_ID=${finoo_tenant_id}" \
-      -e REQUIRE_TENANT_SCOPE=true \
-      -e BASE_URL=http://127.0.0.1:3000 \
-      "$active_container" sh -lc 'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /tmp/finoo-smoke-auth-dashboard.mjs --run-smoke'
+  if ! docker exec --user 0 "$active_container" rm -f -- /tmp/finoo-smoke-auth-dashboard.mjs; then
+    return 1
+  fi
+  if ! docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"; then
+    return 1
+  fi
+  if ! wait_for_finoo_admin_smoke "$active_container"; then
+    return 1
+  fi
   echo "persistent_finoo_admin_credential_verified_during_stage_cleanup=true"
 }
 
@@ -541,21 +566,7 @@ docker rm -f "$candidate_container" >/dev/null
 candidate_created=false
 
 docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"
-run_finoo_admin_smoke() {
-  aws secretsmanager get-secret-value \
-    --region "$aws_region" \
-    --secret-id "$finoo_admin_secret_id" \
-    --query SecretString \
-    --output text |
-    docker exec -i \
-      -e SMOKE_TEST_EMAIL=admin@finoo.om.they.dev \
-      -e 'EXPECTED_ROLE=Finoo Superadmin' \
-      -e "SMOKE_TEST_TENANT_ID=${finoo_tenant_id}" \
-      -e REQUIRE_TENANT_SCOPE=true \
-      -e BASE_URL=http://127.0.0.1:3000 \
-      "$active_container" sh -lc 'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /tmp/finoo-smoke-auth-dashboard.mjs --run-smoke'
-}
-run_finoo_admin_smoke
+wait_for_finoo_admin_smoke "$active_container"
 
 if [[ "$(docker inspect --format '{{.Image}}' "$active_container")" != "$new_image_id" ]]; then
   echo "Finoo active container does not use the staged image" >&2
@@ -645,6 +656,7 @@ set -euo pipefail
 exec 9>/var/lock/finoo-demo-upgrade.lock
 flock -n 9
 cd "$workdir"
+command -v timeout >/dev/null
 pending_file=.finoo-upgrade-pending
 if [[ ! -f "$pending_file" ]]; then
   if [[ "$decision" == rollback ]]; then
@@ -665,6 +677,32 @@ fi
 wait_for_login() {
   for attempt in $(seq 1 120); do
     if curl -fsS --max-time 5 -o /dev/null "http://127.0.0.1:${live_port}/login"; then return 0; fi
+    sleep 5
+  done
+  return 1
+}
+run_finoo_admin_smoke() {
+  local container="$1"
+  timeout --signal=TERM --kill-after=5s 20s aws secretsmanager get-secret-value \
+    --region "$aws_region" \
+    --secret-id "$finoo_admin_secret_id" \
+    --cli-connect-timeout 5 \
+    --cli-read-timeout 10 \
+    --query SecretString \
+    --output text |
+    timeout --signal=TERM --kill-after=5s 30s docker exec -i \
+      -e SMOKE_TEST_EMAIL=admin@finoo.om.they.dev \
+      -e 'EXPECTED_ROLE=Finoo Superadmin' \
+      -e "SMOKE_TEST_TENANT_ID=${finoo_tenant_id}" \
+      -e REQUIRE_TENANT_SCOPE=true \
+      -e SMOKE_REQUEST_TIMEOUT_MS=5000 \
+      -e BASE_URL=http://127.0.0.1:3000 \
+      "$container" sh -lc 'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /tmp/finoo-smoke-auth-dashboard.mjs --run-smoke'
+}
+wait_for_finoo_admin_smoke() {
+  local container="$1"
+  for attempt in $(seq 1 24); do
+    if run_finoo_admin_smoke "$container"; then return 0; fi
     sleep 5
   done
   return 1
@@ -694,19 +732,15 @@ restore_staged_ses_credentials() {
 }
 verify_persistent_finoo_admin_credential() {
   if [[ "$admin_credential_applied" != true ]]; then return 0; fi
-  docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"
-  aws secretsmanager get-secret-value \
-    --region "$aws_region" \
-    --secret-id "$finoo_admin_secret_id" \
-    --query SecretString \
-    --output text |
-    docker exec -i \
-      -e SMOKE_TEST_EMAIL=admin@finoo.om.they.dev \
-      -e 'EXPECTED_ROLE=Finoo Superadmin' \
-      -e "SMOKE_TEST_TENANT_ID=${finoo_tenant_id}" \
-      -e REQUIRE_TENANT_SCOPE=true \
-      -e BASE_URL=http://127.0.0.1:3000 \
-      "$active_container" sh -lc 'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /tmp/finoo-smoke-auth-dashboard.mjs --run-smoke'
+  if ! docker exec --user 0 "$active_container" rm -f -- /tmp/finoo-smoke-auth-dashboard.mjs; then
+    return 1
+  fi
+  if ! docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"; then
+    return 1
+  fi
+  if ! wait_for_finoo_admin_smoke "$active_container"; then
+    return 1
+  fi
   echo "persistent_finoo_admin_credential_verified_after_rollback=true"
 }
 if [[ "$decision" == finalize ]]; then
@@ -771,7 +805,7 @@ EOF_DECISION
   } > "$output_path"
 }
 
-STAGE_COMMAND_ID="$(send_command 'THOM-88 stage immutable Finoo upgrade' "$REMOTE_SCRIPT")"
+STAGE_COMMAND_ID="$(send_command 'THOM-109 stage immutable Finoo upgrade' "$REMOTE_SCRIPT")"
 if wait_for_command "$STAGE_COMMAND_ID" 360; then
   stage_status=0
 else
@@ -784,7 +818,7 @@ if [[ "$stage_status" != 0 ]]; then
   fi
   rollback_script="$(mktemp)"
   build_decision_script rollback "$rollback_script"
-  rollback_command_id="$(send_command 'THOM-88 rollback failed Finoo stage' "$rollback_script")"
+  rollback_command_id="$(send_command 'THOM-109 rollback failed Finoo stage' "$rollback_script")"
   wait_for_command "$rollback_command_id" 180
   rm -f -- "$rollback_script"
   exit 1
@@ -808,7 +842,7 @@ decision=finalize
 if [[ "$public_ok" != true ]]; then decision=rollback; fi
 DECISION_SCRIPT="$(mktemp)"
 build_decision_script "$decision" "$DECISION_SCRIPT"
-DECISION_COMMAND_ID="$(send_command "THOM-88 ${decision} Finoo upgrade" "$DECISION_SCRIPT")"
+DECISION_COMMAND_ID="$(send_command "THOM-109 ${decision} Finoo upgrade" "$DECISION_SCRIPT")"
 if wait_for_command "$DECISION_COMMAND_ID" 180; then
   decision_status=0
 else
@@ -818,7 +852,7 @@ rm -f -- "$DECISION_SCRIPT"
 if [[ "$decision_status" != 0 && "$decision" == finalize ]]; then
   rollback_script="$(mktemp)"
   build_decision_script rollback "$rollback_script"
-  rollback_command_id="$(send_command 'THOM-88 rollback failed Finoo finalization' "$rollback_script")"
+  rollback_command_id="$(send_command 'THOM-109 rollback failed Finoo finalization' "$rollback_script")"
   wait_for_command "$rollback_command_id" 180
   rm -f -- "$rollback_script"
   exit 1
