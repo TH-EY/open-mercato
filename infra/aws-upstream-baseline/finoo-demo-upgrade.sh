@@ -245,6 +245,37 @@ wait_for_login() {
   return 1
 }
 
+normalize_identity_json_report() {
+  local output="$1"
+  python3 - "$output" <<'PY'
+import json
+import sys
+
+expected_key_sets = {
+    frozenset({
+        'mode', 'scanned', 'eligible', 'wouldCreate', 'created', 'unchanged',
+        'destinationConflicts', 'invalidPesel', 'unknownDocumentType',
+        'unknownCountry', 'invalidIssuedOn', 'invalidExpiresOn',
+    }),
+    frozenset({
+        'scanned', 'migrated', 'unmigrated', 'destinationConflicts',
+        'activeDefinitions', 'inactiveDefinitions',
+    }),
+}
+matches = []
+for line in sys.argv[1].splitlines():
+    try:
+        report = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if isinstance(report, dict) and frozenset(report) in expected_key_sets:
+        matches.append(report)
+if len(matches) != 1:
+    raise SystemExit('Expected exactly one FINOO identity count-only JSON report')
+print(json.dumps(matches[0], separators=(',', ':'), sort_keys=True))
+PY
+}
+
 assert_identity_migration_report() {
   local report="$1"
   local expected_mode="$2"
@@ -317,10 +348,12 @@ run_preserved_new_cli() {
 
 read_identity_definition_state() {
   local source_container="$1"
+  local verification_output
   local verification_report
-  verification_report="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
+  verification_output="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
     --tenant "$finoo_tenant_id" \
     --organization "$finoo_organization_id")" || return 1
+  verification_report="$(normalize_identity_json_report "$verification_output")" || return 1
   python3 - "$verification_report" <<'PY'
 import json
 import sys
@@ -352,7 +385,7 @@ ensure_legacy_identity_state_for_old() {
       --organization "$finoo_organization_id" \
       --apply \
       --maintenance-window \
-      --confirm THOM-108 || return 1
+      --confirm THOM-108 >/dev/null || return 1
     definition_state="$(read_identity_definition_state "$source_container")" || return 1
   fi
   [[ "$definition_state" == "6 0" ]] || return 1
@@ -363,16 +396,18 @@ ensure_legacy_identity_state_for_old() {
 
 restore_identity_cutover_for_new() {
   local source_container="$1"
+  local verification_output
   local verification_report
   run_preserved_new_cli "$source_container" finoo_identities cutover-legacy \
     --tenant "$finoo_tenant_id" \
     --organization "$finoo_organization_id" \
     --apply \
     --maintenance-window \
-    --confirm THOM-108 || return 1
-  verification_report="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
+    --confirm THOM-108 >/dev/null || return 1
+  verification_output="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
     --tenant "$finoo_tenant_id" \
     --organization "$finoo_organization_id")" || return 1
+  verification_report="$(normalize_identity_json_report "$verification_output")" || return 1
   assert_identity_verification_report "$verification_report" 0 6 || return 1
   run_preserved_new_cli "$source_container" configs cache structural \
     --tenant "$finoo_tenant_id" \
@@ -655,10 +690,11 @@ docker exec "$candidate_container" yarn mercato finoo_identities ensure-organiza
   --organization "$finoo_organization_id" \
   --apply
 echo "[finoo-identities] Existing organization role and ACL setup verified"
-identity_dry_run_report="$(docker exec "$candidate_container" yarn mercato finoo_identities migrate-legacy \
+identity_dry_run_output="$(docker exec "$candidate_container" yarn mercato finoo_identities migrate-legacy \
   --tenant "$finoo_tenant_id" \
   --organization "$finoo_organization_id" \
   --dry-run)"
+identity_dry_run_report="$(normalize_identity_json_report "$identity_dry_run_output")"
 assert_identity_migration_report "$identity_dry_run_report" dry-run
 printf '[finoo-identities] migration_dry_run=%s\n' "$identity_dry_run_report"
 docker exec "$candidate_container" yarn mercato finoo_customer_retention ensure-organization-setup \
@@ -741,15 +777,17 @@ for key, value in labels.items():
 docker tag "$immutable_image" open-mercato/app:finoo
 cutover_started=true
 docker stop --time 30 "$active_container" >/dev/null
-identity_apply_report="$(docker exec "$candidate_container" yarn mercato finoo_identities migrate-legacy \
+identity_apply_output="$(docker exec "$candidate_container" yarn mercato finoo_identities migrate-legacy \
   --tenant "$finoo_tenant_id" \
   --organization "$finoo_organization_id" \
   --apply)"
+identity_apply_report="$(normalize_identity_json_report "$identity_apply_output")"
 assert_identity_migration_report "$identity_apply_report" apply
 printf '[finoo-identities] migration_apply=%s\n' "$identity_apply_report"
-identity_verification_report="$(docker exec "$candidate_container" yarn mercato finoo_identities verify-legacy \
+identity_verification_output="$(docker exec "$candidate_container" yarn mercato finoo_identities verify-legacy \
   --tenant "$finoo_tenant_id" \
   --organization "$finoo_organization_id")"
+identity_verification_report="$(normalize_identity_json_report "$identity_verification_output")"
 assert_identity_verification_report "$identity_verification_report" 6 0
 printf '[finoo-identities] migration_verify=%s\n' "$identity_verification_report"
 legacy_cutover_attempted=true
@@ -760,10 +798,11 @@ docker exec "$candidate_container" yarn mercato finoo_identities cutover-legacy 
   --organization "$finoo_organization_id" \
   --apply \
   --maintenance-window \
-  --confirm THOM-108
-identity_cutover_report="$(docker exec "$candidate_container" yarn mercato finoo_identities verify-legacy \
+  --confirm THOM-108 >/dev/null
+identity_cutover_output="$(docker exec "$candidate_container" yarn mercato finoo_identities verify-legacy \
   --tenant "$finoo_tenant_id" \
   --organization "$finoo_organization_id")"
+identity_cutover_report="$(normalize_identity_json_report "$identity_cutover_output")"
 assert_identity_verification_report "$identity_cutover_report" 0 6
 docker exec "$candidate_container" yarn mercato configs cache structural \
   --tenant "$finoo_tenant_id" \
@@ -926,6 +965,36 @@ wait_for_login() {
   done
   return 1
 }
+normalize_identity_json_report() {
+  local output="$1"
+  python3 - "$output" <<'PY'
+import json
+import sys
+
+expected_key_sets = {
+    frozenset({
+        'mode', 'scanned', 'eligible', 'wouldCreate', 'created', 'unchanged',
+        'destinationConflicts', 'invalidPesel', 'unknownDocumentType',
+        'unknownCountry', 'invalidIssuedOn', 'invalidExpiresOn',
+    }),
+    frozenset({
+        'scanned', 'migrated', 'unmigrated', 'destinationConflicts',
+        'activeDefinitions', 'inactiveDefinitions',
+    }),
+}
+matches = []
+for line in sys.argv[1].splitlines():
+    try:
+        report = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if isinstance(report, dict) and frozenset(report) in expected_key_sets:
+        matches.append(report)
+if len(matches) != 1:
+    raise SystemExit('Expected exactly one FINOO identity count-only JSON report')
+print(json.dumps(matches[0], separators=(',', ':'), sort_keys=True))
+PY
+}
 restore_staged_ses_credentials() {
   if [[ "$ses_credentials_staged" != true ]]; then return 0; fi
   local restore_env
@@ -974,10 +1043,12 @@ run_preserved_new_cli() {
 }
 read_identity_definition_state() {
   local source_container="$1"
+  local verification_output
   local verification_report
-  verification_report="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
+  verification_output="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
     --tenant "$finoo_tenant_id" \
     --organization "$finoo_organization_id")" || return 1
+  verification_report="$(normalize_identity_json_report "$verification_output")" || return 1
   python3 - "$verification_report" <<'PY'
 import json
 import sys
@@ -1008,7 +1079,7 @@ ensure_legacy_identity_state_for_old() {
       --organization "$finoo_organization_id" \
       --apply \
       --maintenance-window \
-      --confirm THOM-108 || return 1
+      --confirm THOM-108 >/dev/null || return 1
     definition_state="$(read_identity_definition_state "$source_container")" || return 1
   fi
   [[ "$definition_state" == "6 0" ]] || return 1
@@ -1018,16 +1089,18 @@ ensure_legacy_identity_state_for_old() {
 }
 restore_identity_cutover_for_new() {
   local source_container="$1"
+  local verification_output
   local verification_report
   run_preserved_new_cli "$source_container" finoo_identities cutover-legacy \
     --tenant "$finoo_tenant_id" \
     --organization "$finoo_organization_id" \
     --apply \
     --maintenance-window \
-    --confirm THOM-108 || return 1
-  verification_report="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
+    --confirm THOM-108 >/dev/null || return 1
+  verification_output="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
     --tenant "$finoo_tenant_id" \
     --organization "$finoo_organization_id")" || return 1
+  verification_report="$(normalize_identity_json_report "$verification_output")" || return 1
   python3 - "$verification_report" <<'PY'
 import json
 import sys
