@@ -15,7 +15,7 @@
       "not_applicable": "Nie dotyczy"
     },
     "aggregate": { "complete": "Kompletne", "incomplete": "Niekompletne" },
-    "filter": { "label": "Kompletność danych tożsamości" },
+    "filter": { "label": "Kompletność danych tożsamości", "all": "Wszystkie statusy tożsamości" },
     "documentTypes": {
       "identity_card": "Dowód osobisty",
       "permanent_identity_card": "Bezterminowy dowód osobisty",

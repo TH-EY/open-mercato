@@ -135,14 +135,17 @@ describe('FINOO identity private rollout contract', () => {
       scanned: 109,
       migrated: 109,
       unmigrated: 0,
+      destinationRecords: 109,
+      linkedDestinationRecords: 109,
       destinationConflicts: 0,
+      aliasValues: 0,
       activeDefinitions: 6,
       inactiveDefinitions: 0,
     })
     const normalized = runIdentityReportNormalizer(`debug banner\n${report}\ncommand complete`)
     expect(normalized.status).toBe(0)
     expect(normalized.stdout.trim()).toBe(
-      '{"activeDefinitions":6,"destinationConflicts":0,"inactiveDefinitions":0,"migrated":109,"scanned":109,"unmigrated":0}',
+      '{"activeDefinitions":6,"aliasValues":0,"destinationConflicts":0,"destinationRecords":109,"inactiveDefinitions":0,"linkedDestinationRecords":109,"migrated":109,"scanned":109,"unmigrated":0}',
     )
 
     const ambiguous = runIdentityReportNormalizer(`${report}\n${report}`)

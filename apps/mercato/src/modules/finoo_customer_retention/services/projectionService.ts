@@ -38,7 +38,8 @@ import {
 } from './projection'
 import { lockRetentionSubject } from './retentionLock'
 
-const logger = createLogger('finoo_customer_retention').child({ component: 'projection-service' })
+const logger = createLogger('finoo_customer_retention').child({ component: 'projection-service',
+})
 
 export type FinooRetentionScope = {
   tenantId: string
@@ -59,6 +60,24 @@ export type ReconcilePersonResult = {
 
 export type AuthoritativeIdentityErasureResult = ReconcilePersonResult & {
   operationApplied: boolean
+}
+
+export type RetentionPostCommitEffect = () => Promise<void>
+
+export type AuthoritativeRetentionOperationContext = {
+  transactionalEm: EntityManager
+  registerPostCommitEffect: (effect: RetentionPostCommitEffect) => void
+}
+
+export async function runWithDeferredPostCommitEffects<TResult>(
+  operation: (registerPostCommitEffect: (effect: RetentionPostCommitEffect) => void) => Promise<TResult>,
+): Promise<TResult> {
+  const effects: RetentionPostCommitEffect[] = []
+  const result = await operation((effect) => {
+    effects.push(effect)
+  })
+  for (const effect of effects) await effect()
+  return result
 }
 
 export type ReconciliationPage = {
@@ -340,7 +359,7 @@ export function createFinooCustomerRetentionProjectionService(input: {
   const queryEngineFactory = input.queryEngineFactory ?? ((em: EntityManager) => new BasicQueryEngine(em))
   async function reconcilePersonWithAuthoritativeOperation(
     request: ReconcilePersonInput,
-    dueOperation?: () => Promise<void>,
+    dueOperation?: (context: AuthoritativeRetentionOperationContext) => Promise<void>,
   ): Promise<AuthoritativeIdentityErasureResult> {
     const scope = {
       tenantId: request.tenantId,
@@ -348,7 +367,8 @@ export function createFinooCustomerRetentionProjectionService(input: {
     }
     let profileToReindex: string | null = null
     let operationApplied = false
-    const result = await input.em.fork().transactional(async (em) => {
+    const result = await runWithDeferredPostCommitEffects(async (registerPostCommitEffect) =>
+      input.em.fork().transactional(async (em) => {
       await lockRetentionSubject(em, scope, request.customerEntityId)
       const person = await findOneWithDecryption(
         em,
@@ -513,7 +533,10 @@ export function createFinooCustomerRetentionProjectionService(input: {
         && projection.retentionExpiresAt <= now
         && !state.identityErasedAt
       ) {
-        await dueOperation()
+        await dueOperation({
+            transactionalEm: em,
+            registerPostCommitEffect,
+          })
         state.identityErasedAt = now
         operationApplied = true
       }
@@ -524,7 +547,8 @@ export function createFinooCustomerRetentionProjectionService(input: {
         mirrorChanged,
         staleGeneration: false,
       }
-    })
+    }),
+    )
 
     if (profileToReindex) {
       await runPersonReindexPostCommit({
@@ -545,7 +569,7 @@ export function createFinooCustomerRetentionProjectionService(input: {
 
   async function runIdentityErasureIfAuthoritativelyDue(
     request: ReconcilePersonInput,
-    operation: () => Promise<void>,
+    operation: (context: AuthoritativeRetentionOperationContext) => Promise<void>,
   ): Promise<AuthoritativeIdentityErasureResult> {
     return reconcilePersonWithAuthoritativeOperation(request, operation)
   }
@@ -553,7 +577,8 @@ export function createFinooCustomerRetentionProjectionService(input: {
   async function excludeMissingPerson(
     request: FinooRetentionScope & { customerEntityId: string },
   ): Promise<ReconcilePersonResult> {
-    const scope = { tenantId: request.tenantId, organizationId: request.organizationId }
+    const scope = { tenantId: request.tenantId, organizationId: request.organizationId,
+    }
     let profileToReindex: string | null = null
     const result = await input.em.fork().transactional(async (em) => {
       await lockRetentionSubject(em, scope, request.customerEntityId)
@@ -581,7 +606,8 @@ export function createFinooCustomerRetentionProjectionService(input: {
     afterCustomerEntityId?: string
     reconciliationGeneration?: number
   }): Promise<ReconciliationPage> {
-    const scope = { tenantId: request.tenantId, organizationId: request.organizationId }
+    const scope = { tenantId: request.tenantId, organizationId: request.organizationId,
+    }
     const settings = await input.em.findOne(FinooCustomerRetentionSettings, scope)
     if (!settings) throw new Error('[internal] Finoo retention settings are missing')
     if (

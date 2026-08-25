@@ -81,6 +81,47 @@ describe('setRecordCustomFields', () => {
     expect(row?.valueMultiline ?? null).toBeNull()
   })
 
+  it('canonicalizes one persisted prefix and rejects double-prefixed storage keys', async () => {
+    const persist = jest.fn()
+    const create = jest.fn((entity: unknown, data: Record<string, unknown>) => ({ ...data, entity }))
+    const em = {
+      find: jest.fn(async () => [
+        {
+          key: 'priority',
+          kind: 'integer',
+          organizationId: 'org-1',
+          tenantId: 'tenant-1',
+          updatedAt: new Date('2026-08-24T00:00:00.000Z'),
+          configJson: {},
+        },
+      ]),
+      findOne: jest.fn(async () => null),
+      create,
+      persist,
+      flush: jest.fn(async () => undefined),
+    } as unknown as EntityManager
+
+    await setRecordCustomFields(em, {
+      entityId: 'example:todo',
+      recordId: 'record-1',
+      organizationId: 'org-1',
+      tenantId: 'tenant-1',
+      values: { cf_priority: 4 },
+    })
+
+    expect(create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ fieldKey: 'priority' }))
+    expect(create).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ fieldKey: 'cf_priority' }))
+    await expect(
+      setRecordCustomFields(em, {
+        entityId: 'example:todo',
+        recordId: 'record-1',
+        organizationId: 'org-1',
+        tenantId: 'tenant-1',
+        values: { cf_cf_priority: 4 },
+      }),
+    ).rejects.toMatchObject({ status: 400 })
+  })
+
   it('still enforces the per-record key cap as the unbounded-injection backstop', async () => {
     const persist = jest.fn()
     const create = jest.fn((entity: unknown, data: Record<string, unknown>) => ({ ...data, entity }))
@@ -104,6 +145,60 @@ describe('setRecordCustomFields', () => {
         values,
       }),
     ).rejects.toThrow()
+    expect(persist).not.toHaveBeenCalled()
+  })
+
+  it('locks and rejects an exact inactive definition even when a generic active definition exists', async () => {
+    const create = jest.fn()
+    const persist = jest.fn()
+    const emMock = {
+      find: jest.fn(async () => [
+        {
+          key: 'id_number',
+          kind: 'text',
+          organizationId: null,
+          tenantId: null,
+          isActive: true,
+          deletedAt: null,
+          updatedAt: new Date('2026-08-20T00:00:00.000Z'),
+          configJson: {},
+        },
+        {
+          key: 'id_number',
+          kind: 'text',
+          organizationId: 'org-1',
+          tenantId: 'tenant-1',
+          isActive: false,
+          deletedAt: new Date('2026-08-24T00:00:00.000Z'),
+          updatedAt: new Date('2026-08-24T00:00:00.000Z'),
+          configJson: {},
+        },
+      ]),
+      findOne: jest.fn(async () => null),
+      create,
+      persist,
+      flush: jest.fn(async () => undefined),
+      begin: jest.fn(async () => undefined),
+      commit: jest.fn(async () => undefined),
+      rollback: jest.fn(async () => undefined),
+      isInTransaction: jest.fn(() => false),
+    }
+
+    await expect(
+      setRecordCustomFields(emMock as never, {
+        entityId: 'customers:customer_person_profile',
+        recordId: 'profile-1',
+        organizationId: 'org-1',
+        tenantId: 'tenant-1',
+        values: { id_number: 'DOCUMENT_CANARY' },
+        rejectUndeclaredKeys: true,
+      }),
+    ).rejects.toMatchObject({ status: 400 })
+
+    expect(emMock.begin).toHaveBeenCalledTimes(1)
+    expect(emMock.rollback).toHaveBeenCalledTimes(1)
+    expect(emMock.commit).not.toHaveBeenCalled()
+    expect(create).not.toHaveBeenCalled()
     expect(persist).not.toHaveBeenCalled()
   })
 

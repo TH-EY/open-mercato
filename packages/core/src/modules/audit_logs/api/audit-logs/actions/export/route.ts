@@ -17,6 +17,7 @@ import {
 import { ActionLogService } from '@open-mercato/core/modules/audit_logs/services/actionLogService'
 import { loadAuditLogDisplayMaps } from '../../display'
 import { requireResolvedTenantScope } from '../../readScope'
+import { redactInactiveCustomFieldsFromActionLogs } from '@open-mercato/core/modules/audit_logs/lib/customFieldRedaction'
 
 export const metadata = {
   GET: { requireAuth: true, requireFeatures: ['audit_logs.view_self'] },
@@ -187,7 +188,7 @@ export async function GET(req: Request) {
     }
     throw err
   }
-  const entries = entriesResult.items
+  const entries = await redactInactiveCustomFieldsFromActionLogs(em, entriesResult.items)
 
   const displayMaps = await loadAuditLogDisplayMaps(em, {
     userIds: entries.map((entry: any) => entry.actorUserId).filter((value: any): value is string => Boolean(value)),
@@ -261,11 +262,14 @@ export const openApi: OpenApiRouteDoc = {
         'Returns a CSV attachment containing filtered action audit log entries. Tenant administrators can widen the scope to other actors or organizations.',
       query: exportQuerySchema,
       responses: [
-        { status: 200, description: 'CSV export generated successfully', schema: responseSchema },
+        { status: 200, description: 'CSV export generated successfully', schema: responseSchema,
+        },
       ],
       errors: [
-        { status: 400, description: 'Invalid filter values', schema: errorSchema },
-        { status: 401, description: 'Authentication required', schema: errorSchema },
+        { status: 400, description: 'Invalid filter values', schema: errorSchema,
+        },
+        { status: 401, description: 'Authentication required', schema: errorSchema,
+        },
         { status: 403, description: 'Caller has no resolved tenant scope and is not a superadmin', schema: errorSchema },
       ],
     },

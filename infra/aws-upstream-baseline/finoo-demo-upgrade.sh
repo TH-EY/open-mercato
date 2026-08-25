@@ -259,8 +259,9 @@ expected_key_sets = {
         'unknownCountry', 'invalidIssuedOn', 'invalidExpiresOn',
     }),
     frozenset({
-        'scanned', 'migrated', 'unmigrated', 'destinationConflicts',
-        'activeDefinitions', 'inactiveDefinitions',
+        'scanned', 'migrated', 'unmigrated', 'destinationRecords',
+        'linkedDestinationRecords', 'destinationConflicts',
+        'aliasValues', 'activeDefinitions', 'inactiveDefinitions',
     }),
 }
 matches = []
@@ -308,8 +309,9 @@ import json
 import sys
 
 expected_keys = {
-    'scanned', 'migrated', 'unmigrated', 'destinationConflicts',
-    'activeDefinitions', 'inactiveDefinitions',
+    'scanned', 'migrated', 'unmigrated', 'destinationRecords',
+    'linkedDestinationRecords', 'destinationConflicts',
+    'aliasValues', 'activeDefinitions', 'inactiveDefinitions',
 }
 report = json.loads(sys.argv[1])
 if set(report) != expected_keys:
@@ -318,6 +320,12 @@ if any(not isinstance(value, int) or value < 0 for value in report.values()):
     raise SystemExit('FINOO identity verification report must contain counts only')
 if report['unmigrated'] != 0 or report['destinationConflicts'] != 0:
     raise SystemExit('FINOO identity migration verification failed')
+if report['aliasValues'] != 0:
+    raise SystemExit('FINOO identity migration has prefixed legacy aliases')
+if report['linkedDestinationRecords'] != report['migrated'] + report['destinationConflicts']:
+    raise SystemExit('FINOO identity linked destination count does not reconcile')
+if report['destinationRecords'] < report['linkedDestinationRecords']:
+    raise SystemExit('FINOO identity destination count is inconsistent')
 if report['activeDefinitions'] != int(sys.argv[2]) or report['inactiveDefinitions'] != int(sys.argv[3]):
     raise SystemExit('FINOO identity legacy definition count is not exact')
 PY
@@ -360,14 +368,21 @@ import json
 import sys
 
 expected_keys = {
-    'scanned', 'migrated', 'unmigrated', 'destinationConflicts',
-    'activeDefinitions', 'inactiveDefinitions',
+    'scanned', 'migrated', 'unmigrated', 'destinationRecords',
+    'linkedDestinationRecords', 'destinationConflicts',
+    'aliasValues', 'activeDefinitions', 'inactiveDefinitions',
 }
 report = json.loads(sys.argv[1])
 if set(report) != expected_keys or any(not isinstance(value, int) or value < 0 for value in report.values()):
     raise SystemExit('Unexpected FINOO identity definition-state report')
 if report['unmigrated'] != 0 or report['destinationConflicts'] != 0:
     raise SystemExit('FINOO identity migration is not safe for rollback')
+if report['aliasValues'] != 0:
+    raise SystemExit('FINOO identity migration has prefixed legacy aliases')
+if report['linkedDestinationRecords'] != report['migrated'] + report['destinationConflicts']:
+    raise SystemExit('FINOO identity linked destination count does not reconcile')
+if report['destinationRecords'] < report['linkedDestinationRecords']:
+    raise SystemExit('FINOO identity destination count is inconsistent')
 active = report['activeDefinitions']
 inactive = report['inactiveDefinitions']
 if (active, inactive) not in {(6, 0), (0, 6)}:
@@ -1008,8 +1023,9 @@ expected_key_sets = {
         'unknownCountry', 'invalidIssuedOn', 'invalidExpiresOn',
     }),
     frozenset({
-        'scanned', 'migrated', 'unmigrated', 'destinationConflicts',
-        'activeDefinitions', 'inactiveDefinitions',
+        'scanned', 'migrated', 'unmigrated', 'destinationRecords',
+        'linkedDestinationRecords', 'destinationConflicts',
+        'aliasValues', 'activeDefinitions', 'inactiveDefinitions',
     }),
 }
 matches = []
@@ -1131,14 +1147,21 @@ import json
 import sys
 
 expected_keys = {
-    'scanned', 'migrated', 'unmigrated', 'destinationConflicts',
-    'activeDefinitions', 'inactiveDefinitions',
+    'scanned', 'migrated', 'unmigrated', 'destinationRecords',
+    'linkedDestinationRecords', 'destinationConflicts',
+    'aliasValues', 'activeDefinitions', 'inactiveDefinitions',
 }
 report = json.loads(sys.argv[1])
 if set(report) != expected_keys or any(not isinstance(value, int) or value < 0 for value in report.values()):
     raise SystemExit('Unexpected FINOO identity rollback verification report')
 if report['unmigrated'] != 0 or report['destinationConflicts'] != 0:
     raise SystemExit('FINOO identity migration is not safe for rollback')
+if report['aliasValues'] != 0:
+    raise SystemExit('FINOO identity migration has prefixed legacy aliases')
+if report['linkedDestinationRecords'] != report['migrated'] + report['destinationConflicts']:
+    raise SystemExit('FINOO identity linked destination count does not reconcile')
+if report['destinationRecords'] < report['linkedDestinationRecords']:
+    raise SystemExit('FINOO identity destination count is inconsistent')
 active = report['activeDefinitions']
 inactive = report['inactiveDefinitions']
 if (active, inactive) not in {(6, 0), (0, 6)}:
@@ -1185,6 +1208,12 @@ import sys
 report = json.loads(sys.argv[1])
 if report.get('unmigrated') != 0 or report.get('destinationConflicts') != 0:
     raise SystemExit('FINOO identity migration is not safe for new runtime restore')
+if report.get('aliasValues') != 0:
+    raise SystemExit('FINOO identity migration has prefixed legacy aliases')
+if report.get('linkedDestinationRecords') != report.get('migrated', 0) + report.get('destinationConflicts', 0):
+    raise SystemExit('FINOO identity linked destination count does not reconcile')
+if report.get('destinationRecords', -1) < report.get('linkedDestinationRecords', 0):
+    raise SystemExit('FINOO identity destination count is inconsistent')
 if report.get('activeDefinitions') != 0 or report.get('inactiveDefinitions') != 6:
     raise SystemExit('FINOO identity cutover was not restored exactly')
 PY

@@ -11,6 +11,7 @@ import { z } from 'zod'
 import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import { parseBooleanToken } from '@open-mercato/shared/lib/boolean'
 import { ACTION_LOG_FILTER_TYPES } from '@open-mercato/core/modules/audit_logs/lib/projections'
+import { redactInactiveCustomFieldsFromActionLogs } from '@open-mercato/core/modules/audit_logs/lib/customFieldRedaction'
 
 export const metadata = {
   GET: { requireAuth: true, requireFeatures: ['audit_logs.view_self'] },
@@ -180,8 +181,10 @@ export async function GET(req: Request) {
   const undoableOnly = parseBooleanToken(url.searchParams.get('undoableOnly')) === true
   const limit = parseLimit(url.searchParams.get('limit'))
   const offset = parseOffset(url.searchParams.get('offset'))
-  const page = parseNumber(url.searchParams.get('page'), { min: 1, max: 1000000, fallback: 1 })
-  const pageSize = parseNumber(url.searchParams.get('pageSize'), { min: 1, max: 200, fallback: 50 })
+  const page = parseNumber(url.searchParams.get('page'), { min: 1, max: 1000000, fallback: 1,
+  })
+  const pageSize = parseNumber(url.searchParams.get('pageSize'), { min: 1, max: 200, fallback: 50,
+  })
   const sortField = SORT_FIELDS.find((value) => value === url.searchParams.get('sortField')) ?? 'createdAt'
   const sortDir = SORT_DIRECTIONS.find((value) => value === url.searchParams.get('sortDir')) ?? 'desc'
   const before = parseDate(url.searchParams.get('before'))
@@ -240,13 +243,15 @@ export async function GET(req: Request) {
     throw err
   }
 
+  const redactedItems = await redactInactiveCustomFieldsFromActionLogs(em, list.items)
   const displayMaps = await loadAuditLogDisplayMaps(em, {
-    userIds: list.items.map((entry: any) => entry.actorUserId).filter((value: any): value is string => !!value),
-    tenantIds: list.items.map((entry: any) => entry.tenantId).filter((value: any): value is string => !!value),
-    organizationIds: list.items.map((entry: any) => entry.organizationId).filter((value: any): value is string => !!value),
+    userIds: redactedItems.map((entry: any) => entry.actorUserId).filter((value: any): value is string => !!value),
+    tenantIds: redactedItems.map((entry: any) => entry.tenantId).filter((value: any): value is string => !!value),
+    organizationIds: redactedItems
+      .map((entry: any) => entry.organizationId).filter((value: any): value is string => !!value),
   })
 
-  const items = list.items.map((entry: any) => ({
+  const items = redactedItems.map((entry: any) => ({
     id: entry.id,
     commandId: entry.commandId,
     actionLabel: entry.actionLabel,
@@ -290,11 +295,14 @@ export const openApi: OpenApiRouteDoc = {
         'Returns recent action audit log entries. Tenant administrators can widen the scope to other actors or organizations, and callers can optionally restrict results to undoable actions.',
       query: auditActionQuerySchema,
       responses: [
-        { status: 200, description: 'Action logs retrieved successfully', schema: auditActionResponseSchema },
+        { status: 200, description: 'Action logs retrieved successfully', schema: auditActionResponseSchema,
+        },
       ],
       errors: [
-        { status: 400, description: 'Invalid filter values', schema: errorSchema },
-        { status: 401, description: 'Authentication required', schema: errorSchema },
+        { status: 400, description: 'Invalid filter values', schema: errorSchema,
+        },
+        { status: 401, description: 'Authentication required', schema: errorSchema,
+        },
         { status: 403, description: 'Caller has no resolved tenant scope and is not a superadmin', schema: errorSchema },
       ],
     },

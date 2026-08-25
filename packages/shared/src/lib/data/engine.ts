@@ -17,7 +17,7 @@ import type { BulkImportSuppression } from '../commands/types'
 import { CrudHttpError } from '../crud/errors'
 import { resolveRegisteredEntityTableName } from '../query/engine'
 import { getEntityIds } from '../encryption/entityIds'
-import { normalizeCustomFieldValues } from '../custom-fields/normalize'
+import { canonicalizeCustomFieldValueKeys, normalizeCustomFieldValues } from '../custom-fields/normalize'
 import { parseBooleanToken } from '../boolean'
 import { isReadProjectionAlwaysConsistent } from './consistency'
 import { isEventDeclared } from '../../modules/events'
@@ -72,6 +72,7 @@ export interface DataEngine {
     tenantId?: string | null
     values: Record<string, string | number | boolean | null | undefined | Array<string | number | boolean | null | undefined>>
     notify?: boolean // default true -> emit '<module>.<entity>.updated'
+    rejectUndeclaredKeys?: boolean
   }): Promise<void>
 
   // Storage for user-defined entities (doc-based)
@@ -192,13 +193,20 @@ export class DefaultDataEngine implements DataEngine {
 
   async setCustomFields(opts: Parameters<DataEngine['setCustomFields']>[0]): Promise<void> {
     const { entityId, recordId, organizationId = null, tenantId = null, values } = opts
+    const canonicalValues = canonicalizeCustomFieldValueKeys(values)
     const sanitizedValues = await sanitizeCustomFieldHtmlRichTextValuesServer(this.em, {
       entityId,
       organizationId,
       tenantId,
-      values,
+      values: canonicalValues,
     })
-    await this.validateCustomFieldValues(entityId, organizationId, tenantId, sanitizedValues as Record<string, unknown>)
+    await this.validateCustomFieldValues(
+      entityId,
+      organizationId,
+      tenantId,
+      sanitizedValues as Record<string, unknown>,
+      opts.rejectUndeclaredKeys === true,
+    )
     let encryptionService: any = null
     try {
       encryptionService = this.container.resolve('tenantEncryptionService') as any
@@ -212,6 +220,7 @@ export class DefaultDataEngine implements DataEngine {
       tenantId,
       values: sanitizedValues,
       encryptionService,
+      rejectUndeclaredKeys: opts.rejectUndeclaredKeys === true,
     })
     if (opts.notify !== false) {
       let bus: EventBus | null = null
@@ -289,6 +298,7 @@ export class DefaultDataEngine implements DataEngine {
     organizationId: string | null,
     tenantId: string | null,
     values: Record<string, unknown> | undefined | null,
+    rejectUndeclaredKeys = false,
   ): Promise<void> {
     const prepared = this.normalizeValuesForValidation(values)
     if (!entityId || Object.keys(prepared).length === 0) return
@@ -297,6 +307,7 @@ export class DefaultDataEngine implements DataEngine {
       organizationId,
       tenantId,
       values: prepared,
+      rejectUndeclaredKeys,
     })
     if (!result.ok) {
       throw new CrudHttpError(400, { error: 'Validation failed', fields: result.fieldErrors })

@@ -5,6 +5,8 @@ import { defaultEncryptionMaps } from '../encryption'
 import { metadata } from '../index'
 import { FINOO_IOD_ROLE, setup } from '../setup'
 import rawIdentityWidget from '../widgets/injection/raw-identity/widget'
+import completenessFilterWidget from '../widgets/injection/completeness-filter/widget'
+import { injectionTable } from '../widgets/injection-table'
 
 describe('FINOO identities module contract', () => {
   it('declares immutable access features and least-privilege default grants', () => {
@@ -56,6 +58,21 @@ describe('FINOO identities module contract', () => {
       features: ['finoo_identities.view'],
       requiredModules: ['customers'],
     })
+  })
+
+  it('exposes one localized completeness control through the People toolbar', () => {
+    expect(completenessFilterWidget).toMatchObject({
+      metadata: {
+        id: 'finoo_identities.injection.completeness-filter',
+        requiredModules: ['customers'],
+      },
+      Widget: expect.any(Function),
+    })
+    expect(injectionTable['data-table:customers.people.list:toolbar']).toEqual({
+      widgetId: 'finoo_identities.injection.completeness-filter',
+      priority: 20,
+    })
+    expect(injectionTable['data-table:customers.people.list:filters']).toBeUndefined()
   })
 
   it('stores encrypted identity dates in ciphertext-compatible text columns', () => {

@@ -7,6 +7,8 @@ import { decryptCustomFieldValue, resolveTenantEncryptionService } from '../encr
 import { parseBooleanToken } from '../boolean'
 import { extractCustomFieldEntries } from './custom-fields-client'
 import { createLogger } from '../logger'
+import { CrudHttpError } from './errors'
+import { canonicalizeCustomFieldInputKey, canonicalizeCustomFieldValueKeys } from '../custom-fields/normalize'
 import {
   buildCustomFieldDefinitionIndexFromRows,
   normalizeDefinitionKey,
@@ -190,6 +192,16 @@ export async function buildCustomFieldFiltersFromQuery(opts: {
 export function splitCustomFieldPayload(raw: unknown): SplitCustomFieldPayload {
   const base: Record<string, unknown> = {}
   const custom: Record<string, unknown> = {}
+  const assignCustom = (rawKey: string, value: unknown) => {
+    const normalized = canonicalizeCustomFieldInputKey(rawKey)
+    if (Object.prototype.hasOwnProperty.call(custom, normalized)) {
+      throw new CrudHttpError(400, {
+        error: 'Validation failed',
+        fields: { [`cf_${normalized}`]: 'Ambiguous custom field key' },
+      })
+    }
+    custom[normalized] = value
+  }
   if (!raw || typeof raw !== 'object') return { base, custom }
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (key === 'customFields') {
@@ -198,7 +210,7 @@ export function splitCustomFieldPayload(raw: unknown): SplitCustomFieldPayload {
           if (!entry || typeof entry !== 'object') return
           const entryKey = typeof (entry as any).key === 'string' ? (entry as any).key.trim() : ''
           if (!entryKey) return
-          custom[entryKey] = (entry as any).value
+          assignCustom(entryKey, (entry as any).value)
         })
         continue
       }
@@ -206,28 +218,28 @@ export function splitCustomFieldPayload(raw: unknown): SplitCustomFieldPayload {
         for (const [ck, cv] of Object.entries(value as Record<string, unknown>)) {
           const normalizedKey = typeof ck === 'string' ? ck.trim() : ''
           if (!normalizedKey) continue
-          custom[normalizedKey] = cv
+          assignCustom(normalizedKey, cv)
         }
         continue
       }
     }
     if (key === 'customValues' && value && typeof value === 'object' && !Array.isArray(value)) {
       for (const [ck, cv] of Object.entries(value as Record<string, unknown>)) {
-        custom[String(ck)] = cv
+        assignCustom(String(ck), cv)
       }
       continue
     }
     if (key.startsWith('cf_')) {
-      custom[key.slice(3)] = value
+      assignCustom(key, value)
       continue
     }
     if (key.startsWith('cf:')) {
-      custom[key.slice(3)] = value
+      assignCustom(key, value)
       continue
     }
     base[key] = value
   }
-  return { base, custom }
+  return { base, custom: canonicalizeCustomFieldValueKeys(custom) }
 }
 
 export function extractCustomFieldValuesFromPayload(raw: Record<string, unknown>): Record<string, unknown> {
@@ -588,8 +600,6 @@ export async function loadCustomFieldValues(opts: {
     ? await em.find(CustomFieldDef, {
         entityId: entityId as any,
         key: { $in: allKeys as any },
-        deletedAt: null,
-        isActive: true,
         ...(tenantList.length ? { tenantId: tenantFilter.tenantId } : {}),
         organizationId: { $in: orgList as any },
       })
@@ -605,22 +615,30 @@ export async function loadCustomFieldValues(opts: {
   const pickDefinition = (fieldKey: string, organizationId: string | null, tenantId: string | null) => {
     const candidates = defsByKey.get(fieldKey)
     if (!candidates || candidates.length === 0) return null
-    const active = candidates.filter((opt) => opt.isActive !== false && !opt.deletedAt)
-    const list = active.length ? active : candidates
-    if (organizationId && tenantId) {
-      const exact = list.find((opt) => opt.organizationId === organizationId && opt.tenantId === tenantId)
-      if (exact) return exact
+    const scopeScore = (candidate: CustomFieldDef): number => {
+      if (candidate.organizationId === organizationId && candidate.tenantId === tenantId) return 4
+      if (candidate.organizationId === organizationId && candidate.tenantId == null) return 3
+      if (candidate.organizationId == null && candidate.tenantId === tenantId) return 2
+      if (candidate.organizationId == null && candidate.tenantId == null) return 1
+      return -1
     }
-    if (organizationId) {
-      const orgMatch = list.find((opt) => opt.organizationId === organizationId && (!tenantId || opt.tenantId == null || opt.tenantId === tenantId))
-      if (orgMatch) return orgMatch
-    }
-    if (tenantId) {
-      const tenantMatch = list.find((opt) => opt.organizationId == null && opt.tenantId === tenantId)
-      if (tenantMatch) return tenantMatch
-    }
-    const global = list.find((opt) => opt.organizationId == null && opt.tenantId == null)
-    return global ?? list[0]
+    return (
+      candidates
+        .map((candidate) => ({ candidate, score: scopeScore(candidate) }))
+        .filter(({ score }) => score >= 0)
+        .sort((left, right) => {
+          if (right.score !== left.score) return right.score - left.score
+          const leftUpdatedAt =
+            left.candidate.updatedAt instanceof Date
+              ? left.candidate.updatedAt.getTime()
+              : new Date(left.candidate.updatedAt).getTime()
+          const rightUpdatedAt =
+            right.candidate.updatedAt instanceof Date
+              ? right.candidate.updatedAt.getTime()
+              : new Date(right.candidate.updatedAt).getTime()
+          return rightUpdatedAt - leftUpdatedAt
+        })[0]?.candidate ?? null
+    )
   }
 
   const valueFromRow = (row: CustomFieldValue): unknown => {
@@ -632,22 +650,43 @@ export async function loadCustomFieldValues(opts: {
     return null
   }
 
-  type Bucket = { orgId: string | null; tenantId: string | null; values: unknown[]; def?: CustomFieldDef | null; encrypted?: boolean }
+  type Bucket = {
+    orgId: string | null
+    tenantId: string | null
+    values: unknown[]
+    def?: CustomFieldDef | null
+    encrypted?: boolean
+  }
   const buckets = new Map<string, Bucket>()
 
-  const rowInfos = cfRows.map((row) => {
-    const recordId = String(row.recordId)
-    const key = String(row.fieldKey)
-    const bucketKey = `${recordId}::${key}`
-    const orgId = row.organizationId ? String(row.organizationId) : null
-    const tenantId = row.tenantId ? String(row.tenantId) : null
-    const resolvedOrgId = orgId ?? (opts.organizationIdByRecord?.[recordId] ?? null)
-    const resolvedTenantId = tenantId ?? (opts.tenantIdByRecord?.[recordId] ?? fallbackTenant)
-    const def = pickDefinition(key, resolvedOrgId, resolvedTenantId)
-    const encrypted = Boolean(def?.configJson && (def as any).configJson?.encrypted)
-    const value = valueFromRow(row)
-    return { bucketKey, resolvedOrgId, resolvedTenantId, tenantId, def, encrypted, value }
-  })
+  const rowInfos = cfRows
+    .map((row) => {
+      const recordId = String(row.recordId)
+      const key = String(row.fieldKey)
+      const bucketKey = `${recordId}::${key}`
+      const orgId = row.organizationId ? String(row.organizationId) : null
+      const tenantId = row.tenantId ? String(row.tenantId) : null
+      const resolvedOrgId = orgId ?? opts.organizationIdByRecord?.[recordId] ?? null
+      const resolvedTenantId = tenantId ?? opts.tenantIdByRecord?.[recordId] ?? fallbackTenant
+      const storedAlias = key.startsWith('cf_') || key.startsWith('cf:')
+      const effectiveDef = storedAlias ? null : pickDefinition(key, resolvedOrgId, resolvedTenantId)
+      const inactive = Boolean(effectiveDef && (effectiveDef.isActive === false || effectiveDef.deletedAt))
+      const def = inactive ? null : effectiveDef
+      const encrypted = Boolean(def?.configJson && (def as any).configJson?.encrypted)
+      const value = valueFromRow(row)
+      return {
+        bucketKey,
+        resolvedOrgId,
+        resolvedTenantId,
+        tenantId,
+        def,
+        inactive,
+        storedAlias,
+        encrypted,
+        value,
+      }
+    })
+    .filter((info) => !info.storedAlias && !info.inactive)
 
   // Decrypt every encrypted value concurrently so a list of N rows × M encrypted
   // fields costs the slowest single decryption rather than the sum (issue #2229).
@@ -685,7 +724,14 @@ export async function loadCustomFieldValues(opts: {
     const [recordId, fieldKey] = compoundKey.split('::')
     if (!result[recordId]) result[recordId] = {}
     const prefixed = `cf_${fieldKey}`
-    const def = bucket.def ?? pickDefinition(fieldKey, bucket.orgId ?? (opts.organizationIdByRecord?.[recordId] ?? null), bucket.tenantId ?? (opts.tenantIdByRecord?.[recordId] ?? null))
+    const effectiveDef =
+      bucket.def ??
+      pickDefinition(
+        fieldKey,
+        bucket.orgId ?? opts.organizationIdByRecord?.[recordId] ?? null,
+        bucket.tenantId ?? opts.tenantIdByRecord?.[recordId] ?? null,
+      )
+    const def = effectiveDef && effectiveDef.isActive !== false && !effectiveDef.deletedAt ? effectiveDef : null
     if (def && def.configJson && typeof def.configJson === 'object' && (def.configJson as any).multi) {
       const cleaned = bucket.values.filter((v) => v !== undefined && v !== null)
       result[recordId][prefixed] = cleaned

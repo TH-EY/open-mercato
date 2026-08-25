@@ -18,7 +18,9 @@ export type FinooIdentityErasurePort = {
   anonymizeAndDeleteForPerson: (request: FinooIdentityErasureScope & {
     personId: string
     systemActor: true
-  }) => Promise<unknown>
+      transactionalEm: EntityManager
+      registerPostCommitEffect?: (effect: () => Promise<void>) => void
+    }) => Promise<unknown>
 }
 
 type ExecuteInput = FinooIdentityErasureScope & {
@@ -114,13 +116,15 @@ export function createFinooIdentityErasureExecutor(dependencies: {
           organizationId: input.organizationId,
           customerEntityId: candidate.customerEntityId,
           reconciliationGeneration: settings.reconciliationGeneration,
-        }, async () => {
+        }, async ({ transactionalEm, registerPostCommitEffect }) => {
           await identityRetention.anonymizeAndDeleteForPerson({
             tenantId: input.tenantId,
             organizationId: input.organizationId,
             personId: candidate.customerEntityId,
             systemActor: true,
-          })
+              transactionalEm,
+              registerPostCommitEffect,
+            })
         })
         if (authoritative.operationApplied) processedCount += 1
       }

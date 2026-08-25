@@ -192,7 +192,17 @@ describe('customers commands undo custom fields', () => {
         }
         return null
       }),
-      find: jest.fn(async () => []),
+      find: jest.fn(async (ctor) => {
+        if (ctor !== CustomFieldDef) return []
+        return ['priority', 'rating'].map((key) => ({
+          key,
+          entityId: 'customers:customer_person_profile',
+          organizationId: 'org-1',
+          tenantId: 'tenant-1',
+          isActive: true,
+          deletedAt: null,
+        }))
+      }),
       nativeDelete: jest.fn(async () => {}),
       create: jest.fn((_ctor, data) => data),
       persist: jest.fn(() => {}),
@@ -304,6 +314,75 @@ describe('customers commands undo custom fields', () => {
       })
     )
     expect(existingEntity.displayName).toBe('Before Name')
+  })
+
+  it.each([
+    ['update undo', 'customers.people.update', 'undo'],
+    ['delete undo', 'customers.people.delete', 'undo'],
+    ['create redo', 'customers.people.create', 'redo'],
+  ] as const)('rejects tombstoned Person custom fields before %s mutates data', async (_label, commandId, action) => {
+    const handler = commandRegistry.get(commandId) as CommandHandler
+    const snapshot = {
+      entity: {
+        id: 'person-blocked',
+        organizationId: 'org-1',
+        tenantId: 'tenant-1',
+        displayName: 'Historical Person',
+      },
+      profile: { id: 'profile-blocked' },
+      tagIds: [],
+      addresses: [],
+      comments: [],
+      deals: [],
+      activities: [],
+      todos: [],
+      interactions: [],
+      custom: { id_number: 'DOCUMENT_CANARY' },
+    }
+    const em = {
+      fork: () => em,
+      find: jest.fn(async () => []),
+      findOne: jest.fn(async () => null),
+      create: jest.fn((_ctor, data) => data),
+      persist: jest.fn(),
+      flush: jest.fn(async () => {}),
+      begin: jest.fn(async () => {}),
+      commit: jest.fn(async () => {}),
+      rollback: jest.fn(async () => {}),
+      transactional: jest.fn(async (fn: any) => fn(em)),
+    }
+    const dataEngine = {
+      setCustomFields: jest.fn(async () => {}),
+      emitOrmEntityEvent: jest.fn(async () => {}),
+    }
+    const ctx = createMockContext({ em, dataEngine })
+    const logEntry =
+      action === 'redo'
+        ? { snapshotAfter: snapshot }
+        : {
+            commandPayload: {
+              undo: {
+                before: snapshot,
+                ...(commandId === 'customers.people.update' ? { after: { ...snapshot, custom: {} } } : {}),
+              },
+            },
+          }
+
+    await expect(
+      handler[action]?.({
+        input: undefined,
+        logEntry: logEntry as any,
+        ctx,
+      } as any),
+    ).rejects.toMatchObject({
+      status: 400,
+      body: { fields: { cf_id_number: expect.any(String) } },
+    })
+    expect(em.findOne).not.toHaveBeenCalled()
+    expect(em.create).not.toHaveBeenCalled()
+    expect(em.persist).not.toHaveBeenCalled()
+    expect(em.begin).not.toHaveBeenCalled()
+    expect(dataEngine.setCustomFields).not.toHaveBeenCalled()
   })
 
   it('companies.update undo restores custom fields', async () => {
@@ -1183,7 +1262,8 @@ describe('customers commands undo custom fields', () => {
 
     expect(em.create).toHaveBeenCalledWith(
       CustomerInteraction,
-      expect.objectContaining({ id: 'todo-1', interactionType: 'task', source: 'adapter:todo' })
+      expect.objectContaining({ id: 'todo-1', interactionType: 'task', source: 'adapter:todo',
+      })
     )
   })
 
@@ -1260,7 +1340,8 @@ describe('customers commands undo custom fields', () => {
     expect(ctx.auth!.tenantId).toBe(tenantId)
     expect(ctx.auth!.orgId).toBe(organizationId)
 
-    const result = await handler.execute(input, ctx) as { linkId: string; todoId: string }
+    const result = await handler.execute(input, ctx) as { linkId: string
+      todoId: string }
     expect(result).toEqual({
       linkId: createdInteractionId,
       todoId: createdInteractionId,
@@ -1268,7 +1349,8 @@ describe('customers commands undo custom fields', () => {
     expect(em.persist).toHaveBeenCalled()
 
     const after = await handler.captureAfter?.(input, result, ctx)
-    const log = await handler.buildLog?.({ input, result, ctx, snapshots: { after } as any })
+    const log = await handler.buildLog?.({ input, result, ctx, snapshots: { after } as any,
+    })
     expect(log).toBeTruthy()
 
     await handler.undo?.({
@@ -1876,7 +1958,8 @@ describe('customers commands undo custom fields', () => {
     const ctx = createMockContext({ em, dataEngine })
     await handler.execute({ query: { id: entity.id } }, ctx)
 
-    expect(em.nativeDelete).toHaveBeenCalledWith(CustomerInteraction, expect.objectContaining({ entity, organizationId: entity.organizationId, tenantId: entity.tenantId }))
+    expect(em.nativeDelete).toHaveBeenCalledWith(CustomerInteraction, expect.objectContaining({ entity, organizationId: entity.organizationId, tenantId: entity.tenantId,
+      }))
     const interactionDeleteOrder = em.nativeDelete.mock.invocationCallOrder[
       em.nativeDelete.mock.calls.findIndex(([ctor]) => ctor === CustomerInteraction)
     ]
@@ -1991,7 +2074,8 @@ describe('customers commands undo custom fields', () => {
     const ctx = createMockContext({ em, dataEngine })
     await handler.execute({ query: { id: entity.id } }, ctx)
 
-    expect(em.nativeDelete).toHaveBeenCalledWith(CustomerInteraction, expect.objectContaining({ entity, organizationId: entity.organizationId, tenantId: entity.tenantId }))
+    expect(em.nativeDelete).toHaveBeenCalledWith(CustomerInteraction, expect.objectContaining({ entity, organizationId: entity.organizationId, tenantId: entity.tenantId,
+      }))
     const interactionDeleteOrder = em.nativeDelete.mock.invocationCallOrder[
       em.nativeDelete.mock.calls.findIndex(([ctor]) => ctor === CustomerInteraction)
     ]

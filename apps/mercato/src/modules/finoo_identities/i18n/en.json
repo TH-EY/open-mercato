@@ -15,7 +15,7 @@
       "not_applicable": "Not applicable"
     },
     "aggregate": { "complete": "Complete", "incomplete": "Incomplete" },
-    "filter": { "label": "Identity data completeness" },
+    "filter": { "label": "Identity data completeness", "all": "All identity statuses" },
     "documentTypes": {
       "identity_card": "Identity card",
       "permanent_identity_card": "Permanent identity card",

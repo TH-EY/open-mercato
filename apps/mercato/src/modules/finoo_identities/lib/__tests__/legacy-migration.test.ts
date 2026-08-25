@@ -5,12 +5,15 @@ import {
   migrateLegacyIdentities,
   purgeLegacyIdentityFields,
   setLegacyIdentityCutover,
+  verifyLegacyIdentityMigration,
 } from '../legacy-migration'
 
 const findOneWithDecryption = jest.fn()
+const findWithDecryption = jest.fn()
 
 jest.mock('@open-mercato/shared/lib/encryption/find', () => ({
   findOneWithDecryption: (...args: unknown[]) => findOneWithDecryption(...args),
+  findWithDecryption: (...args: unknown[]) => findWithDecryption(...args),
 }))
 
 const tenantId = '5164d495-1865-4738-b459-2783999a761d'
@@ -69,7 +72,7 @@ function buildFixture(
     throw new Error(`Unexpected SQL: ${query}`)
   })
   const em: Record<string, unknown> = {
-    getConnection: () => ({ execute }),
+    execute,
     create: (entity: unknown, data: Record<string, unknown>) => ({
       entity,
       id: entity === FinooPersonIdentity ? '4e5f6a45-e7fd-40df-85b5-ad8a6e82d5b5' : 'audit-entry-id',
@@ -91,7 +94,10 @@ function buildFixture(
 }
 
 describe('FINOO legacy identity migration', () => {
-  beforeEach(() => findOneWithDecryption.mockReset())
+  beforeEach(() => {
+    findOneWithDecryption.mockReset()
+    findWithDecryption.mockReset().mockResolvedValue([])
+  })
 
   it('produces a count-only dry-run and performs no writes', async () => {
     const fixture = buildFixture('dry-run')
@@ -182,7 +188,120 @@ describe('FINOO legacy identity migration', () => {
       mode: fixture.mode,
     })
 
-    expect(report).toMatchObject({ unchanged: 1, created: 0, destinationConflicts: 0 })
+    expect(report).toMatchObject({ unchanged: 1, created: 0, destinationConflicts: 0,
+    })
+    expect(fixture.persisted).toHaveLength(0)
+  })
+
+  it('reconciles legacy-linked destinations with an independent scoped destination count', async () => {
+    const fixture = buildFixture('dry-run', {
+      pesel: '44051401458',
+      documentType: 'identity_card',
+      issuingCountryCode: 'PL',
+      documentNumber: 'ABC123456',
+      issuedOn: '2024-01-10',
+      expiresOn: '2034-01-10',
+    })
+    const baseExecute = fixture.execute.getMockImplementation()
+    fixture.execute.mockImplementation(async (query: string, params?: unknown[]) => {
+      if (query.includes('from finoo_person_identities destination')) {
+        return [{ destination_count: '4', linked_destination_count: '1' }]
+      }
+      return baseExecute?.(query, params)
+    })
+    fixture.em.find = jest.fn(async () =>
+      LEGACY_IDENTITY_FIELD_KEYS.map((key) => ({
+        id: `${key}-id`,
+        key,
+        isActive: true,
+        deletedAt: null,
+      })),
+    )
+
+    const report = await verifyLegacyIdentityMigration(fixture.em as never, fixture.encryptionService as never, {
+      tenantId,
+      organizationId,
+    })
+
+    expect(report).toMatchObject({
+      scanned: 1,
+      migrated: 1,
+      unmigrated: 0,
+      destinationRecords: 4,
+      linkedDestinationRecords: 1,
+      aliasValues: 0,
+    })
+  })
+
+  it('blocks cutover when the independent linked destination count does not reconcile', async () => {
+    const fixture = buildFixture('dry-run', {
+      pesel: '44051401458',
+      documentType: 'identity_card',
+      issuingCountryCode: 'PL',
+      documentNumber: 'ABC123456',
+      issuedOn: '2024-01-10',
+      expiresOn: '2034-01-10',
+    })
+    const baseExecute = fixture.execute.getMockImplementation()
+    fixture.execute.mockImplementation(async (query: string, params?: unknown[]) => {
+      if (query.includes('from finoo_person_identities destination')) {
+        return [{ destination_count: '1', linked_destination_count: '0' }]
+      }
+      return baseExecute?.(query, params)
+    })
+    fixture.em.find = jest.fn(async () =>
+      LEGACY_IDENTITY_FIELD_KEYS.map((key) => ({
+        id: `${key}-id`,
+        key,
+        isActive: true,
+        deletedAt: null,
+      })),
+    )
+
+    await expect(
+      setLegacyIdentityCutover({
+        em: fixture.em as never,
+        encryptionService: fixture.encryptionService as never,
+        scope: { tenantId, organizationId },
+        active: false,
+      }),
+    ).rejects.toThrow('legacy_identity_destination_count_mismatch')
+  })
+
+  it('blocks cutover when prefixed legacy aliases exist', async () => {
+    const fixture = buildFixture('dry-run', {
+      pesel: '44051401458',
+      documentType: 'identity_card',
+      issuingCountryCode: 'PL',
+      documentNumber: 'ABC123456',
+      issuedOn: '2024-01-10',
+      expiresOn: '2034-01-10',
+    })
+    const baseExecute = fixture.execute.getMockImplementation()
+    fixture.execute.mockImplementation(async (query: string, params?: unknown[]) => {
+      if (query.includes('from finoo_person_identities destination')) {
+        return [{ destination_count: '1', linked_destination_count: '1' }]
+      }
+      if (query.includes('alias_count')) return [{ alias_count: '1' }]
+      return baseExecute?.(query, params)
+    })
+    fixture.em.find = jest.fn(async () =>
+      LEGACY_IDENTITY_FIELD_KEYS.map((key) => ({
+        id: `${key}-id`,
+        key,
+        isActive: true,
+        deletedAt: null,
+      })),
+    )
+
+    await expect(
+      setLegacyIdentityCutover({
+        em: fixture.em as never,
+        encryptionService: fixture.encryptionService as never,
+        scope: { tenantId, organizationId },
+        active: false,
+      }),
+    ).rejects.toThrow('legacy_identity_alias_values_present')
     expect(fixture.persisted).toHaveLength(0)
   })
 
@@ -231,7 +350,13 @@ describe('FINOO legacy identity migration', () => {
     }))
     const persisted: unknown[] = []
     const em: Record<string, unknown> = {
-      getConnection: () => ({ execute: jest.fn(async (query: string) => query.includes('from customer_people profile') ? [] : (() => { throw new Error(`Unexpected SQL: ${query}`) })()) }),
+      execute: jest.fn(async (query: string) => {
+          if (query.includes('from customer_people profile')) return []
+          if (query.includes('from finoo_person_identities destination')) {
+            return [{ destination_count: '0', linked_destination_count: '0' }]
+          }
+          if (query.includes('alias_count')) return [{ alias_count: '0' }]
+          throw new Error(`Unexpected SQL: ${query}`) }),
       find: jest.fn(async () => definitions),
       persist: (entity: unknown) => persisted.push(entity),
       flush: jest.fn(async () => undefined),
@@ -319,14 +444,18 @@ describe('FINOO legacy identity migration', () => {
     }))
     const execute = jest.fn(async (query: string) => {
       if (query.includes('from customer_people profile')) return []
+      if (query.includes('from finoo_person_identities destination')) {
+        return [{ destination_count: '0', linked_destination_count: '0' }]
+      }
+      if (query.includes('alias_count')) return [{ alias_count: '0' }]
       if (query.includes('select count(*) as count')) return [{ count: '9' }]
       throw new Error(`Unexpected SQL: ${query}`)
     })
-    const em = {
-      getConnection: () => ({ execute }),
+    const em: Record<string, unknown> = {
+      execute,
       find: jest.fn(async () => definitions),
-      transactional: jest.fn(),
     }
+    em.transactional = jest.fn(async (callback: (transactionalEm: unknown) => Promise<unknown>) => callback(em))
 
     const report = await purgeLegacyIdentityFields({
       em: em as never,
@@ -339,10 +468,12 @@ describe('FINOO legacy identity migration', () => {
       mode: 'dry-run',
       values: 9,
       definitions: 6,
+      auditLogs: 0,
       residualValues: 9,
       residualDefinitions: 6,
+      residualAuditLogs: 0,
     })
-    expect(em.transactional).not.toHaveBeenCalled()
+    expect(em.transactional).toHaveBeenCalledTimes(1)
     expect(execute.mock.calls.some(([query]) => String(query).includes('delete from'))).toBe(false)
   })
 
@@ -357,13 +488,18 @@ describe('FINOO legacy identity migration', () => {
     let definitionCount = definitions.length
     const execute = jest.fn(async (query: string) => {
       if (query.includes('from customer_people profile')) return []
+      if (query.includes('from finoo_person_identities destination')) {
+        return [{ destination_count: '0', linked_destination_count: '0' }]
+      }
+      if (query.includes('alias_count')) return [{ alias_count: '0' }]
       if (query.includes('select count(*) as count') && query.includes('from custom_field_values')) {
         return [{ count: String(valueCount) }]
       }
       if (query.includes('delete from custom_field_values')) {
         const deletedCount = Math.min(valueCount, 2)
         valueCount -= deletedCount
-        return Array.from({ length: deletedCount }, (_, index) => ({ id: `value-${valueCount}-${index}` }))
+        return Array.from({ length: deletedCount }, (_, index) => ({ id: `value-${valueCount}-${index}`,
+        }))
       }
       if (query.includes('delete from custom_field_defs')) {
         definitionCount = 0
@@ -375,7 +511,7 @@ describe('FINOO legacy identity migration', () => {
       throw new Error(`Unexpected SQL: ${query}`)
     })
     const em: Record<string, unknown> = {
-      getConnection: () => ({ execute }),
+      execute,
       find: jest.fn(async () => definitions),
     }
     em.transactional = jest.fn(async (callback: (transactionalEm: unknown) => Promise<unknown>) => callback(em))
@@ -390,10 +526,80 @@ describe('FINOO legacy identity migration', () => {
       mode: 'apply',
       values: 5,
       definitions: 6,
+      auditLogs: 0,
       residualValues: 0,
       residualDefinitions: 0,
+      residualAuditLogs: 0,
     })
-    expect(em.transactional).toHaveBeenCalledTimes(4)
+    expect(em.transactional).toHaveBeenCalledTimes(6)
+  })
+
+  it('scrubs protected Person action-log payloads before deleting the legacy definitions', async () => {
+    const definitions = LEGACY_IDENTITY_FIELD_KEYS.map((key) => ({
+      id: `${key}-id`,
+      key,
+      isActive: false,
+      deletedAt: new Date('2026-08-24T12:00:00.000Z'),
+    }))
+    const actionLog = {
+      id: '01b41e42-f76e-7461-b0e3-946f4d0dd459',
+      tenantId,
+      organizationId,
+      resourceKind: 'customers.person',
+      createdAt: new Date('2026-08-24T11:00:00.000Z'),
+      commandPayload: { customFields: { id_number: 'COMMAND_CANARY', nickname: 'Ada' } },
+      snapshotBefore: { custom: { cf_id_number: 'SNAPSHOT_CANARY', cf_nickname: 'Ada' } },
+      snapshotAfter: null,
+      changesJson: { 'custom.id_number': { from: 'OLD', to: 'NEW' }, displayName: { to: 'Ada' } },
+      contextJson: null,
+    }
+    findWithDecryption.mockResolvedValue([actionLog])
+    let definitionCount = definitions.length
+    const execute = jest.fn(async (query: string) => {
+      if (query.includes('from customer_people profile')) return []
+      if (query.includes('from finoo_person_identities destination')) {
+        return [{ destination_count: '0', linked_destination_count: '0' }]
+      }
+      if (query.includes('alias_count')) return [{ alias_count: '0' }]
+      if (query.includes('select count(*) as count') && query.includes('from custom_field_values')) {
+        return [{ count: '0' }]
+      }
+      if (query.includes('delete from custom_field_values')) return []
+      if (query.includes('delete from custom_field_defs')) {
+        definitionCount = 0
+        return []
+      }
+      if (query.includes('select count(*) as count') && query.includes('from custom_field_defs')) {
+        return [{ count: String(definitionCount) }]
+      }
+      throw new Error(`Unexpected SQL: ${query}`)
+    })
+    const em: Record<string, unknown> = {
+      execute,
+      find: jest.fn(async () => definitions),
+      persist: jest.fn(),
+      flush: jest.fn(async () => undefined),
+    }
+    em.transactional = jest.fn(async (callback: (transactionalEm: unknown) => Promise<unknown>) => callback(em))
+
+    await expect(purgeLegacyIdentityFields({
+      em: em as never,
+      encryptionService: migrationEncryptionService() as never,
+      scope: { tenantId, organizationId },
+      mode: 'apply',
+    })).resolves.toEqual({
+      mode: 'apply',
+      values: 0,
+      definitions: 6,
+      auditLogs: 1,
+      residualValues: 0,
+      residualDefinitions: 0,
+      residualAuditLogs: 0,
+    })
+    expect(actionLog.commandPayload).toEqual({ customFields: { nickname: 'Ada' } })
+    expect(actionLog.snapshotBefore).toEqual({ custom: { cf_nickname: 'Ada' } })
+    expect(actionLog.changesJson).toEqual({ displayName: { to: 'Ada' } })
+    expect(JSON.stringify(actionLog)).not.toContain('CANARY')
   })
 
   it('fails closed when post-purge read-back finds a residual definition', async () => {
@@ -406,6 +612,10 @@ describe('FINOO legacy identity migration', () => {
     let valueCount = 1
     const execute = jest.fn(async (query: string) => {
       if (query.includes('from customer_people profile')) return []
+      if (query.includes('from finoo_person_identities destination')) {
+        return [{ destination_count: '0', linked_destination_count: '0' }]
+      }
+      if (query.includes('alias_count')) return [{ alias_count: '0' }]
       if (query.includes('select count(*) as count') && query.includes('from custom_field_values')) {
         return [{ count: String(valueCount) }]
       }
@@ -420,7 +630,7 @@ describe('FINOO legacy identity migration', () => {
       throw new Error(`Unexpected SQL: ${query}`)
     })
     const em: Record<string, unknown> = {
-      getConnection: () => ({ execute }),
+      execute,
       find: jest.fn(async () => definitions),
     }
     em.transactional = async (callback: (transactionalEm: unknown) => Promise<unknown>) => callback(em)
@@ -437,7 +647,7 @@ describe('FINOO legacy identity migration', () => {
   it('refuses purge when the legacy definition set is incomplete', async () => {
     const execute = jest.fn(async (query: string) => query.includes('from customer_people profile') ? [] : [])
     const em = {
-      getConnection: () => ({ execute }),
+      execute,
       find: jest.fn(async () => LEGACY_IDENTITY_FIELD_KEYS.slice(0, 5).map((key) => ({
         id: `${key}-id`,
         key,

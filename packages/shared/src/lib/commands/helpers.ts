@@ -31,10 +31,11 @@ export async function setCustomFieldsIfAny(opts: {
   organizationId: string | null
   values: Record<string, unknown>
   notify?: boolean
+  rejectUndeclaredKeys?: boolean
 }) {
   const { values } = opts
   if (!values || !Object.keys(values).length) return
-  const { dataEngine, entityId, recordId, tenantId, organizationId, notify = false } = opts
+  const { dataEngine, entityId, recordId, tenantId, organizationId, notify = false, rejectUndeclaredKeys = false } = opts
   const normalized = normalizeCustomFieldValues(values)
   await dataEngine.setCustomFields({
     entityId,
@@ -43,6 +44,7 @@ export async function setCustomFieldsIfAny(opts: {
     organizationId,
     values: normalized,
     notify,
+    rejectUndeclaredKeys,
   })
 }
 

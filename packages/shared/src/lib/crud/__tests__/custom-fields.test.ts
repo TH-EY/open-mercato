@@ -114,6 +114,14 @@ describe('splitCustomFieldPayload', () => {
       },
     })
   })
+
+  it('canonicalizes one custom-field prefix and rejects ambiguous double prefixes', () => {
+    expect(splitCustomFieldPayload({ customFields: { cf_id_number: 'DOC-1' } })).toEqual({
+      base: {},
+      custom: { id_number: 'DOC-1' },
+    })
+    expect(() => splitCustomFieldPayload({ customFields: { cf_cf_id_number: 'DOC-1' } })).toThrow('Validation failed')
+  })
 })
 
 describe('extractAllCustomFieldEntries', () => {
@@ -163,6 +171,221 @@ describe('extractAllCustomFieldEntries', () => {
 })
 
 describe('loadCustomFieldValues (encryption)', () => {
+  it('omits plaintext values whose custom-field definition is inactive', async () => {
+    const em = {
+      find: jest.fn().mockImplementation((_, where) => {
+        if ((where as any).recordId) {
+          return Promise.resolve([
+            {
+              recordId: 'rec-1',
+              fieldKey: 'retired_plaintext',
+              organizationId: null,
+              tenantId: 'tenant-1',
+              valueText: 'PLAINTEXT_CANARY',
+              valueMultiline: null,
+              valueInt: null,
+              valueFloat: null,
+              valueBool: null,
+              deletedAt: null,
+            },
+          ])
+        }
+        return Promise.resolve([
+          {
+            key: 'retired_plaintext',
+            organizationId: null,
+            tenantId: 'tenant-1',
+            isActive: false,
+            deletedAt: new Date('2026-08-24T12:00:00.000Z'),
+            configJson: {},
+          },
+        ])
+      }),
+    }
+
+    const values = await loadCustomFieldValues({
+      em: em as any,
+      entityId: 'demo:entity',
+      recordIds: ['rec-1'],
+      tenantIdByRecord: { 'rec-1': 'tenant-1' },
+    })
+
+    expect(values).toEqual({})
+    expect(JSON.stringify(values)).not.toContain('PLAINTEXT_CANARY')
+  })
+
+  it('omits encrypted values without resolving a key when the definition is inactive', async () => {
+    const encryptedCanary = 'ENCRYPTED_CANARY:v1'
+    const em = {
+      find: jest.fn().mockImplementation((_, where) => {
+        if ((where as any).recordId) {
+          return Promise.resolve([
+            {
+              recordId: 'rec-1',
+              fieldKey: 'retired_ciphertext',
+              organizationId: null,
+              tenantId: 'tenant-1',
+              valueText: encryptedCanary,
+              valueMultiline: null,
+              valueInt: null,
+              valueFloat: null,
+              valueBool: null,
+              deletedAt: null,
+            },
+          ])
+        }
+        return Promise.resolve([
+          {
+            key: 'retired_ciphertext',
+            organizationId: null,
+            tenantId: 'tenant-1',
+            isActive: false,
+            deletedAt: new Date('2026-08-24T12:00:00.000Z'),
+            configJson: { encrypted: true },
+          },
+        ])
+      }),
+    }
+    const getDek = jest.fn(async () => ({
+      key: Buffer.alloc(32, 2).toString('base64'),
+    }))
+
+    const values = await loadCustomFieldValues({
+      em: em as any,
+      entityId: 'demo:entity',
+      recordIds: ['rec-1'],
+      tenantIdByRecord: { 'rec-1': 'tenant-1' },
+      encryptionService: { isEnabled: () => true, getDek } as any,
+    })
+
+    expect(values).toEqual({})
+    expect(getDek).not.toHaveBeenCalled()
+    expect(JSON.stringify(values)).not.toContain(encryptedCanary)
+  })
+
+  it('preserves internal values that never had a custom-field definition', async () => {
+    const em = {
+      find: jest.fn().mockImplementation((_, where) => {
+        if ((where as any).recordId) {
+          return Promise.resolve([
+            {
+              recordId: 'rec-1',
+              fieldKey: 'internal_projection',
+              organizationId: null,
+              tenantId: 'tenant-1',
+              valueText: 'internal-value',
+              valueMultiline: null,
+              valueInt: null,
+              valueFloat: null,
+              valueBool: null,
+              deletedAt: null,
+            },
+          ])
+        }
+        return Promise.resolve([])
+      }),
+    }
+
+    const values = await loadCustomFieldValues({
+      em: em as any,
+      entityId: 'demo:entity',
+      recordIds: ['rec-1'],
+      tenantIdByRecord: { 'rec-1': 'tenant-1' },
+    })
+
+    expect(values).toEqual({
+      'rec-1': { cf_internal_projection: 'internal-value' },
+    })
+  })
+
+  it('lets an exact scoped tombstone override a generic active definition', async () => {
+    const em = {
+      find: jest.fn().mockImplementation((_, where) => {
+        if ((where as any).recordId) {
+          return Promise.resolve([
+            {
+              recordId: 'rec-1',
+              fieldKey: 'id_number',
+              organizationId: 'org-1',
+              tenantId: 'tenant-1',
+              valueText: 'DOCUMENT_CANARY',
+              valueMultiline: null,
+              valueInt: null,
+              valueFloat: null,
+              valueBool: null,
+              deletedAt: null,
+            },
+          ])
+        }
+        return Promise.resolve([
+          {
+            key: 'id_number',
+            organizationId: null,
+            tenantId: null,
+            isActive: true,
+            deletedAt: null,
+            updatedAt: new Date('2026-08-20T00:00:00.000Z'),
+            configJson: {},
+          },
+          {
+            key: 'id_number',
+            organizationId: 'org-1',
+            tenantId: 'tenant-1',
+            isActive: false,
+            deletedAt: new Date('2026-08-24T00:00:00.000Z'),
+            updatedAt: new Date('2026-08-24T00:00:00.000Z'),
+            configJson: {},
+          },
+        ])
+      }),
+    }
+
+    const values = await loadCustomFieldValues({
+      em: em as any,
+      entityId: 'customers:customer_person_profile',
+      recordIds: ['rec-1'],
+      tenantIdByRecord: { 'rec-1': 'tenant-1' },
+      organizationIdByRecord: { 'rec-1': 'org-1' },
+    })
+
+    expect(values).toEqual({})
+    expect(JSON.stringify(values)).not.toContain('DOCUMENT_CANARY')
+  })
+
+  it('omits prefixed storage aliases even when no definition exists', async () => {
+    const em = {
+      find: jest.fn().mockImplementation((_, where) => {
+        if ((where as any).recordId) {
+          return Promise.resolve([
+            {
+              recordId: 'rec-1',
+              fieldKey: 'cf_id_number',
+              organizationId: 'org-1',
+              tenantId: 'tenant-1',
+              valueText: 'ALIAS_CANARY',
+              valueMultiline: null,
+              valueInt: null,
+              valueFloat: null,
+              valueBool: null,
+              deletedAt: null,
+            },
+          ])
+        }
+        return Promise.resolve([])
+      }),
+    }
+
+    const values = await loadCustomFieldValues({
+      em: em as any,
+      entityId: 'customers:customer_person_profile',
+      recordIds: ['rec-1'],
+      tenantIdByRecord: { 'rec-1': 'tenant-1' },
+      organizationIdByRecord: { 'rec-1': 'org-1' },
+    })
+
+    expect(values).toEqual({})
+  })
+
   it('decrypts encrypted text custom field payloads as strings', async () => {
     const dek = Buffer.alloc(32, 2).toString('base64')
     // Mirrors production encrypt path: strings stored unwrapped, non-strings JSON-stringified.
@@ -179,7 +402,8 @@ describe('loadCustomFieldValues (encryption)', () => {
         ])
       }),
     }
-    const mockService = { isEnabled: () => true, getDek: async () => ({ key: dek }) }
+    const mockService = { isEnabled: () => true, getDek: async () => ({ key: dek }),
+    }
     const values = await loadCustomFieldValues({
       em: em as any,
       entityId: 'demo:entity',
@@ -205,7 +429,8 @@ describe('loadCustomFieldValues (encryption)', () => {
         ])
       }),
     }
-    const mockService = { isEnabled: () => true, getDek: async () => ({ key: dek }) }
+    const mockService = { isEnabled: () => true, getDek: async () => ({ key: dek }),
+    }
     const values = await loadCustomFieldValues({
       em: em as any,
       entityId: 'demo:entity',
@@ -233,7 +458,8 @@ describe('loadCustomFieldValues (encryption)', () => {
         ])
       }),
     }
-    const mockService = { isEnabled: () => true, getDek: async () => ({ key: dek }) }
+    const mockService = { isEnabled: () => true, getDek: async () => ({ key: dek }),
+    }
     const values = await loadCustomFieldValues({
       em: em as any,
       entityId: 'demo:entity',
@@ -297,7 +523,8 @@ describe('loadCustomFieldValues (encryption)', () => {
       em: em as any,
       entityId: 'demo:entity',
       recordIds: ['rec-1', 'rec-2', 'rec-3'],
-      tenantIdByRecord: { 'rec-1': 'tenant-1', 'rec-2': 'tenant-2', 'rec-3': 'tenant-3' },
+      tenantIdByRecord: { 'rec-1': 'tenant-1', 'rec-2': 'tenant-2', 'rec-3': 'tenant-3',
+      },
       encryptionService: mockService as any,
     })
     expect(values['rec-1'].cf_note).toBe('note-1')
@@ -324,7 +551,8 @@ describe('loadCustomFieldValues (encryption)', () => {
         ])
       }),
     }
-    const mockService = { isEnabled: () => true, getDek: async () => ({ key: dek }) }
+    const mockService = { isEnabled: () => true, getDek: async () => ({ key: dek }),
+    }
     const values = await loadCustomFieldValues({
       em: em as any,
       entityId: 'demo:entity',
@@ -368,7 +596,8 @@ describe('decorateRecordWithCustomFields', () => {
 
     expect(result.customValues).toEqual({ priority: 3 })
     expect(result.customFields).toEqual([
-      { key: 'priority', label: 'Priority', value: 3, kind: 'integer', multi: false },
+      { key: 'priority', label: 'Priority', value: 3, kind: 'integer', multi: false,
+      },
     ])
   })
 
@@ -386,7 +615,10 @@ describe('decorateRecordWithCustomFields', () => {
   it('keeps active fields and drops orphaned ones in mixed payloads', () => {
     const index = buildIndex([
       ['priority', [buildDefinition({ key: 'priority', label: 'Priority' })]],
-      ['severity', [buildDefinition({ key: 'severity', label: 'Severity', kind: 'text', priority: 1 })]],
+      ['severity', [buildDefinition({ key: 'severity', label: 'Severity', kind: 'text', priority: 1,
+          }),
+        ],
+      ],
     ])
 
     const result = decorateRecordWithCustomFields(
@@ -425,7 +657,8 @@ describe('applyCustomFieldsNormalization', () => {
   ])
 
   it('preserves cf_* keys by default for backward compatibility', () => {
-    const record = { id: 'r-1', name: 'Item', cf_priority: 5, 'cf:priority': 5 }
+    const record = { id: 'r-1', name: 'Item', cf_priority: 5, 'cf:priority': 5,
+    }
     const decorated = decorateRecordWithCustomFields(record, definitionIndex, {})
     const result = applyCustomFieldsNormalization(record, decorated)
 
@@ -434,13 +667,16 @@ describe('applyCustomFieldsNormalization', () => {
     expect(result['cf:priority']).toBe(5)
     expect(result.customValues).toEqual({ priority: 5 })
     expect(Array.isArray(result.customFields)).toBe(true)
-    expect((result.customFields as any[])[0]).toMatchObject({ key: 'priority', value: 5 })
+    expect((result.customFields as any[])[0]).toMatchObject({ key: 'priority', value: 5,
+    })
   })
 
   it('strips cf_* and cf:* keys when stripPrefixedKeys is enabled (issue #1769)', () => {
-    const record = { id: 'r-1', name: 'Item', cf_priority: 5, 'cf:priority': 5 }
+    const record = { id: 'r-1', name: 'Item', cf_priority: 5, 'cf:priority': 5,
+    }
     const decorated = decorateRecordWithCustomFields(record, definitionIndex, {})
-    const result = applyCustomFieldsNormalization(record, decorated, { stripPrefixedKeys: true })
+    const result = applyCustomFieldsNormalization(record, decorated, { stripPrefixedKeys: true,
+    })
 
     expect(result.id).toBe('r-1')
     expect(result.name).toBe('Item')
@@ -453,7 +689,8 @@ describe('applyCustomFieldsNormalization', () => {
   it('emits null customValues when no active definitions match', () => {
     const record = { id: 'r-1', cf_unknown: 'leftover' }
     const decorated = decorateRecordWithCustomFields(record, new Map(), {})
-    const result = applyCustomFieldsNormalization(record, decorated, { stripPrefixedKeys: true })
+    const result = applyCustomFieldsNormalization(record, decorated, { stripPrefixedKeys: true,
+    })
 
     expect(result.customValues).toBeNull()
     expect(result.customFields).toEqual([])
@@ -481,7 +718,8 @@ describe('loadCustomFieldDefinitionIndex', () => {
         organizationId: null,
         tenantId: 'tenant-1',
         updatedAt: new Date('2026-03-20T10:00:00.000Z'),
-        configJson: { fieldsets: ['service_package', 'event_ticket'], label: 'Support contact' },
+        configJson: { fieldsets: ['service_package', 'event_ticket'], label: 'Support contact',
+        },
         isActive: true,
       },
       {

@@ -302,7 +302,7 @@ Shared CRUD `ids` transport caps at 200. The interceptor must return `422 identi
 
 - Inject localized `Dane tożsamości` into `customers.people.list`.
 - Render only `StatusBadge`: complete/incomplete.
-- Keep the server filter contract for direct/API consumers. People v2 currently suppresses injected simple filters when its external advanced-filter panel is present; adding a first-class visible control requires an additive platform extension and is tracked outside this FINOO-private module change.
+- Inject one localized complete/incomplete/all selector into the People v2 toolbar. The host exposes only a generic controlled server-query-filter context; the FINOO widget owns the `finooIdentityComplete` parameter and does not add a second legacy filter popover beside the advanced-filter trigger.
 - No raw row/bulk actions.
 
 ### Person detail
@@ -349,7 +349,7 @@ Legacy typo `idenitity_card` maps to `identity_card`. Unknown dictionary or dire
 1. Drain FINOO Person/application writers.
 2. Run count-only dry-run.
 3. Apply bounded transactions; never overwrite an active destination; count conflicts.
-4. Re-run dry-run and require zero unmigrated Persons, matching record counts, expected status totals.
+4. Re-run dry-run and require zero unmigrated Persons, an independently counted exact match between legacy-linked destinations and migrated/conflicting Persons, and expected status totals. Report the total scoped destination count separately so native non-legacy identities remain visible without being treated as migration orphans.
 5. Verify raw ciphertext and authorized decrypted canaries without putting values in reports/Jira.
 
 Invalid legacy values are copied encrypted and marked missing. New writes remain strict.
@@ -357,8 +357,9 @@ Invalid legacy values are copied encrypted and marked missing. New writes remain
 ### Phase C — cutover
 
 1. Require valid PESEL for final `finoo_applications` submission and call the write-only identity port.
-2. The projector never sends the six protected values through generic Person commands, interceptors, undo snapshots, or action logs. Existing legacy values are read only by the scoped migration tool.
-3. Run `cutover-legacy` to verify zero unmigrated Persons and zero source/destination conflicts, then deactivate the six definitions transactionally, closing generic read/write paths.
+2. The projector never sends the six protected values through generic Person commands or interceptors. Historical pre-cutover Person action snapshots are redacted from standard audit reads/exports, and undo/redo rejects a snapshot containing a tombstoned field before any Person mutation.
+3. Run `cutover-legacy` to lock the six exact scoped definitions, then verify zero unmigrated Persons, zero source/destination conflicts, exact destination reconciliation, and zero prefixed storage aliases inside the same transaction before deactivating the definitions. Strict Person writes acquire the same definition locks and revalidate at the persistence sink, so a writer cannot commit after cutover verification.
+   Standard custom-field reads omit retained values that have no active scoped definition before any decryption is attempted. Standard Person create/update validates every submitted custom-field key against active scoped definitions and rejects tombstoned/undeclared keys before changing the Person.
 4. Enable safe/privileged widgets and verify roles.
 5. Restart app/workers and purge FINOO structural caches.
 
@@ -370,7 +371,7 @@ Invalid legacy values are copied encrypted and marked missing. New writes remain
 
 ### Phase E — separately approved purge
 
-After deployed QA and fresh count-only verification, request direct approval for exact tenant/org/six definitions. Only then hard-delete active/soft-deleted values and definitions in bounded transactions, verify zero residual keys, and retain count-only evidence.
+After deployed QA and fresh count-only verification, request direct approval for exact tenant/org/six definitions. Only then permanently scrub the six protected keys from scoped Person action-log command payloads, snapshots, changes, and context in bounded encrypted transactions, verify zero residual audit payloads, hard-delete active/soft-deleted values and definitions, verify zero residual keys, and retain count-only evidence. This scrub uses the immutable purge allowlist, so audit safety no longer depends on definitions that the purge removes.
 
 Cutover and rollback require `--apply --maintenance-window --confirm THOM-108` plus literal tenant and organization UUIDs. Purge dry-run requires literal scope; purge apply additionally requires the same maintenance-window and confirmation gates. No command has a wildcard/all-tenant mode.
 
@@ -426,6 +427,7 @@ Integration tests create/clean their own tenant, org, users/roles, Person, maps,
 | `TC-FINOO-ID-U06` | Import create/retry/conflict/no-overwrite. |
 | `TC-FINOO-ID-U07` | Identity/conflict optimistic locks. |
 | `TC-FINOO-ID-U08` | Migration idempotency, count-only output, purge guards. |
+| `TC-FINOO-ID-U09` | Retained plaintext/ciphertext rows with inactive definitions are omitted before decryption; strict Person writes reject tombstoned keys. |
 | `TC-FINOO-ID-001` | Ordinary user sees statuses, no protected key/value. |
 | `TC-FINOO-ID-002` | Ordinary raw GET/PUT/conflict returns audited 403 without decrypt/mutate. |
 | `TC-FINOO-ID-003` | IOD read/update and value-free audit. |
@@ -435,9 +437,12 @@ Integration tests create/clean their own tenant, org, users/roles, Person, maps,
 | `TC-FINOO-ID-007` | Projector create/unchanged/conflict no-overwrite. |
 | `TC-FINOO-ID-008` | Resolve/dismiss clears candidate ciphertext. |
 | `TC-FINOO-ID-009` | Invalid legacy preservation/status and idempotent mapping. |
-| `TC-FINOO-ID-010` | Cutover removes keys from customer/search/export/report and blocks writes. |
-| `TC-FINOO-ID-011` | Separately authorized retention executor selects only due scoped `expired` states; identity erasure removes values and nulls the audit Person link. |
-| `TC-FINOO-ID-012` | Headed list/detail/form QA for ordinary/IOD/superadmin. |
+| `TC-FINOO-ID-010` | Cutover-retained rows remain in storage for rollback but disappear from real Person read responses; real Person create/update rejects tombstoned keys without modifying retained rows. |
+| `TC-FINOO-ID-011` | Separately authorized retention executor selects only due scoped `expired` states; identity deletion and marker remain atomic, while cache/event effects run only after the outer retention transaction commits. |
+| `TC-FINOO-ID-015` | Permanent purge scrubs protected keys from encrypted historical Person action logs before deleting definitions and proves zero residual audit payloads without relying on live tombstones. |
+| `TC-FINOO-ID-012` | Headed list/detail/form/filter QA for ordinary/IOD/superadmin. |
+| `TC-FINOO-ID-013` | Nested `cf_*` aliases canonicalize once, double prefixes fail closed, prefixed stored aliases never render, and cutover reports/blocks any residual alias rows. |
+| `TC-FINOO-ID-014` | Ordinary self-audit GET/export redacts tombstoned identity keys and values; update undo, delete undo, and create redo reject historical protected snapshots before mutation. |
 
 Fixture PESEL/document canaries are scanned across responses, logs, events, CLI output, and audit; zero occurrences are allowed outside authorized raw responses.
 
@@ -536,7 +541,7 @@ Fixture PESEL/document canaries are scanned across responses, logs, events, CLI 
 - **Mitigation:** compact fixed columns, no snapshots, indexes, bounded pages, erasure anonymization.
 - **Residual risk:** anonymized audit retention needs a later approved policy.
 
-## Final Compliance Report — 2026-08-24
+## Final Compliance Report — 2026-08-25
 
 ### AGENTS.md Files Reviewed
 
@@ -556,11 +561,10 @@ Fixture PESEL/document canaries are scanned across responses, logs, events, CLI 
 
 ### Verification Evidence — 2026-08-25
 
-- PostgreSQL `TC-FINOO-ID-001-005`: PASS for ordinary status-only access, automatically provisioned IOD role with the exact three features and zero automatic assignments, IOD raw access, and superadmin wildcard access.
-- PostgreSQL `TC-FINOO-APP-001`: PASS for signed intake, mandatory PESEL, encrypted projection, retry/conflict/recovery/concurrency/retention, and corrupt-state fail-closed behavior.
-- Headed desktop QA: PASS for ordinary status-only, IOD raw identity, and superadmin raw identity views; ordinary 390x844 QA also exposes six statuses and no raw controls.
-- Current task-tree PostgreSQL integration, unit tests, typecheck, lint, generation, and application build: PASS after integration of `origin/fork/finoo`. Headed role QA predates that final merge, whose production-code delta is the separate fail-closed rejection of a retired completion field.
-- Production migration, cutover, rollback, retention execution, and permanent purge were not run. Purge apply remains separately approval-gated.
+- FINOO production currently runs commit `6406e161a2a64ab4701550b5672d6d0666def8a9`; the additive migration/backfill/cutover completed with 100 scanned, 100 migrated, zero unmigrated, zero conflicts, zero active legacy definitions, and six inactive retained definitions.
+- Headed desktop QA passed on that deployed revision for ordinary status-only, IOD raw identity, and Finoo Superadmin raw identity views. Permanent purge was intentionally not run and remains separately approval-gated.
+- A post-deployment audit found that the retained rows were still reachable through the standard custom-field loader/write path, the People v2 filter control was not visible, and identity-erasure effects could precede the outer retention commit.
+- The current remediation candidate closes those paths with pre-decryption definition filtering, single-most-specific tombstone precedence, canonical alias handling, strict pre-mutation and persistence-sink Person validation, definition-lock serialization with cutover, standard audit redaction, strict undo/redo recovery, a permanent pre-definition-purge action-log scrub, one controlled People toolbar selector, an explicitly shared retention `EntityManager`, and deferred post-commit effects. Targeted unit/component and PostgreSQL regression coverage is part of the same candidate; a new deployment and headed filter/read/write/audit QA are required before Jira closure.
 
 ### Compliance Matrix
 
@@ -572,10 +576,10 @@ Fixture PESEL/document canaries are scanned across responses, logs, events, CLI 
 | root | Feature authorization | Compliant | Immutable IDs; role name is provisioning only. |
 | root/core | Encryption helpers/maps | Compliant | Module maps + scoped decrypt helpers. |
 | root | Optimistic locking | Compliant | Identity/conflict version guards. |
-| core | Commands and route guards | Compliant with documented exception | Raw values stay out of generic command surfaces; routes pass safe changed-field metadata to mutation guards and service supplies locks/audit/cache/events. |
+| core | Commands and route guards | Compliant with documented exception | Raw values stay out of generic command surfaces; standard Person create/update rejects inactive/undeclared custom-field keys before mutation. |
 | core | Sanctioned integration seams | Compliant | Enricher/interceptor/widgets/DI. |
 | shared/UI | API helpers/i18n/CrudForm/DS | Compliant | Planned canonical primitives. |
-| QA/spec | API/UI integration coverage | Compliant for in-scope paths | PostgreSQL API integration and headed ordinary/IOD/superadmin role QA passed; production cutover and purge execution remain rollout operations, not implementation acceptance. |
+| QA/spec | API/UI integration coverage | Candidate verification required | Regression coverage now includes retained plaintext/ciphertext/alias rows, real Person read/write, audit read/export/undo, completeness filtering, definition locking, and explicit outer-transaction ownership; headed verification follows deployment. |
 | compatibility | Additive/staged removal | Compliant | Deactivate then separately approved purge. |
 
 ### Internal Consistency Check
@@ -583,20 +587,22 @@ Fixture PESEL/document canaries are scanned across responses, logs, events, CLI 
 | Check | Status | Notes |
 |---|---|---|
 | Models match APIs | Pass | Raw/safe/conflict/audit ownership explicit. |
-| APIs match UI | Partial | Safe host enrichment + privileged panel pass; People v2 visible aggregate filter needs a platform extension follow-up. |
+| APIs match UI | Pass in candidate | The controlled FINOO toolbar selector drives the existing server parameter without adding a second filter popover. |
 | Risks cover writes | Pass | Human/import/conflict/migration/rollback/purge/erasure. |
 | Mutation side effects covered | Pass | Runtime service supplies guards, locks, audit, cache invalidation, and events; migration is operator CLI. |
 | Cache covers reads | Pass | Raw uncached; safe scoped invalidation. |
 | Authorization covers raw paths | Pass | Central helper + route tests. |
 | Retention clock is singular | Pass | Person clock remains external. |
 
-### Non-Compliant Items
+### Remaining Release Gates
 
-- The People v2 advanced-filter panel cannot discover module-injected column/filter metadata. The safe API filter is implemented and tested, but a visible aggregate filter requires a separate additive platform extension; raw access and per-field status acceptance are unaffected.
+- Deploy the reviewed remediation revision to FINOO with the existing backup, preflight, count-only verification, and automatic rollback controls.
+- Re-run headed ordinary/IOD/Finoo Superadmin QA, including the visible completeness selector and standard Person read/write canaries while legacy definitions remain inactive.
+- Keep permanent purge outside this candidate until separately approved.
 
 ### Verdict
 
-- **Compliant for the THOM-108 private identity boundary:** PostgreSQL integration and headed role QA passed. The visible People v2 aggregate-filter extension remains a separate platform follow-up; production migration, cutover, retention invocation, and permanent purge remain unexecuted rollout operations.
+- **Implementation remediation is complete only after its current targeted checks pass; release acceptance remains pending deployment and headed QA.** The permanent purge is intentionally excluded.
 
 ## Changelog
 
@@ -608,7 +614,10 @@ Fixture PESEL/document canaries are scanned across responses, logs, events, CLI 
 ### 2026-08-25
 
 - Added PostgreSQL and headed role evidence, exact IOD provisioning grants, successful rollback coverage, and bounded permanent-purge transactions with zero-residual read-back.
-- Added a FINOO-instance compatibility path for the pre-existing `Finoo Superadmin` role after live QA proved it is not the platform `superadmin`. The private exact-scope setup command now fail-closes on missing or ambiguous role/ACL state, preserves unrelated grants, organization scope, platform-superadmin flag, and assignments, and adds only `finoo_identities.*`. Prior platform-superadmin QA does not cover this custom role; live headed `Finoo Superadmin` verification remains pending until the follow-up commit is deployed.
+- Added a FINOO-instance compatibility path for the pre-existing `Finoo Superadmin` role after live QA proved it is not the platform `superadmin`. The private exact-scope setup command fail-closes on missing or ambiguous role/ACL state, preserves unrelated grants, organization scope, platform-superadmin flag, and assignments, and adds only `finoo_identities.*`; live headed `Finoo Superadmin` verification subsequently passed on the deployed revision.
+- Recorded the completed FINOO deployment/cutover evidence for commit `6406e161a2a64ab4701550b5672d6d0666def8a9` and the intentionally retained six inactive legacy definitions.
+- Added post-audit remediations for orphaned and aliased custom-field reads/writes, scoped tombstone precedence, cutover/write serialization, historical audit and undo/redo safety, the visible People v2 completeness control, and explicit outer-transaction identity erasure, with regression coverage and redeployment/headed-QA gates.
+- Added independent count-only reconciliation of legacy-linked destination identities while retaining a separate total destination count for native identity records.
 
 ### Review — 2026-08-25
 
@@ -616,4 +625,4 @@ Fixture PESEL/document canaries are scanned across responses, logs, events, CLI 
 - **Security review:** passed after the purge/provisioning hardening; no authorization, privacy, raw-data disclosure, scope, or resumability regression found.
 - **Performance:** passed with explicit 200-match identity-filter bound and bounded purge transactions.
 - **Cache and mutation side effects:** passed with the documented raw-command-surface exception.
-- **Verdict:** approved for private branch publication and later FINOO rollout planning. Production deployment, migration, cutover, retention execution, and permanent purge remain separately gated.
+- **Verdict:** the original private rollout completed, but the post-audit remediation candidate requires fresh review, deployment, and headed QA before THOM-108 returns to Done. Permanent purge remains separately gated.

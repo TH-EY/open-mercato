@@ -252,6 +252,7 @@ test('TC-FINOO-RET-007 confirmed erasure follows the scoped due retention clock'
     const future = await createIdentityCopies(request, scenario, 'future')
     const active = await createIdentityCopies(request, scenario, 'active')
     const stale = await createIdentityCopies(request, scenario, 'stale')
+    const rollback = await createIdentityCopies(request, scenario, 'rollback')
     const foreign = await createIdentityCopies(request, foreignScenario, 'foreign')
     const intakeId = await createApplicationCopies(scenario, due.personId)
 
@@ -275,7 +276,20 @@ test('TC-FINOO-RET-007 confirmed erasure follows the scoped due retention clock'
     await insertRetentionState(scenario, future.personId, 'expired', "now()+interval '1 day'")
     await insertRetentionState(scenario, active.personId, 'active', "now()-interval '1 day'")
     await insertRetentionState(scenario, stale.personId, 'expired', "now()-interval '1 day'")
+    await insertRetentionState(scenario, rollback.personId, 'active', "now()-interval '1 day'")
     await insertRetentionState(foreignScenario, foreign.personId, 'expired', "now()-interval '1 day'")
+
+    expect(runRetentionHelper(scenario, ['rollback-identity-erasure', rollback.personId])).toEqual({
+      rolledBack: true,
+      postCommitEffects: 1,
+    })
+    expect(await countRows('finoo_person_identities', scenario, 'person_id', rollback.personId)).toBe(1)
+    expect(await countRows('finoo_identity_import_conflicts', scenario, 'person_id', rollback.personId)).toBe(1)
+    expect((await queryDatabase<{ identity_erased_at: Date | null }>(
+      `select identity_erased_at from finoo_customer_retention_states
+       where tenant_id=$1 and organization_id=$2 and customer_entity_id=$3`,
+      [scenario.tenantId, scenario.organizationId, rollback.personId],
+    ))[0]?.identity_erased_at).toBeNull()
     await queryDatabase(
       `insert into customer_comments
          (id,tenant_id,organization_id,entity_id,body,created_at,updated_at)

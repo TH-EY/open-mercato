@@ -93,6 +93,55 @@ async function readApplicationPayload(): Promise<{ payload: Record<string, unkno
   }
 }
 
+async function rollbackIdentityErasure(): Promise<{ rolledBack: true; postCommitEffects: number }> {
+  const personId = process.argv[3]?.trim() ?? ''
+  if (!personId) throw new Error('integration_person_id_missing')
+
+  const container = await createRequestContainer()
+  try {
+    const em = (container.resolve('em') as EntityManager).fork()
+    const identityRetention = container.resolve('finooIdentityRetention') as {
+      anonymizeAndDeleteForPerson(input: {
+        tenantId: string
+        organizationId: string
+        personId: string
+        systemActor: true
+        transactionalEm: EntityManager
+        registerPostCommitEffect(effect: () => Promise<void>): void
+      }): Promise<unknown>
+    }
+    const postCommitEffects: Array<() => Promise<void>> = []
+    let failure: unknown
+    try {
+      await em.transactional(async (transactionalEm) => {
+        await identityRetention.anonymizeAndDeleteForPerson({
+          tenantId,
+          organizationId,
+          personId,
+          systemActor: true,
+          transactionalEm,
+          registerPostCommitEffect: (effect) => postCommitEffects.push(effect),
+        })
+        await transactionalEm.execute(
+          `update finoo_customer_retention_states
+           set identity_erased_at=now(),updated_at=now()
+           where tenant_id=? and organization_id=? and customer_entity_id=?`,
+          [tenantId, organizationId, personId],
+        )
+        throw new Error('integration_outer_transaction_failure')
+      })
+    } catch (error) {
+      failure = error
+    }
+    if (!(failure instanceof Error) || failure.message !== 'integration_outer_transaction_failure') {
+      throw failure ?? new Error('integration_outer_transaction_failure_missing')
+    }
+    return { rolledBack: true, postCommitEffects: postCommitEffects.length }
+  } finally {
+    await container.dispose()
+  }
+}
+
 async function main(): Promise<void> {
   if (!tenantId || !organizationId) throw new Error('integration_scope_missing')
   await bootstrapFromAppRoot(process.cwd())
@@ -100,6 +149,8 @@ async function main(): Promise<void> {
     ? await createApplicationCopies()
     : action === 'read-application-payload'
       ? await readApplicationPayload()
+      : action === 'rollback-identity-erasure'
+        ? await rollbackIdentityErasure()
       : null
   if (!result) throw new Error('integration_action_invalid')
   process.stdout.write(`FINOO_RETENTION_RESULT ${JSON.stringify(result)}\n`)

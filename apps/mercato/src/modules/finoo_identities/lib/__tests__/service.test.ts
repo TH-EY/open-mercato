@@ -7,7 +7,8 @@ const findOneWithDecryption = jest.fn()
 const findAndCountWithDecryption = jest.fn()
 const encryptionService = {
   isEnabled: jest.fn(() => true),
-  getDek: jest.fn(async () => ({ key: Buffer.alloc(32), keyVersion: 1, fetchedAt: Date.now() })),
+  getDek: jest.fn(async () => ({ key: Buffer.alloc(32), keyVersion: 1, fetchedAt: Date.now(),
+  })),
   getEncryptedFieldNames: jest.fn(async (entityId: string) => entityId === 'finoo_identities:finoo_person_identity'
     ? ['pesel', 'document_type', 'issuing_country_code', 'document_number', 'issued_on', 'expires_on']
     : [
@@ -31,7 +32,8 @@ describe('FinooIdentityService', () => {
     findOneWithDecryption.mockReset()
     findAndCountWithDecryption.mockReset()
     encryptionService.isEnabled.mockReset().mockReturnValue(true)
-    encryptionService.getDek.mockReset().mockResolvedValue({ key: Buffer.alloc(32), keyVersion: 1, fetchedAt: Date.now() })
+    encryptionService.getDek.mockReset().mockResolvedValue({ key: Buffer.alloc(32), keyVersion: 1, fetchedAt: Date.now(),
+    })
     encryptionService.getEncryptedFieldNames.mockReset().mockImplementation(async (entityId: string) => (
       entityId === 'finoo_identities:finoo_person_identity'
         ? ['pesel', 'document_type', 'issuing_country_code', 'document_number', 'issued_on', 'expires_on']
@@ -49,7 +51,8 @@ describe('FinooIdentityService', () => {
   it('denies an ordinary user before reading identity values and records a value-free audit', async () => {
     const persisted: unknown[] = []
     const em = {
-      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'audit-entry-id', ...data }),
+      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'audit-entry-id', ...data,
+      }),
       persist: (entity: unknown) => {
         persisted.push(entity)
       },
@@ -107,7 +110,8 @@ describe('FinooIdentityService', () => {
     configureEncryption()
     const persisted: unknown[] = []
     const em = {
-      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'unexpected-id', ...data }),
+      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'unexpected-id', ...data,
+      }),
       persist: (entity: unknown) => persisted.push(entity),
       flush: jest.fn(async () => undefined),
     }
@@ -133,7 +137,8 @@ describe('FinooIdentityService', () => {
         issuedOn: '2024-01-10',
         expiresOn: '2034-01-10',
       },
-    })).rejects.toMatchObject({ status: 503, body: { error: 'identity_encryption_unavailable' } })
+    })).rejects.toMatchObject({ status: 503, body: { error: 'identity_encryption_unavailable' },
+    })
     expect(findOneWithDecryption).not.toHaveBeenCalled()
     expect(persisted).toHaveLength(0)
   })
@@ -141,7 +146,8 @@ describe('FinooIdentityService', () => {
   it('returns a scoped decrypted identity with statuses to an authorized actor and audits the read', async () => {
     const persisted: unknown[] = []
     const em = {
-      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'audit-entry-id', ...data }),
+      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'audit-entry-id', ...data,
+      }),
       persist: (entity: unknown) => {
         persisted.push(entity)
       },
@@ -199,7 +205,8 @@ describe('FinooIdentityService', () => {
       updatedAt: '2026-08-24T14:00:00.000Z',
     })
     expect(persisted).toHaveLength(1)
-    expect(persisted[0]).toMatchObject({ operation: 'read', outcome: 'allowed' })
+    expect(persisted[0]).toMatchObject({ operation: 'read', outcome: 'allowed',
+    })
     expect(JSON.stringify(persisted[0])).not.toContain('44051401458')
   })
 
@@ -256,10 +263,11 @@ describe('FinooIdentityService', () => {
     const persisted: unknown[] = []
     const execute = jest.fn(async () => [{ person_id: 'ee823a18-e50c-4de4-9d71-4f516d7d754e' }])
     const em = {
-      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'audit-entry-id', ...data }),
+      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'audit-entry-id', ...data,
+      }),
       persist: (entity: unknown) => persisted.push(entity),
       flush: jest.fn(async () => undefined),
-      getConnection: () => ({ execute }),
+      execute,
     }
     const service = createFinooIdentityService({
       em: em as never,
@@ -276,7 +284,8 @@ describe('FinooIdentityService', () => {
       },
       conflictId: '1dc885ce-a2ce-4053-a069-e27ae0942327',
       operation: 'resolve_conflict',
-    })).rejects.toMatchObject({ status: 403, body: { error: 'identity_access_denied' } })
+    })).rejects.toMatchObject({ status: 403, body: { error: 'identity_access_denied' },
+    })
 
     expect(findOneWithDecryption).not.toHaveBeenCalled()
     expect(execute).toHaveBeenCalledWith(expect.stringContaining('select person_id'), [
@@ -312,7 +321,7 @@ describe('FinooIdentityService', () => {
         persisted.push(entity)
       },
       flush: jest.fn(async () => undefined),
-      getConnection: () => ({ execute: jest.fn(async () => []) }),
+      execute: jest.fn(async () => []),
       transactional: async (callback: (transactionalEm: unknown) => Promise<unknown>) => callback(em),
     })
     findOneWithDecryption.mockImplementation(async (_em: unknown, entity: unknown) => (
@@ -359,7 +368,8 @@ describe('FinooIdentityService', () => {
       updatedAt: '2026-08-24T14:00:00.000Z',
     })
     expect(persisted).toHaveLength(2)
-    expect(persisted[0]).toMatchObject({ pesel: '44051401458', isComplete: true })
+    expect(persisted[0]).toMatchObject({ pesel: '44051401458', isComplete: true,
+    })
     expect(persisted[1]).toMatchObject({
       operation: 'create',
       outcome: 'allowed',
@@ -394,7 +404,7 @@ describe('FinooIdentityService', () => {
       persist: (entity: unknown) => persisted.push(entity),
       findOne: jest.fn(async () => null),
       flush: jest.fn(async () => undefined),
-      getConnection: () => ({ execute: jest.fn(async () => []) }),
+      execute: jest.fn(async () => []),
       transactional: async (callback: (transactionalEm: unknown) => Promise<unknown>) => callback(em),
     })
     findOneWithDecryption.mockResolvedValue(null)
@@ -420,7 +430,8 @@ describe('FinooIdentityService', () => {
         issuedOn: null,
         expiresOn: null,
       },
-    })).rejects.toMatchObject({ status: 404, body: { error: 'person_not_found' } })
+    })).rejects.toMatchObject({ status: 404, body: { error: 'person_not_found' },
+    })
     expect(persisted).toHaveLength(0)
   })
 
@@ -439,7 +450,7 @@ describe('FinooIdentityService', () => {
         : { id: 'audit-entry-id', ...data },
       persist: (entity: unknown) => persisted.push(entity),
       flush: jest.fn(async () => undefined),
-      getConnection: () => ({ execute: jest.fn(async () => []) }),
+      execute: jest.fn(async () => []),
       transactional: async (callback: (transactionalEm: unknown) => Promise<unknown>) => callback(em),
     })
     findOneWithDecryption.mockImplementation(async (_em: unknown, entity: unknown) => (
@@ -542,7 +553,7 @@ describe('FinooIdentityService', () => {
       persist: (entity: unknown) => persisted.push(entity),
       findOne: jest.fn(async () => null),
       flush: jest.fn(async () => undefined),
-      getConnection: () => ({ execute: jest.fn(async () => []) }),
+      execute: jest.fn(async () => []),
       transactional: async (callback: (transactionalEm: unknown) => Promise<unknown>) => callback(em),
     })
     findOneWithDecryption.mockImplementation(async (_em: unknown, entity: unknown) => {
@@ -585,14 +596,16 @@ describe('FinooIdentityService', () => {
       changedFields: ['documentNumber'],
       state: 'open',
     })
-    expect(persisted[1]).toMatchObject({ operation: 'import', outcome: 'allowed', changedFields: ['documentNumber'] })
+    expect(persisted[1]).toMatchObject({ operation: 'import', outcome: 'allowed', changedFields: ['documentNumber'],
+    })
     expect(JSON.stringify(persisted[1])).not.toContain('CANDIDATE456')
   })
 
   it('lists value-free audit metadata for an authorized actor and audits that read', async () => {
     const persisted: unknown[] = []
     const em = {
-      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'new-audit-id', ...data }),
+      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'new-audit-id', ...data,
+      }),
       persist: (entity: unknown) => persisted.push(entity),
       flush: jest.fn(async () => undefined),
       findAndCount: jest.fn(async () => [[{
@@ -640,14 +653,16 @@ describe('FinooIdentityService', () => {
       pageSize: 50,
       total: 1,
     })
-    expect(persisted[0]).toMatchObject({ operation: 'read', outcome: 'allowed' })
+    expect(persisted[0]).toMatchObject({ operation: 'read', outcome: 'allowed',
+    })
     expect(JSON.stringify(result)).not.toContain('44051401458')
   })
 
   it('lists scoped decrypted import conflicts only after view authorization', async () => {
     const persisted: unknown[] = []
     const em = {
-      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'audit-entry-id', ...data }),
+      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'audit-entry-id', ...data,
+      }),
       persist: (entity: unknown) => persisted.push(entity),
       flush: jest.fn(async () => undefined),
     }
@@ -703,18 +718,21 @@ describe('FinooIdentityService', () => {
 
     expect(result.items[0]).toMatchObject({
       id: conflict.id,
-      current: { documentNumber: 'CURRENT123', updatedAt: '2026-08-24T14:00:00.000Z' },
+      current: { documentNumber: 'CURRENT123', updatedAt: '2026-08-24T14:00:00.000Z',
+      },
       candidate: { documentNumber: 'CANDIDATE456' },
       changedFields: ['documentNumber'],
       updatedAt: '2026-08-24T14:05:00.000Z',
     })
-    expect(persisted[0]).toMatchObject({ operation: 'review_conflict', outcome: 'allowed' })
+    expect(persisted[0]).toMatchObject({ operation: 'review_conflict', outcome: 'allowed',
+    })
     expect(findAndCountWithDecryption).toHaveBeenCalledWith(
       em,
       FinooIdentityImportConflict,
       expect.objectContaining({ state: 'open', personId: identity.personId }),
       expect.objectContaining({ limit: 50, offset: 0 }),
-      expect.objectContaining({ tenantId: '5164d495-1865-4738-b459-2783999a761d' }),
+      expect.objectContaining({ tenantId: '5164d495-1865-4738-b459-2783999a761d',
+      }),
     )
   })
 
@@ -752,13 +770,14 @@ describe('FinooIdentityService', () => {
     const persisted: unknown[] = []
     const em: Record<string, unknown> = {}
     Object.assign(em, {
-      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'audit-entry-id', ...data }),
+      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'audit-entry-id', ...data,
+      }),
       persist: (entity: unknown) => persisted.push(entity),
       flush: jest.fn(async () => undefined),
-      getConnection: () => ({ execute: jest.fn(async () => {
+      execute: jest.fn(async () => {
         lockOrder.push('identity-lock')
         return []
-      }) }),
+      }),
       transactional: async (callback: (transactionalEm: unknown) => Promise<unknown>) => callback(em),
     })
     let conflictReads = 0
@@ -795,7 +814,8 @@ describe('FinooIdentityService', () => {
       },
     })
 
-    expect(result).toMatchObject({ state: 'resolved', identityId: identity.id, isComplete: true })
+    expect(result).toMatchObject({ state: 'resolved', identityId: identity.id, isComplete: true,
+    })
     expect(identity.documentNumber).toBe('CANDIDATE456')
     expect(conflict).toMatchObject({
       state: 'resolved',
@@ -841,7 +861,8 @@ describe('FinooIdentityService', () => {
       organizationId: 'd0d98cb3-28cf-4376-a61c-d270020f166f',
       personId: 'ee823a18-e50c-4de4-9d71-4f516d7d754e',
       systemActor: true,
-    })).rejects.toMatchObject({ status: 503, body: { error: 'identity_retention_unavailable' } })
+    })).rejects.toMatchObject({ status: 503, body: { error: 'identity_retention_unavailable' },
+    })
     expect(transactional).not.toHaveBeenCalled()
   })
 
@@ -857,13 +878,15 @@ describe('FinooIdentityService', () => {
       throw new Error(`Unexpected SQL: ${query}`)
     })
     const em: Record<string, unknown> = {
-      getConnection: () => ({ execute }),
-      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'erase-audit-id', ...data }),
+      execute,
+      create: (_entity: unknown, data: Record<string, unknown>) => ({ id: 'erase-audit-id', ...data,
+      }),
       persist: (entity: unknown) => persisted.push(entity),
       flush: jest.fn(async () => undefined),
     }
     em.transactional = async (callback: (transactionalEm: unknown) => Promise<unknown>) => callback(em)
-    const erasePersonIdentityCopies = jest.fn(async () => ({ intakesRedacted: 3, bindingsDeleted: 1 }))
+    const erasePersonIdentityCopies = jest.fn(async () => ({ intakesRedacted: 3, bindingsDeleted: 1,
+    }))
     const service = createFinooIdentityService({
       em: em as never,
       rbacService: { userHasAllFeatures: jest.fn() } as never,
@@ -904,5 +927,58 @@ describe('FinooIdentityService', () => {
       organizationId: 'd0d98cb3-28cf-4376-a61c-d270020f166f',
       personId: 'ee823a18-e50c-4de4-9d71-4f516d7d754e',
     })
+  })
+
+  it('defers erase cache/event effects when an outer transaction owns the commit boundary', async () => {
+    const afterMutation = jest.fn(async () => undefined)
+    let deferredEffect: (() => Promise<void>) | null = null
+    const execute = jest.fn(async (query: string) => {
+      if (query.includes('pg_advisory_xact_lock')) return []
+      if (query.includes('finoo_identity_import_conflicts')) return []
+      if (query.includes('finoo_person_identities')) return [{ id: 'identity-id' }]
+      if (query.includes('custom_field_values')) return []
+      if (query.includes('update finoo_identity_audit_entries')) return []
+      throw new Error(`Unexpected SQL: ${query}`)
+    })
+    const em: Record<string, unknown> = {
+      execute,
+      create: (_entity: unknown, data: Record<string, unknown>) => data,
+      persist: jest.fn(),
+      flush: jest.fn(async () => undefined),
+    }
+    const injectedTransactional = jest.fn(async (callback: (transactionalEm: unknown) => Promise<unknown>) =>
+      callback(em),
+    )
+    const service = createFinooIdentityService({
+      em: { transactional: injectedTransactional } as never,
+      rbacService: { userHasAllFeatures: jest.fn() } as never,
+      encryptionService: encryptionService as never,
+      invalidateIdentityErasureCompletion: noOpIdentityErasureCompletionInvalidation,
+      resolveApplicationIdentityRetention: () =>
+        ({
+          erasePersonIdentityCopies: jest.fn(async () => ({
+            intakesRedacted: 0,
+            bindingsDeleted: 0,
+          })),
+        }) as never,
+      afterMutation,
+    })
+
+    await service.anonymizeAndDeleteForPerson({
+      tenantId: '5164d495-1865-4738-b459-2783999a761d',
+      organizationId: 'd0d98cb3-28cf-4376-a61c-d270020f166f',
+      personId: 'ee823a18-e50c-4de4-9d71-4f516d7d754e',
+      systemActor: true,
+      transactionalEm: em as never,
+      registerPostCommitEffect: (effect) => {
+        deferredEffect = effect
+      },
+    })
+
+    expect(injectedTransactional).not.toHaveBeenCalled()
+    expect(afterMutation).not.toHaveBeenCalled()
+    expect(deferredEffect).not.toBeNull()
+    await deferredEffect?.()
+    expect(afterMutation).toHaveBeenCalledTimes(1)
   })
 })

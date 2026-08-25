@@ -5,7 +5,10 @@ jest.mock('@open-mercato/shared/lib/logger', () => ({
   createLogger: () => ({ child: () => ({ error: (...args: unknown[]) => loggerError(...args) }) }),
 }))
 
-import { runPersonReindexPostCommit } from '../services/projectionService'
+import {
+  runPersonReindexPostCommit,
+  runWithDeferredPostCommitEffects,
+} from '../services/projectionService'
 
 describe('FINOO retention projection post-commit effects', () => {
   const scope = {
@@ -20,6 +23,30 @@ describe('FINOO retention projection post-commit effects', () => {
   beforeEach(() => {
     emitEvent.mockReset()
     loggerError.mockReset()
+  })
+
+  it('runs registered identity effects only after the outer transaction succeeds', async () => {
+    const order: string[] = []
+
+    await runWithDeferredPostCommitEffects(async (registerPostCommitEffect) => {
+      order.push('transaction-start')
+      registerPostCommitEffect(async () => { order.push('identity-effect') })
+      order.push('transaction-commit')
+      return 'ok'
+    })
+
+    expect(order).toEqual(['transaction-start', 'transaction-commit', 'identity-effect'])
+  })
+
+  it('drops registered identity effects when the outer transaction rejects', async () => {
+    const identityEffect = jest.fn(async () => undefined)
+
+    await expect(runWithDeferredPostCommitEffects(async (registerPostCommitEffect) => {
+      registerPostCommitEffect(identityEffect)
+      throw new Error('outer_commit_failure_canary')
+    })).rejects.toThrow('outer_commit_failure_canary')
+
+    expect(identityEffect).not.toHaveBeenCalled()
   })
 
   it('does not report a committed identity erasure as failed when reindexing rejects', async () => {

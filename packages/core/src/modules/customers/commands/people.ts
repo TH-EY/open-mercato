@@ -8,6 +8,7 @@ import {
   requireId,
   snapshotsEqual,
 } from '@open-mercato/shared/lib/commands/helpers'
+import { UNKNOWN_CUSTOM_FIELD_ERROR } from '@open-mercato/shared/modules/entities/validation'
 import type { DataEngine } from '@open-mercato/shared/lib/data/engine'
 import type { CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import type { EntityManager } from '@mikro-orm/postgresql'
@@ -494,11 +495,15 @@ async function setCustomFieldsForPerson(
   profileId: string,
   organizationId: string,
   tenantId: string,
-  values: Record<string, unknown>
+  values: Record<string, unknown>,
+  options: {
+    routing?: Map<string, string>
+    rejectUndeclaredKeys?: boolean
+  } = {},
 ): Promise<void> {
   if (!values || !Object.keys(values).length) return
   const em = (ctx.container.resolve('em') as EntityManager)
-  const routing = await resolvePersonCustomFieldRouting(em, tenantId, organizationId)
+  const routing = options.routing ?? (await resolvePersonCustomFieldRouting(em, tenantId, organizationId))
   const entityScoped: Record<string, unknown> = {}
   const profileScoped: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(values)) {
@@ -517,6 +522,7 @@ async function setCustomFieldsForPerson(
       tenantId,
       values: entityScoped,
       notify: true,
+      rejectUndeclaredKeys: options.rejectUndeclaredKeys,
     })
   }
   if (Object.keys(profileScoped).length) {
@@ -528,8 +534,31 @@ async function setCustomFieldsForPerson(
       tenantId,
       values: profileScoped,
       notify: true,
+      rejectUndeclaredKeys: options.rejectUndeclaredKeys,
     })
   }
+}
+
+async function resolveStrictPersonCustomFieldRouting(
+  em: EntityManager,
+  tenantId: string,
+  organizationId: string,
+  values: Record<string, unknown>,
+): Promise<Map<string, string>> {
+  if (!Object.keys(values).length) return new Map()
+  const routing = await resolvePersonCustomFieldRouting(em, tenantId, organizationId)
+  const fieldErrors: Record<string, string> = {}
+  for (const rawKey of Object.keys(values)) {
+    const key = rawKey.startsWith('cf_') || rawKey.startsWith('cf:') ? rawKey.slice(3) : rawKey
+    if (!routing.has(key)) fieldErrors[`cf_${key}`] = UNKNOWN_CUSTOM_FIELD_ERROR
+  }
+  if (Object.keys(fieldErrors).length) {
+    throw new CrudHttpError(400, {
+      error: 'Validation failed',
+      fields: fieldErrors,
+    })
+  }
+  return routing
 }
 
 type PersonGraphValues = {
@@ -623,6 +652,12 @@ const createPersonCommand: CommandHandler<PersonCreateInput, { entityId: string;
     }
 
     const em = (ctx.container.resolve('em') as EntityManager).fork()
+    const customFieldRouting = await resolveStrictPersonCustomFieldRouting(
+      em,
+      parsed.tenantId,
+      parsed.organizationId,
+      custom,
+    )
     const firstName = parsed.firstName?.trim() ?? ''
     const lastName = parsed.lastName?.trim() ?? ''
     const description = normalizeOptionalString(parsed.description)
@@ -721,7 +756,10 @@ const createPersonCommand: CommandHandler<PersonCreateInput, { entityId: string;
 
     const tenantId = entity.tenantId
     const organizationId = entity.organizationId
-    await setCustomFieldsForPerson(ctx, entity.id, profile.id, organizationId, tenantId, custom)
+    await setCustomFieldsForPerson(ctx, entity.id, profile.id, organizationId, tenantId, custom, {
+      routing: customFieldRouting,
+      rejectUndeclaredKeys: true,
+    })
 
     const de = (ctx.container.resolve('dataEngine') as DataEngine)
     await emitCrudSideEffects({
@@ -805,6 +843,13 @@ const createPersonCommand: CommandHandler<PersonCreateInput, { entityId: string;
       throw new CrudHttpError(400, { error: '[internal] redo snapshot unavailable for person create' })
     }
     const em = (ctx.container.resolve('em') as EntityManager).fork()
+    const restoreValues = buildCustomFieldResetMap(after.custom, undefined)
+    const restoreRouting = await resolveStrictPersonCustomFieldRouting(
+      em,
+      after.entity.tenantId,
+      after.entity.organizationId,
+      restoreValues,
+    )
     let entity = await findOneWithDecryption(
       em,
       CustomerEntity,
@@ -899,9 +944,19 @@ const createPersonCommand: CommandHandler<PersonCreateInput, { entityId: string;
     }
 
     const restoredEntity = entity
-    const restoreValues = buildCustomFieldResetMap(after.custom, undefined)
     if (Object.keys(restoreValues).length) {
-      await setCustomFieldsForPerson(ctx, restoredEntity.id, profile.id, restoredEntity.organizationId, restoredEntity.tenantId, restoreValues)
+      await setCustomFieldsForPerson(
+        ctx,
+        restoredEntity.id,
+        profile.id,
+        restoredEntity.organizationId,
+        restoredEntity.tenantId,
+        restoreValues,
+        {
+          routing: restoreRouting,
+          rejectUndeclaredKeys: true,
+        },
+      )
     }
 
     const de = (ctx.container.resolve('dataEngine') as DataEngine)
@@ -940,6 +995,12 @@ const updatePersonCommand: CommandHandler<PersonUpdateInput, { entityId: string 
     ensureOrganizationScope(ctx, record.organizationId)
     const profile = await em.findOne(CustomerPersonProfile, { entity: record })
     if (!profile) throw notFound('Person profile not found')
+    const customFieldRouting = await resolveStrictPersonCustomFieldRouting(
+      em,
+      record.tenantId,
+      record.organizationId,
+      custom,
+    )
 
     if (parsed.displayName !== undefined) {
       const nextDisplayName = parsed.displayName.trim()
@@ -1055,7 +1116,10 @@ const updatePersonCommand: CommandHandler<PersonUpdateInput, { entityId: string 
       () => syncEntityTags(em, record, parsed.tags),
     ], { transaction: true })
 
-    await setCustomFieldsForPerson(ctx, record.id, profile.id, record.organizationId, record.tenantId, custom)
+    await setCustomFieldsForPerson(ctx, record.id, profile.id, record.organizationId, record.tenantId, custom, {
+      routing: customFieldRouting,
+      rejectUndeclaredKeys: true,
+    })
 
     const de = (ctx.container.resolve('dataEngine') as DataEngine)
     await emitCrudSideEffects({
@@ -1108,6 +1172,13 @@ const updatePersonCommand: CommandHandler<PersonUpdateInput, { entityId: string 
     const before = payload?.before
     if (!before) return
     const em = (ctx.container.resolve('em') as EntityManager).fork()
+    const resetValues = buildCustomFieldResetMap(before.custom, payload?.after?.custom)
+    const resetRouting = await resolveStrictPersonCustomFieldRouting(
+      em,
+      before.entity.tenantId,
+      before.entity.organizationId,
+      resetValues,
+    )
     const entity = await em.findOne(CustomerEntity, { id: before.entity.id })
     if (!entity) {
       let newEntity!: CustomerEntity
@@ -1216,9 +1287,19 @@ const updatePersonCommand: CommandHandler<PersonUpdateInput, { entityId: string 
       await emitQueryIndexUpsertEvents(ctx, [personEntityIndexEntry(indexedEntity)])
     }
 
-    const resetValues = buildCustomFieldResetMap(before.custom, payload?.after?.custom)
     if (Object.keys(resetValues).length) {
-      await setCustomFieldsForPerson(ctx, before.entity.id, before.profile.id, before.entity.organizationId, before.entity.tenantId, resetValues)
+      await setCustomFieldsForPerson(
+        ctx,
+        before.entity.id,
+        before.profile.id,
+        before.entity.organizationId,
+        before.entity.tenantId,
+        resetValues,
+        {
+          routing: resetRouting,
+          rejectUndeclaredKeys: true,
+        },
+      )
     }
   },
 }
@@ -1364,6 +1445,13 @@ const deletePersonCommand: CommandHandler<{ body?: Record<string, unknown>; quer
       const before = payload?.before
       if (!before) return
       const em = (ctx.container.resolve('em') as EntityManager).fork()
+      const resetValues = buildCustomFieldResetMap(before.custom, undefined)
+      const resetRouting = await resolveStrictPersonCustomFieldRouting(
+        em,
+        before.entity.tenantId,
+        before.entity.organizationId,
+        resetValues,
+      )
       const de = (ctx.container.resolve('dataEngine') as DataEngine)
 
       const decryptionScope = {
@@ -1743,9 +1831,11 @@ const deletePersonCommand: CommandHandler<{ body?: Record<string, unknown>; quer
           })
         }
       }
-      const resetValues = buildCustomFieldResetMap(before.custom, undefined)
       if (Object.keys(resetValues).length) {
-        await setCustomFieldsForPerson(ctx, entity.id, profile.id, entity.organizationId, entity.tenantId, resetValues)
+        await setCustomFieldsForPerson(ctx, entity.id, profile.id, entity.organizationId, entity.tenantId, resetValues, {
+          routing: resetRouting,
+          rejectUndeclaredKeys: true,
+        })
       }
       await emitQueryIndexUpsertEvents(ctx, [personEntityIndexEntry(entity)])
       await emitQueryIndexUpsertEvents(ctx, upsertEntries)

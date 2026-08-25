@@ -59,6 +59,40 @@ import { appendCustomerListSortParams } from '../listSorting'
 
 type DictionaryOptionWithTone = AdvancedFilterOption & FilterOption
 
+const PEOPLE_OWNED_QUERY_PARAMETERS = new Set([
+  'page',
+  'pageSize',
+  'search',
+  'sortField',
+  'sortDir',
+])
+
+function isExtensionQueryFilterKey(key: string): boolean {
+  return key.length > 0
+    && !PEOPLE_OWNED_QUERY_PARAMETERS.has(key)
+    && !key.startsWith('filter[')
+}
+
+export function readExtensionQueryFilters(
+  params: Pick<URLSearchParams, 'forEach'> | null | undefined,
+): Record<string, string> {
+  const filters: Record<string, string> = {}
+  params?.forEach((value, key) => {
+    if (isExtensionQueryFilterKey(key) && value.trim().length > 0) filters[key] = value
+  })
+  return filters
+}
+
+export function appendExtensionQueryFilters(
+  params: URLSearchParams,
+  filters: Record<string, string>,
+): void {
+  for (const [key, value] of Object.entries(filters)) {
+    if (!isExtensionQueryFilterKey(key) || value.trim().length === 0) continue
+    params.set(key, value)
+  }
+}
+
 function makePeoplePresets(): FilterPreset[] {
   return [
     {
@@ -208,6 +242,9 @@ export default function CustomersPeoplePage() {
   const [search, setSearch] = React.useState('')
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  const [extensionQueryFilters, setExtensionQueryFilters] = React.useState<Record<string, string>>(
+    () => readExtensionQueryFilters(searchParams),
+  )
   // One-shot URL hydration used as the hook's initial value. The hook is the
   // single source of truth from this point on — the page MUST NOT keep a
   // parallel `useState<AdvancedFilterTree>` (see spec "Migration & Backward
@@ -370,12 +407,13 @@ export default function CustomersPeoplePage() {
     params.set('pageSize', String(pageSize))
     appendCustomerListSortParams(params, sorting)
     if (search.trim()) params.set('search', search.trim())
+    appendExtensionQueryFilters(params, extensionQueryFilters)
     const advancedParams = serializeTree(advancedFilterState)
     for (const [key, val] of Object.entries(advancedParams)) {
       params.set(key, val)
     }
     return params.toString()
-  }, [advancedFilterState, page, pageSize, search, sorting])
+  }, [advancedFilterState, extensionQueryFilters, page, pageSize, search, sorting])
 
   const currentParams = React.useMemo(() => Object.fromEntries(new URLSearchParams(queryParams)), [queryParams])
 
@@ -391,6 +429,7 @@ export default function CustomersPeoplePage() {
     if (search.trim().length) params.set('search', search.trim())
     if (page > 1) params.set('page', String(page))
     appendCustomerListSortParams(params, sorting)
+    appendExtensionQueryFilters(params, extensionQueryFilters)
     const advancedParams = serializeTree(advancedFilterState)
     for (const [key, val] of Object.entries(advancedParams)) {
       params.set(key, val)
@@ -399,7 +438,24 @@ export default function CustomersPeoplePage() {
     if (queryRef.current === next) return
     queryRef.current = next
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false })
-  }, [pathname, router, page, search, sorting, advancedFilterState])
+  }, [pathname, router, page, search, sorting, advancedFilterState, extensionQueryFilters])
+
+  const handleExtensionQueryFilterChange = React.useCallback((key: string, value: string | null) => {
+    if (!isExtensionQueryFilterKey(key)) return
+    setExtensionQueryFilters((current) => {
+      const next = { ...current }
+      if (value === null || value.trim().length === 0) delete next[key]
+      else next[key] = value
+      return next
+    })
+    setPage(1)
+  }, [])
+
+  const peopleTableInjectionContext = React.useMemo(() => ({
+    tableId: extensionPoints.hosts.peopleTable.tableId,
+    queryFilters: extensionQueryFilters,
+    onQueryFilterChange: handleExtensionQueryFilterChange,
+  }), [extensionQueryFilters, handleExtensionQueryFilterChange])
 
   const exportConfig = React.useMemo(() => ({
     view: {
@@ -916,6 +972,7 @@ export default function CustomersPeoplePage() {
           searchPlaceholder={t('customers.people.list.searchPlaceholder')}
           entityIds={[E.customers.customer_entity, E.customers.customer_person_profile]}
           perspective={{ tableId: extensionPoints.hosts.peopleTable.tableId }}
+          injectionContext={peopleTableInjectionContext}
           onRowClick={(row) => router.push(`/backend/customers/people-v2/${row.id}`)}
           sortable
           manualSorting

@@ -6,20 +6,34 @@ const organizationId = '22222222-2222-4222-8222-222222222222'
 const now = new Date('2026-08-25T12:00:00.000Z')
 
 function createHarness(candidates: Array<{ id: string; customerEntityId: string }> = []) {
-  const anonymizeAndDeleteForPerson = jest.fn(async () => ({ identitiesDeleted: 0 }))
+  const anonymizeAndDeleteForPerson = jest.fn(async () => ({ identitiesDeleted: 0,
+  }))
+  const transactionalEm = { marker: 'outer-transactional-em' }
   const runIdentityErasureIfAuthoritativelyDue = jest.fn(async (
     _request: unknown,
-    operation: () => Promise<void>,
-  ) => {
-    await operation()
-    return {
+    operation: (context: {
+        transactionalEm: unknown
+        registerPostCommitEffect: (effect: () => Promise<void>,
+  ) => void
+      }) => Promise<void>,
+    ) => {
+      const effects: Array<() => Promise<void>> = []
+      await operation({
+        transactionalEm,
+        registerPostCommitEffect: (effect) => {
+          effects.push(effect)
+        },
+      })
+      for (const effect of effects) await effect()
+      return {
       status: 'expired',
       changed: false,
       mirrorChanged: false,
       staleGeneration: false,
       operationApplied: true,
     }
-  })
+  },
+  )
   const em = {
     count: jest.fn(async () => candidates.length),
     find: jest.fn(async () => candidates),
@@ -31,13 +45,15 @@ function createHarness(candidates: Array<{ id: string; customerEntityId: string 
       ? { anonymizeAndDeleteForPerson }
       : { runIdentityErasureIfAuthoritativelyDue }),
   }
-  const executor = createFinooIdentityErasureExecutor({ em, container } as never)
+  const executor = createFinooIdentityErasureExecutor({ em, container,
+  } as never)
   return {
     executor,
     em,
     container,
     anonymizeAndDeleteForPerson,
     runIdentityErasureIfAuthoritativelyDue,
+    transactionalEm,
   }
 }
 
@@ -54,7 +70,8 @@ describe('Finoo identity erasure executor', () => {
       apply: false,
       batchSize: 1,
       now,
-    })).resolves.toEqual({ eligibleCount: 2, selectedCount: 1, processedCount: 0 })
+    })).resolves.toEqual({ eligibleCount: 2, selectedCount: 1, processedCount: 0,
+    })
 
     expect(harness.em.find).not.toHaveBeenCalled()
     expect(harness.container.resolve).not.toHaveBeenCalled()
@@ -64,7 +81,8 @@ describe('Finoo identity erasure executor', () => {
   it('selects only due expired states in the exact scope with deterministic bounded ordering', async () => {
     const harness = createHarness([{ id: 'state-1', customerEntityId: 'person-1' }])
 
-    await harness.executor.execute({ tenantId, organizationId, apply: true, batchSize: 25, now })
+    await harness.executor.execute({ tenantId, organizationId, apply: true, batchSize: 25, now,
+    })
 
     const predicate = {
       tenantId,
@@ -93,7 +111,8 @@ describe('Finoo identity erasure executor', () => {
       organizationId,
       apply: true,
       now,
-    })).resolves.toEqual({ eligibleCount: 2, selectedCount: 2, processedCount: 2 })
+    })).resolves.toEqual({ eligibleCount: 2, selectedCount: 2, processedCount: 2,
+    })
 
     expect(harness.container.resolve).toHaveBeenCalledWith('finooIdentityRetention')
     expect(harness.container.resolve).toHaveBeenCalledWith('finooCustomerRetentionProjectionService')
@@ -108,12 +127,16 @@ describe('Finoo identity erasure executor', () => {
       organizationId,
       personId: 'person-1',
       systemActor: true,
+      transactionalEm: harness.transactionalEm,
+      registerPostCommitEffect: expect.any(Function),
     })
     expect(harness.anonymizeAndDeleteForPerson).toHaveBeenNthCalledWith(2, {
       tenantId,
       organizationId,
       personId: 'person-2',
       systemActor: true,
+      transactionalEm: harness.transactionalEm,
+      registerPostCommitEffect: expect.any(Function),
     })
   })
 
@@ -129,13 +152,16 @@ describe('Finoo identity erasure executor', () => {
 
     await expect(harness.executor.execute({
       tenantId, organizationId, apply: true, batchSize: 1, now,
-    })).resolves.toEqual({ eligibleCount: 2, selectedCount: 1, processedCount: 1 })
+    })).resolves.toEqual({ eligibleCount: 2, selectedCount: 1, processedCount: 1,
+    })
     await expect(harness.executor.execute({
       tenantId, organizationId, apply: true, batchSize: 1, now,
-    })).resolves.toEqual({ eligibleCount: 1, selectedCount: 1, processedCount: 1 })
+    })).resolves.toEqual({ eligibleCount: 1, selectedCount: 1, processedCount: 1,
+    })
     await expect(harness.executor.execute({
       tenantId, organizationId, apply: false, batchSize: 1, now,
-    })).resolves.toEqual({ eligibleCount: 0, selectedCount: 0, processedCount: 0 })
+    })).resolves.toEqual({ eligibleCount: 0, selectedCount: 0, processedCount: 0,
+    })
     expect(harness.anonymizeAndDeleteForPerson.mock.calls.map(([request]) => request.personId)).toEqual([
       'person-1',
       'person-2',
@@ -154,7 +180,8 @@ describe('Finoo identity erasure executor', () => {
 
     await expect(harness.executor.execute({
       tenantId, organizationId, apply: true, now,
-    })).resolves.toEqual({ eligibleCount: 1, selectedCount: 1, processedCount: 0 })
+    })).resolves.toEqual({ eligibleCount: 1, selectedCount: 1, processedCount: 0,
+    })
     expect(harness.anonymizeAndDeleteForPerson).not.toHaveBeenCalled()
   })
 

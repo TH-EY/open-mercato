@@ -179,6 +179,8 @@ export type FinooIdentityErasureResult = {
   applicationBindingsDeleted: number
 }
 
+export type FinooIdentityPostCommitEffect = () => Promise<void>
+
 const IDENTITY_FIELDS = [
   'pesel',
   'documentType',
@@ -203,10 +205,12 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
 
   async function requireRawDataEncryption(scope: Omit<FinooIdentitySubjectScope, 'personId'>): Promise<void> {
     if (!dependencies.encryptionService.isEnabled()) {
-      throw new CrudHttpError(503, { error: 'identity_encryption_unavailable' })
+      throw new CrudHttpError(503, { error: 'identity_encryption_unavailable',
+      })
     }
     const dek = await dependencies.encryptionService.getDek(scope.tenantId)
-    if (!dek?.key) throw new CrudHttpError(503, { error: 'identity_encryption_unavailable' })
+    if (!dek?.key) throw new CrudHttpError(503, { error: 'identity_encryption_unavailable',
+      })
     for (const map of defaultEncryptionMaps) {
       const encryptedFields = await dependencies.encryptionService.getEncryptedFieldNames(
         map.entityId,
@@ -214,13 +218,14 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
         scope.organizationId,
       )
       if (!map.fields.every(({ field }) => encryptedFields.includes(field))) {
-        throw new CrudHttpError(503, { error: 'identity_encryption_unavailable' })
+        throw new CrudHttpError(503, { error: 'identity_encryption_unavailable',
+        })
       }
     }
   }
 
   async function lockScopedPerson(em: EntityManager, scope: FinooIdentitySubjectScope): Promise<void> {
-    await em.getConnection().execute(
+    await em.execute(
       'select pg_advisory_xact_lock(hashtext(?))',
       [`finoo_identity:${scope.tenantId}:${scope.organizationId}:${scope.personId}`],
     )
@@ -265,7 +270,8 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
       { tenantId: scope.tenantId, organizationId: scope.organizationId },
     )
     if (allowed) return
-    appendAudit(dependencies.em, scope, operation, 'denied', null, { kind: 'user', userId: scope.actorUserId })
+    appendAudit(dependencies.em, scope, operation, 'denied', null, { kind: 'user', userId: scope.actorUserId,
+    })
     await dependencies.em.flush()
     throw new CrudHttpError(403, { error: 'identity_access_denied' })
   }
@@ -282,7 +288,7 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
       { tenantId: scope.tenantId, organizationId: scope.organizationId },
     )
     if (allowed) return
-    const rows = await dependencies.em.getConnection().execute<Array<{ person_id: string }>>(
+    const rows = await dependencies.em.execute<Array<{ person_id: string }>>(
       `select person_id
        from finoo_identity_import_conflicts
        where id = ? and tenant_id = ? and organization_id = ?
@@ -358,7 +364,8 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
         throw new CrudHttpError(404, { error: 'identity_not_found' })
       }
       const completeness = computeIdentityCompleteness(identity)
-      appendAudit(dependencies.em, scope, 'read', 'allowed', null, { kind: 'user', userId: scope.actorUserId })
+      appendAudit(dependencies.em, scope, 'read', 'allowed', null, { kind: 'user', userId: scope.actorUserId,
+      })
       await dependencies.em.flush()
       return {
         id: identity.id,
@@ -503,7 +510,8 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
         })
         await lockScopedPerson(transactionalEm, request)
         await requireScopedPerson(transactionalEm, request)
-        const scope = { tenantId: request.tenantId, organizationId: request.organizationId }
+        const scope = { tenantId: request.tenantId, organizationId: request.organizationId,
+        }
         const existing = await findOneWithDecryption(
           transactionalEm,
           FinooPersonIdentity,
@@ -529,7 +537,8 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
               'import',
               'allowed',
               [],
-              { kind: 'system', userId: null },
+              { kind: 'system', userId: null,
+            },
             )
             await transactionalEm.flush()
             return {
@@ -787,7 +796,8 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
           { fields: ['personId'] },
           scope,
         )
-        if (!conflictScope) throw new CrudHttpError(404, { error: 'identity_conflict_not_found' })
+        if (!conflictScope) throw new CrudHttpError(404, { error: 'identity_conflict_not_found',
+          })
         const actorScope: FinooIdentityActorScope = {
           ...request.scope,
           personId: conflictScope.personId,
@@ -810,7 +820,8 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
           { lockMode: LockMode.PESSIMISTIC_WRITE },
           scope,
         )
-        if (!conflict) throw new CrudHttpError(404, { error: 'identity_conflict_not_found' })
+        if (!conflict) throw new CrudHttpError(404, { error: 'identity_conflict_not_found',
+          })
         await lockScopedPerson(transactionalEm, actorScope)
         const identity = await findOneWithDecryption(
           transactionalEm,
@@ -914,34 +925,38 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
 
     async anonymizeAndDeleteForPerson(request: FinooIdentitySubjectScope & {
       systemActor: true
-    }): Promise<FinooIdentityErasureResult> {
+        transactionalEm?: EntityManager
+        registerPostCommitEffect?: (effect: FinooIdentityPostCommitEffect) => void
+      }): Promise<FinooIdentityErasureResult> {
       if (request.systemActor !== true) throw new CrudHttpError(403, { error: 'identity_erasure_denied' })
       await requireRawDataEncryption(request)
       const applicationIdentityRetention = dependencies.resolveApplicationIdentityRetention?.()
       if (!applicationIdentityRetention) {
-        throw new CrudHttpError(503, { error: 'identity_retention_unavailable' })
+        throw new CrudHttpError(503, { error: 'identity_retention_unavailable',
+        })
       }
-      const result = await dependencies.em.transactional(async (transactionalEm) => {
+      const eraseWithinTransaction = async (transactionalEm: EntityManager) => {
         await lockScopedPerson(transactionalEm, request)
-        const scope = { tenantId: request.tenantId, organizationId: request.organizationId }
+        const scope = { tenantId: request.tenantId, organizationId: request.organizationId,
+        }
         const application = await applicationIdentityRetention.erasePersonIdentityCopies({
           em: transactionalEm,
           ...scope,
           personId: request.personId,
         })
-        const conflicts = await transactionalEm.getConnection().execute<Array<{ id: string }>>(
+        const conflicts = await transactionalEm.execute<Array<{ id: string }>>(
           `delete from finoo_identity_import_conflicts
            where tenant_id = ? and organization_id = ? and person_id = ?
            returning id`,
           [request.tenantId, request.organizationId, request.personId],
         )
-        const identities = await transactionalEm.getConnection().execute<Array<{ id: string }>>(
+        const identities = await transactionalEm.execute<Array<{ id: string }>>(
           `delete from finoo_person_identities
            where tenant_id = ? and organization_id = ? and person_id = ?
            returning id`,
           [request.tenantId, request.organizationId, request.personId],
         )
-        const legacyValues = await transactionalEm.getConnection().execute<Array<{ id: string }>>(
+        const legacyValues = await transactionalEm.execute<Array<{ id: string }>>(
           `delete from custom_field_values legacy
            where legacy.tenant_id = ? and legacy.organization_id = ?
              and legacy.entity_id = 'customers:customer_person_profile'
@@ -950,14 +965,23 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
                from customer_people profile
                where profile.tenant_id = ? and profile.organization_id = ? and profile.entity_id = ?
              )
-             and legacy.field_key in (
+             and (
+               legacy.field_key in (
+                 'national_identification_number', 'id_type', 'id_country_code',
+                 'id_number', 'id_issued_date', 'id_expiry_date'
+               )
+               or (
+                 legacy.field_key ~ '^(cf_|cf:)+'
+                 and regexp_replace(legacy.field_key, '^(cf_|cf:)+', '') in (
                'national_identification_number', 'id_type', 'id_country_code',
                'id_number', 'id_issued_date', 'id_expiry_date'
+             )
+               )
              )
            returning legacy.id`,
           [request.tenantId, request.organizationId, request.tenantId, request.organizationId, request.personId],
         )
-        const anonymized = await transactionalEm.getConnection().execute<Array<{ id: string }>>(
+        const anonymized = await transactionalEm.execute<Array<{ id: string }>>(
           `update finoo_identity_audit_entries
            set person_id = null
            where tenant_id = ? and organization_id = ? and person_id = ?
@@ -986,13 +1010,19 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
           applicationIntakesRedacted: application.intakesRedacted,
           applicationBindingsDeleted: application.bindingsDeleted,
         }
-      })
-      await publishMutation({
+      }
+      const result = request.transactionalEm
+        ? await eraseWithinTransaction(request.transactionalEm)
+        : await dependencies.em.transactional(eraseWithinTransaction)
+      const publishErasure = () =>
+        publishMutation({
         eventId: 'finoo_identities.identity.erased',
         tenantId: request.tenantId,
         organizationId: request.organizationId,
         personId: request.personId,
       })
+      if (request.registerPostCommitEffect) request.registerPostCommitEffect(publishErasure)
+      else await publishErasure()
       return result
     },
   }

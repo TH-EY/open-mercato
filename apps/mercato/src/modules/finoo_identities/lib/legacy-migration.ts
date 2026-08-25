@@ -2,9 +2,11 @@ import { LockMode } from '@mikro-orm/core'
 import type { EntityManager } from '@mikro-orm/postgresql'
 import type { TenantDataEncryptionService } from '@open-mercato/shared/lib/encryption/tenantDataEncryptionService'
 import { decryptWithAesGcmStrict, hashForLookup } from '@open-mercato/shared/lib/encryption/aes'
-import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { CustomFieldDef } from '@open-mercato/core/modules/entities/data/entities'
 import { markDefinitionTombstoned } from '@open-mercato/core/modules/entities/lib/definition-scope'
+import { ActionLog } from '@open-mercato/core/modules/audit_logs/data/entities'
+import { redactCustomFieldKeysFromActionLog } from '@open-mercato/core/modules/audit_logs/lib/customFieldRedaction'
 import {
   FinooIdentityAuditEntry,
   FinooPersonIdentity,
@@ -30,6 +32,8 @@ const RAW_ENCRYPTED_LEGACY_KEYS = new Set<string>([
 const ENCRYPTED_VALUE_PATTERN = /^[^:]+:[^:]+:[^:]+:v1$/
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const PERSON_PROFILE_ENTITY_ID = 'customers:customer_person_profile'
+const PERSON_RESOURCE_KIND = 'customers.person'
+const LEGACY_IDENTITY_FIELD_KEY_SET = new Set<string>(LEGACY_IDENTITY_FIELD_KEYS)
 
 export type LegacyIdentityScope = { tenantId: string; organizationId: string }
 export type LegacyIdentityMigrationMode = 'dry-run' | 'apply'
@@ -52,7 +56,10 @@ export type LegacyIdentityVerificationReport = {
   scanned: number
   migrated: number
   unmigrated: number
+  destinationRecords: number
+  linkedDestinationRecords: number
   destinationConflicts: number
+  aliasValues: number
   activeDefinitions: number
   inactiveDefinitions: number
 }
@@ -150,7 +157,7 @@ async function listCandidateProfiles(
   afterProfileId: string | null,
   batchSize: number,
 ): Promise<CandidateProfile[]> {
-  return em.getConnection().execute<CandidateProfile[]>(
+  return em.execute<CandidateProfile[]>(
     `select profile.id as profile_id, profile.entity_id as person_id
      from customer_people profile
      join customer_entities person
@@ -193,7 +200,7 @@ async function readDictionaryOrDirectValue(
 ): Promise<string | null> {
   if (!entryId) return null
   if (!UUID_PATTERN.test(entryId)) return entryId
-  const rows = await em.getConnection().execute<Array<{ value: string; normalized_value: string }>>(
+  const rows = await em.execute<Array<{ value: string; normalized_value: string }>>(
     `select value, normalized_value
      from dictionary_entries
      where id = ? and tenant_id = ? and organization_id = ?
@@ -210,7 +217,7 @@ async function readLegacyValues(
   dekKey: string,
   lock: boolean,
 ): Promise<{ values: LegacyValues; diagnostics: Pick<LegacyIdentityMigrationReport, 'invalidPesel' | 'unknownDocumentType' | 'unknownCountry' | 'invalidIssuedOn' | 'invalidExpiresOn'> } | null> {
-  const rows = await em.getConnection().execute<LegacyValueRow[]>(
+  const rows = await em.execute<LegacyValueRow[]>(
     `select field_key, value_text, value_multiline, value_int, value_float, value_bool
      from custom_field_values
      where tenant_id = ? and organization_id = ? and entity_id = ? and record_id = ?
@@ -284,7 +291,7 @@ async function processCandidate(
   report: LegacyIdentityMigrationReport,
 ): Promise<void> {
   if (mode === 'apply') {
-    await em.getConnection().execute(
+    await em.execute(
       'select pg_advisory_xact_lock(hashtext(?))',
       [`finoo_identity:${scope.tenantId}:${scope.organizationId}:${candidate.person_id}`],
     )
@@ -381,7 +388,10 @@ export async function verifyLegacyIdentityMigration(
     scanned: 0,
     migrated: 0,
     unmigrated: 0,
+    destinationRecords: 0,
+    linkedDestinationRecords: 0,
     destinationConflicts: 0,
+    aliasValues: 0,
     activeDefinitions: 0,
     inactiveDefinitions: 0,
   }
@@ -398,6 +408,49 @@ export async function verifyLegacyIdentityMigration(
   report.migrated = migrationReport.unchanged
   report.unmigrated = migrationReport.wouldCreate
   report.destinationConflicts = migrationReport.destinationConflicts
+  const destinationCounts = await em.execute<
+    Array<{
+      destination_count: string | number
+      linked_destination_count: string | number
+    }>
+  >(
+    `select
+       count(*) as destination_count,
+       count(*) filter (where exists (
+         select 1
+         from customer_people migration_profile
+         where migration_profile.tenant_id = destination.tenant_id
+           and migration_profile.organization_id = destination.organization_id
+           and migration_profile.entity_id = destination.person_id
+           and exists (
+             select 1
+             from custom_field_values legacy
+             where legacy.tenant_id = migration_profile.tenant_id
+               and legacy.organization_id = migration_profile.organization_id
+               and legacy.entity_id = ?
+               and legacy.record_id = migration_profile.id::text
+               and legacy.field_key in (${LEGACY_IDENTITY_FIELD_KEYS.map(() => '?').join(', ')})
+               and legacy.deleted_at is null
+           )
+       )) as linked_destination_count
+     from finoo_person_identities destination
+     where destination.tenant_id = ?
+       and destination.organization_id = ?
+       and destination.deleted_at is null`,
+    [PERSON_PROFILE_ENTITY_ID, ...LEGACY_IDENTITY_FIELD_KEYS, scope.tenantId, scope.organizationId],
+  )
+  report.destinationRecords = Number(destinationCounts[0]?.destination_count ?? 0)
+  report.linkedDestinationRecords = Number(destinationCounts[0]?.linked_destination_count ?? 0)
+  const aliasCounts = await em.execute<Array<{ alias_count: string | number }>>(
+    `select count(*) as alias_count
+     from custom_field_values
+     where tenant_id = ? and organization_id = ? and entity_id = ?
+       and field_key ~ '^(cf_|cf:)+'
+       and regexp_replace(field_key, '^(cf_|cf:)+', '') in (${LEGACY_IDENTITY_FIELD_KEYS.map(() => '?').join(', ')})
+       and deleted_at is null`,
+    [scope.tenantId, scope.organizationId, PERSON_PROFILE_ENTITY_ID, ...LEGACY_IDENTITY_FIELD_KEYS],
+  )
+  report.aliasValues = Number(aliasCounts[0]?.alias_count ?? 0)
   const definitions = await em.find(CustomFieldDef, {
     ...scope,
     entityId: PERSON_PROFILE_ENTITY_ID,
@@ -414,11 +467,6 @@ export async function setLegacyIdentityCutover(input: {
   scope: LegacyIdentityScope
   active: boolean
 }): Promise<{ changedDefinitions: number; activeDefinitions: number }> {
-  if (!input.active) {
-    const verification = await verifyLegacyIdentityMigration(input.em, input.encryptionService, input.scope)
-    if (verification.unmigrated > 0) throw new Error('legacy_identity_migration_incomplete')
-    if (verification.destinationConflicts > 0) throw new Error('legacy_identity_destination_conflicts')
-  }
   return input.em.transactional(async (transactionalEm) => {
     const definitions = await transactionalEm.find(CustomFieldDef, {
       ...input.scope,
@@ -429,13 +477,23 @@ export async function setLegacyIdentityCutover(input: {
     if (LEGACY_IDENTITY_FIELD_KEYS.some((key) => !byKey.has(key))) {
       throw new Error('legacy_identity_definition_missing')
     }
+    if (!input.active) {
+      const verification = await verifyLegacyIdentityMigration(transactionalEm, input.encryptionService, input.scope)
+      if (verification.unmigrated > 0) throw new Error('legacy_identity_migration_incomplete')
+      if (verification.destinationConflicts > 0) throw new Error('legacy_identity_destination_conflicts')
+      if (verification.aliasValues > 0) throw new Error('legacy_identity_alias_values_present')
+      if (verification.linkedDestinationRecords !== verification.migrated + verification.destinationConflicts) {
+        throw new Error('legacy_identity_destination_count_mismatch')
+      }
+    }
     if (input.active) {
       const cutoverAt = definitions.map((definition) => definition.deletedAt?.getTime() ?? 0).sort((a, b) => b - a)[0]
       if (cutoverAt > 0) {
         const edits = await transactionalEm.count(FinooIdentityAuditEntry, {
           ...input.scope,
           createdAt: { $gt: new Date(cutoverAt) },
-          operation: { $in: ['create', 'update', 'import', 'resolve_conflict'] },
+          operation: { $in: ['create', 'update', 'import', 'resolve_conflict'],
+          },
           outcome: 'allowed',
         })
         if (edits > 0) throw new Error('manual_reconciliation_required')
@@ -465,18 +523,26 @@ export async function setLegacyIdentityCutover(input: {
 }
 
 async function countLegacyIdentityValues(em: EntityManager, scope: LegacyIdentityScope): Promise<number> {
-  const rows = await em.getConnection().execute<Array<{ count: string | number }>>(
+  const rows = await em.execute<Array<{ count: string | number }>>(
     `select count(*) as count
      from custom_field_values
      where tenant_id = ? and organization_id = ? and entity_id = ?
-       and field_key in (${LEGACY_IDENTITY_FIELD_KEYS.map(() => '?').join(', ')})`,
-    [scope.tenantId, scope.organizationId, PERSON_PROFILE_ENTITY_ID, ...LEGACY_IDENTITY_FIELD_KEYS],
+       and (
+         field_key in (${LEGACY_IDENTITY_FIELD_KEYS.map(() => '?').join(', ')})
+         or (
+           field_key ~ '^(cf_|cf:)+'
+           and regexp_replace(field_key, '^(cf_|cf:)+', '') in (${LEGACY_IDENTITY_FIELD_KEYS.map(() => '?').join(', ')})
+         )
+       )`,
+    [scope.tenantId, scope.organizationId, PERSON_PROFILE_ENTITY_ID, ...LEGACY_IDENTITY_FIELD_KEYS,
+      ...LEGACY_IDENTITY_FIELD_KEYS,
+    ],
   )
   return Number(rows[0]?.count ?? 0)
 }
 
 async function countLegacyIdentityDefinitions(em: EntityManager, scope: LegacyIdentityScope): Promise<number> {
-  const rows = await em.getConnection().execute<Array<{ count: string | number }>>(
+  const rows = await em.execute<Array<{ count: string | number }>>(
     `select count(*) as count
      from custom_field_defs
      where tenant_id = ? and organization_id = ? and entity_id = ?
@@ -484,6 +550,84 @@ async function countLegacyIdentityDefinitions(em: EntityManager, scope: LegacyId
     [scope.tenantId, scope.organizationId, PERSON_PROFILE_ENTITY_ID, ...LEGACY_IDENTITY_FIELD_KEYS],
   )
   return Number(rows[0]?.count ?? 0)
+}
+
+type ActionLogCursor = { createdAt: Date; id: string }
+
+function assertActionLogPayloadReadable(entry: ActionLog): void {
+  for (const value of [
+    entry.commandPayload,
+    entry.snapshotBefore,
+    entry.snapshotAfter,
+    entry.changesJson,
+    entry.contextJson,
+  ]) {
+    if (typeof value === 'string') throw new Error('legacy_identity_audit_payload_unreadable')
+  }
+}
+
+function actionLogPayload(entry: ActionLog): unknown[] {
+  return [entry.commandPayload, entry.snapshotBefore, entry.snapshotAfter, entry.changesJson, entry.contextJson]
+}
+
+async function scrubLegacyIdentityActionLogs(input: {
+  em: EntityManager
+  encryptionService: TenantDataEncryptionService
+  scope: LegacyIdentityScope
+  mode: LegacyIdentityMigrationMode
+  batchSize: number
+}): Promise<number> {
+  let cursor: ActionLogCursor | null = null
+  let affected = 0
+  while (true) {
+    const page = await input.em.transactional(async (transactionalEm) => {
+      const logs = await findWithDecryption(
+        transactionalEm,
+        ActionLog,
+        {
+          ...input.scope,
+          resourceKind: PERSON_RESOURCE_KIND,
+          ...(cursor
+            ? {
+                $or: [
+                  { createdAt: { $gt: cursor.createdAt } },
+                  { createdAt: cursor.createdAt, id: { $gt: cursor.id } },
+                ],
+              }
+            : {}),
+        },
+        { orderBy: { createdAt: 'asc', id: 'asc' }, limit: input.batchSize },
+        { ...input.scope, encryptionService: input.encryptionService },
+      )
+      let pageAffected = 0
+      for (const log of logs) {
+        assertActionLogPayloadReadable(log)
+        const before = JSON.stringify(actionLogPayload(log))
+        const redacted = redactCustomFieldKeysFromActionLog(log, LEGACY_IDENTITY_FIELD_KEY_SET)
+        if (before === JSON.stringify(actionLogPayload(redacted))) continue
+        pageAffected += 1
+        if (input.mode === 'apply') {
+          log.commandPayload = redacted.commandPayload ?? null
+          log.snapshotBefore = redacted.snapshotBefore ?? null
+          log.snapshotAfter = redacted.snapshotAfter ?? null
+          log.changesJson = redacted.changesJson ?? null
+          log.contextJson = redacted.contextJson ?? null
+          transactionalEm.persist(log)
+        }
+      }
+      if (input.mode === 'apply' && pageAffected > 0) await transactionalEm.flush()
+      const last = logs.at(-1)
+      return {
+        affected: pageAffected,
+        cursor: last ? { createdAt: last.createdAt, id: last.id } : null,
+        size: logs.length,
+      }
+    })
+    affected += page.affected
+    cursor = page.cursor
+    if (page.size < input.batchSize || !cursor) break
+  }
+  return affected
 }
 
 export async function purgeLegacyIdentityFields(input: {
@@ -496,37 +640,57 @@ export async function purgeLegacyIdentityFields(input: {
   mode: LegacyIdentityMigrationMode
   values: number
   definitions: number
+  auditLogs: number
   residualValues: number
   residualDefinitions: number
+  residualAuditLogs: number
 }> {
   const verification = await verifyLegacyIdentityMigration(input.em, input.encryptionService, input.scope)
   if (verification.activeDefinitions > 0) throw new Error('legacy_identity_cutover_required')
   if (verification.unmigrated > 0) throw new Error('legacy_identity_migration_incomplete')
   if (verification.destinationConflicts > 0) throw new Error('legacy_identity_destination_conflicts')
+  if (verification.linkedDestinationRecords !== verification.migrated + verification.destinationConflicts) {
+    throw new Error('legacy_identity_destination_count_mismatch')
+  }
   if (![0, LEGACY_IDENTITY_FIELD_KEYS.length].includes(verification.inactiveDefinitions)) {
     throw new Error('legacy_identity_definition_missing')
   }
   const values = await countLegacyIdentityValues(input.em, input.scope)
   const definitions = verification.inactiveDefinitions
   if (definitions === 0 && values > 0) throw new Error('legacy_identity_definition_missing')
+  const batchSize = Math.min(Math.max(input.batchSize ?? 500, 1), 1000)
+  const auditLogs = await scrubLegacyIdentityActionLogs({
+    em: input.em,
+    encryptionService: input.encryptionService,
+    scope: input.scope,
+    mode: input.mode,
+    batchSize,
+  })
   if (input.mode === 'dry-run') {
     return {
       mode: input.mode,
       values,
       definitions,
+      auditLogs,
       residualValues: values,
       residualDefinitions: definitions,
+      residualAuditLogs: auditLogs,
     }
   }
-  const batchSize = Math.min(Math.max(input.batchSize ?? 500, 1), 1000)
   while (true) {
     const deleted = await input.em.transactional(async (transactionalEm) => (
-      transactionalEm.getConnection().execute<Array<{ id: string }>>(
+      transactionalEm.execute<Array<{ id: string }>>(
         `delete from custom_field_values
          where id in (
            select id from custom_field_values
            where tenant_id = ? and organization_id = ? and entity_id = ?
-             and field_key in (${LEGACY_IDENTITY_FIELD_KEYS.map(() => '?').join(', ')})
+             and (
+               field_key in (${LEGACY_IDENTITY_FIELD_KEYS.map(() => '?').join(', ')})
+               or (
+                 field_key ~ '^(cf_|cf:)+'
+                 and regexp_replace(field_key, '^(cf_|cf:)+', '') in (${LEGACY_IDENTITY_FIELD_KEYS.map(() => '?').join(', ')})
+               )
+             )
            limit ?
          )
          returning id`,
@@ -535,6 +699,7 @@ export async function purgeLegacyIdentityFields(input: {
           input.scope.organizationId,
           PERSON_PROFILE_ENTITY_ID,
           ...LEGACY_IDENTITY_FIELD_KEYS,
+          ...LEGACY_IDENTITY_FIELD_KEYS,
           batchSize,
         ],
       )
@@ -542,7 +707,7 @@ export async function purgeLegacyIdentityFields(input: {
     if (deleted.length < batchSize) break
   }
   await input.em.transactional(async (transactionalEm) => {
-    await transactionalEm.getConnection().execute(
+    await transactionalEm.execute(
       `delete from custom_field_defs
        where tenant_id = ? and organization_id = ? and entity_id = ?
          and "key" in (${LEGACY_IDENTITY_FIELD_KEYS.map(() => '?').join(', ')})`,
@@ -551,6 +716,15 @@ export async function purgeLegacyIdentityFields(input: {
   })
   const residualValues = await countLegacyIdentityValues(input.em, input.scope)
   const residualDefinitions = await countLegacyIdentityDefinitions(input.em, input.scope)
-  if (residualValues > 0 || residualDefinitions > 0) throw new Error('legacy_identity_purge_incomplete')
-  return { mode: input.mode, values, definitions, residualValues, residualDefinitions }
+  const residualAuditLogs = await scrubLegacyIdentityActionLogs({
+    em: input.em,
+    encryptionService: input.encryptionService,
+    scope: input.scope,
+    mode: 'dry-run',
+    batchSize,
+  })
+  if (residualValues > 0 || residualDefinitions > 0 || residualAuditLogs > 0) {
+    throw new Error('legacy_identity_purge_incomplete')
+  }
+  return { mode: input.mode, values, definitions, auditLogs, residualValues, residualDefinitions, residualAuditLogs }
 }

@@ -1,23 +1,13 @@
-import type { InjectionFilterWidget } from '@open-mercato/shared/modules/widgets/injection'
+import type { InjectionWidgetModule } from '@open-mercato/shared/modules/widgets/injection'
+import CompletenessFilterWidget, { type PeopleTableQueryFilterContext } from './widget.client'
 
-const widget: InjectionFilterWidget = {
+const widget: InjectionWidgetModule<PeopleTableQueryFilterContext> = {
   metadata: {
     id: 'finoo_identities.injection.completeness-filter',
     priority: 20,
+    requiredModules: ['customers'],
   },
-  filters: [
-    {
-      id: 'finooIdentityComplete',
-      label: 'finoo_identities.filter.label',
-      type: 'select',
-      strategy: 'server',
-      queryParam: 'finooIdentityComplete',
-      options: [
-        { value: 'true', label: 'finoo_identities.aggregate.complete' },
-        { value: 'false', label: 'finoo_identities.aggregate.incomplete' },
-      ],
-    },
-  ],
+  Widget: CompletenessFilterWidget,
 }
 
 export default widget
