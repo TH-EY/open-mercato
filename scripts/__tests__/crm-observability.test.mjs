@@ -158,6 +158,20 @@ test('CRM deployments use the canonical global OpenRouter configuration', () => 
   }
 })
 
+test('CRM deployments fetch requested branches into remote-tracking refs', () => {
+  const workflow = fs.readFileSync(DEPLOY_WORKFLOW_PATH, 'utf8')
+  const deployScript = fs.readFileSync(DEPLOY_SCRIPT_PATH, 'utf8')
+
+  assert.match(
+    workflow,
+    /fetch origin "\+refs\/heads\/\$\{branch\}:refs\/remotes\/origin\/\$\{branch\}" --prune/,
+  )
+  assert.match(
+    deployScript,
+    /fetch origin "\+refs\/heads\/\$branch:refs\/remotes\/origin\/\$branch" --prune/,
+  )
+})
+
 test('CRM infrastructure workflow cannot execute an unrestricted apply', () => {
   const workflow = fs.readFileSync(INFRA_WORKFLOW_PATH, 'utf8')
 
