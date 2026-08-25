@@ -102,8 +102,8 @@ Verified: `message_channel_links` has **no** `channel_id`, so there is no shorte
 
 ### Phase 3: Read widening
 
-- [ ] 3.1 Add the fail-closed sharedChannelIds arm to both predicates
-- [ ] 3.2 Shared-channel lookup wired into every email read path
+- [x] 3.1 Add the fail-closed sharedChannelIds arm to both predicates — c1fd6af98
+- [x] 3.2 Shared-channel lookup wired into every email read path — c1fd6af98
 
 ### Phase 4: UI and i18n
 
@@ -112,7 +112,7 @@ Verified: `message_channel_links` has **no** `channel_id`, so there is no shorte
 
 ### Phase 5: Tests and gate
 
-- [ ] 5.1 Unit tests
+- [x] 5.1 Unit tests — c1fd6af98
 - [ ] 5.2 Integration test TC-CRM-EMAIL-VISIBILITY-004
 - [ ] 5.3 Full validation gate
 </content>
