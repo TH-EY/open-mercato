@@ -107,8 +107,8 @@ Verified: `message_channel_links` has **no** `channel_id`, so there is no shorte
 
 ### Phase 4: UI and i18n
 
-- [ ] 4.1 Channel toggle on the profile channels page
-- [ ] 4.2 i18n keys in all five locales
+- [x] 4.1 Channel toggle on the profile channels page — 1205b3acf
+- [x] 4.2 i18n keys in all five locales — 1205b3acf
 
 ### Phase 5: Tests and gate
 
