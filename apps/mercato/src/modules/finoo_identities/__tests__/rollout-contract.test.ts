@@ -25,6 +25,17 @@ function runIdentityReportNormalizer(output: string) {
   })
 }
 
+function runIdentityDefinitionStateReader(report: Record<string, unknown>) {
+  const start = upgradeScript.indexOf('read_identity_definition_state_from_report() {')
+  const end = upgradeScript.indexOf('run_preserved_new_cli() {', start)
+  const reader = upgradeScript.slice(start, end)
+  return spawnSync(
+    'bash',
+    ['-c', `${reader}\nread_identity_definition_state_from_report "$1"`, 'definition-state-test', JSON.stringify(report)],
+    { encoding: 'utf8' },
+  )
+}
+
 describe('FINOO identity private rollout contract', () => {
   it('sets up the exact scope and stops the active writer before final migration and cutover', () => {
     expectOrdered(upgradeScript, [
@@ -78,6 +89,31 @@ describe('FINOO identity private rollout contract', () => {
     expect(upgradeScript).toContain('both runtime writers remain stopped')
   })
 
+  it('preserves an already-cut-over legacy definition state across an idempotent rollout', () => {
+    expectOrdered(upgradeScript, [
+      'identity_definition_state="$(read_identity_definition_state_from_report "$identity_verification_report")"',
+      'if [[ "$identity_definition_state" == "6 0" ]]',
+      'legacy_cutover_attempted=true',
+      "printf 'legacy_cutover_attempted=true\\n' >> \"$pending_file\"",
+      'yarn mercato finoo_identities cutover-legacy',
+      'assert_identity_verification_report "$identity_cutover_report" 0 6',
+    ])
+    expect(upgradeScript.match(/read_identity_definition_state_from_report\(\) \{/g)).toHaveLength(2)
+    expect(upgradeScript.match(/if \[\[ "\$legacy_cutover_attempted" != true \]\]; then/g)).toHaveLength(2)
+
+    const rollbackHelpers = upgradeScript.match(/ensure_legacy_identity_state_for_old\(\) \{[\s\S]*?\n\}/g)
+    expect(rollbackHelpers).toHaveLength(2)
+    for (const helper of rollbackHelpers ?? []) {
+      expectOrdered(helper, [
+        'definition_state="$(read_identity_definition_state "$source_container")"',
+        'if [[ "$legacy_cutover_attempted" != true ]]',
+        'return 0',
+        'if [[ "$definition_state" == "0 6" ]]',
+        'finoo_identities rollback-legacy',
+      ])
+    }
+  })
+
   it('durably marks the cutover attempt before mutation and resolves crash recovery from counts', () => {
     expectOrdered(upgradeScript, [
       'legacy_cutover_attempted=true',
@@ -114,7 +150,7 @@ describe('FINOO identity private rollout contract', () => {
       'assert_identity_migration_report "$identity_apply_report" apply',
       'identity_verification_output=',
       'identity_verification_report="$(normalize_identity_json_report "$identity_verification_output")"',
-      'assert_identity_verification_report "$identity_verification_report" 6 0',
+      'identity_definition_state="$(read_identity_definition_state_from_report "$identity_verification_report")"',
       'identity_cutover_output=',
       'identity_cutover_report="$(normalize_identity_json_report "$identity_cutover_output")"',
       'assert_identity_verification_report "$identity_cutover_report" 0 6',
@@ -155,5 +191,65 @@ describe('FINOO identity private rollout contract', () => {
     const foreign = runIdentityReportNormalizer('{"scanned":109,"secret":"must-not-pass"}')
     expect(foreign.status).not.toBe(0)
     expect(foreign.stderr).toContain('Expected exactly one FINOO identity count-only JSON report')
+  })
+
+  it.each([
+    [6, 0, '6 0'],
+    [0, 6, '0 6'],
+  ])('accepts exact definition state %i/%i', (activeDefinitions, inactiveDefinitions, expected) => {
+    const result = runIdentityDefinitionStateReader({
+      scanned: 100,
+      migrated: 100,
+      unmigrated: 0,
+      destinationRecords: 101,
+      linkedDestinationRecords: 100,
+      destinationConflicts: 0,
+      aliasValues: 0,
+      activeDefinitions,
+      inactiveDefinitions,
+    })
+    expect(result.status).toBe(0)
+    expect(result.stdout.trim()).toBe(expected)
+  })
+
+  it('rejects a partial legacy definition state', () => {
+    const result = runIdentityDefinitionStateReader({
+      scanned: 100,
+      migrated: 100,
+      unmigrated: 0,
+      destinationRecords: 101,
+      linkedDestinationRecords: 100,
+      destinationConflicts: 0,
+      aliasValues: 0,
+      activeDefinitions: 1,
+      inactiveDefinitions: 5,
+    })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('FINOO identity definitions are in a partial state')
+  })
+
+  it.each([
+    ['boolean count', { scanned: true }, 'Unexpected FINOO identity definition-state report'],
+    ['scanned count', { scanned: 99 }, 'FINOO identity scanned count does not reconcile'],
+    ['unmigrated records', { migrated: 99, unmigrated: 1, linkedDestinationRecords: 99 }, 'FINOO identity migration is not safe for cutover'],
+    ['destination conflicts', { migrated: 99, destinationConflicts: 1 }, 'FINOO identity migration is not safe for cutover'],
+    ['prefixed aliases', { aliasValues: 1 }, 'FINOO identity migration has prefixed legacy aliases'],
+    ['linked destination count', { linkedDestinationRecords: 99 }, 'FINOO identity linked destination count does not reconcile'],
+    ['destination count', { destinationRecords: 99 }, 'FINOO identity destination count is inconsistent'],
+  ])('rejects an unsafe %s report', (_name, overrides, expectedError) => {
+    const result = runIdentityDefinitionStateReader({
+      scanned: 100,
+      migrated: 100,
+      unmigrated: 0,
+      destinationRecords: 101,
+      linkedDestinationRecords: 100,
+      destinationConflicts: 0,
+      aliasValues: 0,
+      activeDefinitions: 0,
+      inactiveDefinitions: 6,
+      ...overrides,
+    })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain(expectedError)
   })
 })

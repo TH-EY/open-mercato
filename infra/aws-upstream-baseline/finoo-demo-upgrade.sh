@@ -293,7 +293,7 @@ expected_keys = {
 report = json.loads(sys.argv[1])
 if set(report) != expected_keys or report.get('mode') != sys.argv[2]:
     raise SystemExit('Unexpected FINOO identity migration report shape')
-if any(not isinstance(value, int) or value < 0 for key, value in report.items() if key != 'mode'):
+if any(type(value) is not int or value < 0 for key, value in report.items() if key != 'mode'):
     raise SystemExit('FINOO identity migration report must contain counts only')
 if report['destinationConflicts'] != 0:
     raise SystemExit('FINOO identity migration has destination conflicts')
@@ -316,18 +316,52 @@ expected_keys = {
 report = json.loads(sys.argv[1])
 if set(report) != expected_keys:
     raise SystemExit('Unexpected FINOO identity verification report shape')
-if any(not isinstance(value, int) or value < 0 for value in report.values()):
+if any(type(value) is not int or value < 0 for value in report.values()):
     raise SystemExit('FINOO identity verification report must contain counts only')
 if report['unmigrated'] != 0 or report['destinationConflicts'] != 0:
     raise SystemExit('FINOO identity migration verification failed')
 if report['aliasValues'] != 0:
     raise SystemExit('FINOO identity migration has prefixed legacy aliases')
+if report['scanned'] != report['migrated'] + report['unmigrated'] + report['destinationConflicts']:
+    raise SystemExit('FINOO identity scanned count does not reconcile')
 if report['linkedDestinationRecords'] != report['migrated'] + report['destinationConflicts']:
     raise SystemExit('FINOO identity linked destination count does not reconcile')
 if report['destinationRecords'] < report['linkedDestinationRecords']:
     raise SystemExit('FINOO identity destination count is inconsistent')
 if report['activeDefinitions'] != int(sys.argv[2]) or report['inactiveDefinitions'] != int(sys.argv[3]):
     raise SystemExit('FINOO identity legacy definition count is not exact')
+PY
+}
+
+read_identity_definition_state_from_report() {
+  local report="$1"
+  python3 - "$report" <<'PY'
+import json
+import sys
+
+report = json.loads(sys.argv[1])
+expected_keys = {
+    'scanned', 'migrated', 'unmigrated', 'destinationRecords',
+    'linkedDestinationRecords', 'destinationConflicts',
+    'aliasValues', 'activeDefinitions', 'inactiveDefinitions',
+}
+if set(report) != expected_keys or any(type(value) is not int or value < 0 for value in report.values()):
+    raise SystemExit('Unexpected FINOO identity definition-state report')
+if report['unmigrated'] != 0 or report['destinationConflicts'] != 0:
+    raise SystemExit('FINOO identity migration is not safe for cutover')
+if report['aliasValues'] != 0:
+    raise SystemExit('FINOO identity migration has prefixed legacy aliases')
+if report['scanned'] != report['migrated'] + report['unmigrated'] + report['destinationConflicts']:
+    raise SystemExit('FINOO identity scanned count does not reconcile')
+if report['linkedDestinationRecords'] != report['migrated'] + report['destinationConflicts']:
+    raise SystemExit('FINOO identity linked destination count does not reconcile')
+if report['destinationRecords'] < report['linkedDestinationRecords']:
+    raise SystemExit('FINOO identity destination count is inconsistent')
+active = report['activeDefinitions']
+inactive = report['inactiveDefinitions']
+if (active, inactive) not in {(6, 0), (0, 6)}:
+    raise SystemExit('FINOO identity definitions are in a partial state')
+print(f'{active} {inactive}')
 PY
 }
 
@@ -363,38 +397,19 @@ read_identity_definition_state() {
     --tenant "$finoo_tenant_id" \
     --organization "$finoo_organization_id")" || return 1
   verification_report="$(normalize_identity_json_report "$verification_output")" || return 1
-  python3 - "$verification_report" <<'PY'
-import json
-import sys
-
-expected_keys = {
-    'scanned', 'migrated', 'unmigrated', 'destinationRecords',
-    'linkedDestinationRecords', 'destinationConflicts',
-    'aliasValues', 'activeDefinitions', 'inactiveDefinitions',
-}
-report = json.loads(sys.argv[1])
-if set(report) != expected_keys or any(not isinstance(value, int) or value < 0 for value in report.values()):
-    raise SystemExit('Unexpected FINOO identity definition-state report')
-if report['unmigrated'] != 0 or report['destinationConflicts'] != 0:
-    raise SystemExit('FINOO identity migration is not safe for rollback')
-if report['aliasValues'] != 0:
-    raise SystemExit('FINOO identity migration has prefixed legacy aliases')
-if report['linkedDestinationRecords'] != report['migrated'] + report['destinationConflicts']:
-    raise SystemExit('FINOO identity linked destination count does not reconcile')
-if report['destinationRecords'] < report['linkedDestinationRecords']:
-    raise SystemExit('FINOO identity destination count is inconsistent')
-active = report['activeDefinitions']
-inactive = report['inactiveDefinitions']
-if (active, inactive) not in {(6, 0), (0, 6)}:
-    raise SystemExit('FINOO identity definitions are in a partial state')
-print(f'{active} {inactive}')
-PY
+  read_identity_definition_state_from_report "$verification_report"
 }
 
 ensure_legacy_identity_state_for_old() {
   local source_container="$1"
   local definition_state
   definition_state="$(read_identity_definition_state "$source_container")" || return 1
+  if [[ "$legacy_cutover_attempted" != true ]]; then
+    run_preserved_new_cli "$source_container" configs cache structural \
+      --tenant "$finoo_tenant_id" \
+      --json || return 1
+    return 0
+  fi
   if [[ "$definition_state" == "0 6" ]]; then
     run_preserved_new_cli "$source_container" finoo_identities rollback-legacy \
       --tenant "$finoo_tenant_id" \
@@ -846,17 +861,19 @@ identity_verification_output="$(docker exec "$candidate_container" yarn mercato 
   --tenant "$finoo_tenant_id" \
   --organization "$finoo_organization_id")"
 identity_verification_report="$(normalize_identity_json_report "$identity_verification_output")"
-assert_identity_verification_report "$identity_verification_report" 6 0
+identity_definition_state="$(read_identity_definition_state_from_report "$identity_verification_report")"
 printf '[finoo-identities] migration_verify=%s\n' "$identity_verification_report"
-legacy_cutover_attempted=true
-printf 'legacy_cutover_attempted=true\n' >> "$pending_file"
-sync "$pending_file"
-docker exec "$candidate_container" yarn mercato finoo_identities cutover-legacy \
-  --tenant "$finoo_tenant_id" \
-  --organization "$finoo_organization_id" \
-  --apply \
-  --maintenance-window \
-  --confirm THOM-108 >/dev/null
+if [[ "$identity_definition_state" == "6 0" ]]; then
+  legacy_cutover_attempted=true
+  printf 'legacy_cutover_attempted=true\n' >> "$pending_file"
+  sync "$pending_file"
+  docker exec "$candidate_container" yarn mercato finoo_identities cutover-legacy \
+    --tenant "$finoo_tenant_id" \
+    --organization "$finoo_organization_id" \
+    --apply \
+    --maintenance-window \
+    --confirm THOM-108 >/dev/null
+fi
 identity_cutover_output="$(docker exec "$candidate_container" yarn mercato finoo_identities verify-legacy \
   --tenant "$finoo_tenant_id" \
   --organization "$finoo_organization_id")"
@@ -1042,6 +1059,38 @@ print(json.dumps(matches[0], separators=(',', ':'), sort_keys=True))
 PY
 }
 
+read_identity_definition_state_from_report() {
+  local report="$1"
+  python3 - "$report" <<'PY'
+import json
+import sys
+
+report = json.loads(sys.argv[1])
+expected_keys = {
+    'scanned', 'migrated', 'unmigrated', 'destinationRecords',
+    'linkedDestinationRecords', 'destinationConflicts',
+    'aliasValues', 'activeDefinitions', 'inactiveDefinitions',
+}
+if set(report) != expected_keys or any(type(value) is not int or value < 0 for value in report.values()):
+    raise SystemExit('Unexpected FINOO identity definition-state report')
+if report['unmigrated'] != 0 or report['destinationConflicts'] != 0:
+    raise SystemExit('FINOO identity migration is not safe for cutover')
+if report['aliasValues'] != 0:
+    raise SystemExit('FINOO identity migration has prefixed legacy aliases')
+if report['scanned'] != report['migrated'] + report['unmigrated'] + report['destinationConflicts']:
+    raise SystemExit('FINOO identity scanned count does not reconcile')
+if report['linkedDestinationRecords'] != report['migrated'] + report['destinationConflicts']:
+    raise SystemExit('FINOO identity linked destination count does not reconcile')
+if report['destinationRecords'] < report['linkedDestinationRecords']:
+    raise SystemExit('FINOO identity destination count is inconsistent')
+active = report['activeDefinitions']
+inactive = report['inactiveDefinitions']
+if (active, inactive) not in {(6, 0), (0, 6)}:
+    raise SystemExit('FINOO identity definitions are in a partial state')
+print(f'{active} {inactive}')
+PY
+}
+
 install_finoo_smoke_helper() {
   local container="$1"
   local source_hash
@@ -1142,37 +1191,18 @@ read_identity_definition_state() {
     --tenant "$finoo_tenant_id" \
     --organization "$finoo_organization_id")" || return 1
   verification_report="$(normalize_identity_json_report "$verification_output")" || return 1
-  python3 - "$verification_report" <<'PY'
-import json
-import sys
-
-expected_keys = {
-    'scanned', 'migrated', 'unmigrated', 'destinationRecords',
-    'linkedDestinationRecords', 'destinationConflicts',
-    'aliasValues', 'activeDefinitions', 'inactiveDefinitions',
-}
-report = json.loads(sys.argv[1])
-if set(report) != expected_keys or any(not isinstance(value, int) or value < 0 for value in report.values()):
-    raise SystemExit('Unexpected FINOO identity rollback verification report')
-if report['unmigrated'] != 0 or report['destinationConflicts'] != 0:
-    raise SystemExit('FINOO identity migration is not safe for rollback')
-if report['aliasValues'] != 0:
-    raise SystemExit('FINOO identity migration has prefixed legacy aliases')
-if report['linkedDestinationRecords'] != report['migrated'] + report['destinationConflicts']:
-    raise SystemExit('FINOO identity linked destination count does not reconcile')
-if report['destinationRecords'] < report['linkedDestinationRecords']:
-    raise SystemExit('FINOO identity destination count is inconsistent')
-active = report['activeDefinitions']
-inactive = report['inactiveDefinitions']
-if (active, inactive) not in {(6, 0), (0, 6)}:
-    raise SystemExit('FINOO identity definitions are in a partial state')
-print(f'{active} {inactive}')
-PY
+  read_identity_definition_state_from_report "$verification_report"
 }
 ensure_legacy_identity_state_for_old() {
   local source_container="$1"
   local definition_state
   definition_state="$(read_identity_definition_state "$source_container")" || return 1
+  if [[ "$legacy_cutover_attempted" != true ]]; then
+    run_preserved_new_cli "$source_container" configs cache structural \
+      --tenant "$finoo_tenant_id" \
+      --json || return 1
+    return 0
+  fi
   if [[ "$definition_state" == "0 6" ]]; then
     run_preserved_new_cli "$source_container" finoo_identities rollback-legacy \
       --tenant "$finoo_tenant_id" \
@@ -1191,6 +1221,7 @@ restore_identity_cutover_for_new() {
   local source_container="$1"
   local verification_output
   local verification_report
+  local definition_state
   run_preserved_new_cli "$source_container" finoo_identities cutover-legacy \
     --tenant "$finoo_tenant_id" \
     --organization "$finoo_organization_id" \
@@ -1201,22 +1232,8 @@ restore_identity_cutover_for_new() {
     --tenant "$finoo_tenant_id" \
     --organization "$finoo_organization_id")" || return 1
   verification_report="$(normalize_identity_json_report "$verification_output")" || return 1
-  python3 - "$verification_report" <<'PY'
-import json
-import sys
-
-report = json.loads(sys.argv[1])
-if report.get('unmigrated') != 0 or report.get('destinationConflicts') != 0:
-    raise SystemExit('FINOO identity migration is not safe for new runtime restore')
-if report.get('aliasValues') != 0:
-    raise SystemExit('FINOO identity migration has prefixed legacy aliases')
-if report.get('linkedDestinationRecords') != report.get('migrated', 0) + report.get('destinationConflicts', 0):
-    raise SystemExit('FINOO identity linked destination count does not reconcile')
-if report.get('destinationRecords', -1) < report.get('linkedDestinationRecords', 0):
-    raise SystemExit('FINOO identity destination count is inconsistent')
-if report.get('activeDefinitions') != 0 or report.get('inactiveDefinitions') != 6:
-    raise SystemExit('FINOO identity cutover was not restored exactly')
-PY
+  definition_state="$(read_identity_definition_state_from_report "$verification_report")" || return 1
+  [[ "$definition_state" == "0 6" ]] || return 1
   run_preserved_new_cli "$source_container" configs cache structural \
     --tenant "$finoo_tenant_id" \
     --json || return 1
