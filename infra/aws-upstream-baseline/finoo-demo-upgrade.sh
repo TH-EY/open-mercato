@@ -174,6 +174,7 @@ if ! flock -n 9; then
 fi
 
 cd "$workdir"
+command -v timeout >/dev/null
 pending_file=.finoo-upgrade-pending
 env_backup=".env.rollback-${deploy_token}"
 commit_backup=".finoo-active-commit.rollback-${deploy_token}"
@@ -431,6 +432,55 @@ restore_preserved_new_runtime() {
   preserve_new_runtime=true
 }
 
+install_finoo_smoke_helper() {
+  local container="$1"
+  local source_hash
+  local target_hash
+  if ! source_hash="$(docker run --rm --entrypoint /bin/sh "$immutable_image" -c 'sha256sum /app/scripts/smoke-auth-dashboard.mjs' | awk '{print $1}')"; then
+    return 1
+  fi
+  if [[ -z "$source_hash" ]]; then return 1; fi
+  if ! docker exec --user 0 "$container" rm -f -- /tmp/finoo-smoke-auth-dashboard.mjs; then
+    return 1
+  fi
+  if ! docker run --rm --entrypoint /bin/cat "$immutable_image" /app/scripts/smoke-auth-dashboard.mjs |
+    docker exec --user 0 -i "$container" sh -c 'umask 022; cat > /tmp/finoo-smoke-auth-dashboard.mjs'; then
+    return 1
+  fi
+  if ! target_hash="$(docker exec "$container" sha256sum /tmp/finoo-smoke-auth-dashboard.mjs | awk '{print $1}')"; then
+    return 1
+  fi
+  [[ "$target_hash" == "$source_hash" ]]
+}
+
+run_finoo_admin_smoke() {
+  local container="$1"
+  timeout --signal=TERM --kill-after=5s 20s aws secretsmanager get-secret-value \
+    --region "$aws_region" \
+    --secret-id "$finoo_admin_secret_id" \
+    --cli-connect-timeout 5 \
+    --cli-read-timeout 10 \
+    --query SecretString \
+    --output text |
+    timeout --signal=TERM --kill-after=5s 30s docker exec -i \
+      -e SMOKE_TEST_EMAIL=admin@finoo.om.they.dev \
+      -e 'EXPECTED_ROLE=Finoo Superadmin' \
+      -e "SMOKE_TEST_TENANT_ID=${finoo_tenant_id}" \
+      -e REQUIRE_TENANT_SCOPE=true \
+      -e SMOKE_REQUEST_TIMEOUT_MS=5000 \
+      -e BASE_URL=http://127.0.0.1:3000 \
+      "$container" sh -lc 'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /tmp/finoo-smoke-auth-dashboard.mjs --run-smoke'
+}
+
+wait_for_finoo_admin_smoke() {
+  local container="$1"
+  for attempt in $(seq 1 6); do
+    if run_finoo_admin_smoke "$container"; then return 0; fi
+    sleep 65
+  done
+  return 1
+}
+
 restore_old() {
   local failed=false
   local current_id=""
@@ -513,19 +563,12 @@ restore_old() {
 
 verify_stage_cleanup_admin_credential() {
   if [[ "$admin_credential_attempted" != true ]]; then return 0; fi
-  docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"
-  aws secretsmanager get-secret-value \
-    --region "$aws_region" \
-    --secret-id "$finoo_admin_secret_id" \
-    --query SecretString \
-    --output text |
-    docker exec -i \
-      -e SMOKE_TEST_EMAIL=admin@finoo.om.they.dev \
-      -e 'EXPECTED_ROLE=Finoo Superadmin' \
-      -e "SMOKE_TEST_TENANT_ID=${finoo_tenant_id}" \
-      -e REQUIRE_TENANT_SCOPE=true \
-      -e BASE_URL=http://127.0.0.1:3000 \
-      "$active_container" sh -lc 'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /tmp/finoo-smoke-auth-dashboard.mjs --run-smoke'
+  if ! install_finoo_smoke_helper "$active_container"; then
+    return 1
+  fi
+  if ! wait_for_finoo_admin_smoke "$active_container"; then
+    return 1
+  fi
   echo "persistent_finoo_admin_credential_verified_during_stage_cleanup=true"
 }
 
@@ -835,22 +878,8 @@ fi
 docker rm -f "$candidate_container" >/dev/null
 candidate_created=false
 
-docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"
-run_finoo_admin_smoke() {
-  aws secretsmanager get-secret-value \
-    --region "$aws_region" \
-    --secret-id "$finoo_admin_secret_id" \
-    --query SecretString \
-    --output text |
-    docker exec -i \
-      -e SMOKE_TEST_EMAIL=admin@finoo.om.they.dev \
-      -e 'EXPECTED_ROLE=Finoo Superadmin' \
-      -e "SMOKE_TEST_TENANT_ID=${finoo_tenant_id}" \
-      -e REQUIRE_TENANT_SCOPE=true \
-      -e BASE_URL=http://127.0.0.1:3000 \
-      "$active_container" sh -lc 'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /tmp/finoo-smoke-auth-dashboard.mjs --run-smoke'
-}
-run_finoo_admin_smoke
+install_finoo_smoke_helper "$active_container"
+wait_for_finoo_admin_smoke "$active_container"
 
 if [[ "$(docker inspect --format '{{.Image}}' "$active_container")" != "$new_image_id" ]]; then
   echo "Finoo active container does not use the staged image" >&2
@@ -940,6 +969,7 @@ set -euo pipefail
 exec 9>/var/lock/finoo-demo-upgrade.lock
 flock -n 9
 cd "$workdir"
+command -v timeout >/dev/null
 pending_file=.finoo-upgrade-pending
 if [[ ! -f "$pending_file" ]]; then
   if [[ "$decision" == rollback ]]; then
@@ -994,6 +1024,53 @@ if len(matches) != 1:
     raise SystemExit('Expected exactly one FINOO identity count-only JSON report')
 print(json.dumps(matches[0], separators=(',', ':'), sort_keys=True))
 PY
+}
+
+install_finoo_smoke_helper() {
+  local container="$1"
+  local source_hash
+  local target_hash
+  if ! source_hash="$(docker run --rm --entrypoint /bin/sh "$immutable_image" -c 'sha256sum /app/scripts/smoke-auth-dashboard.mjs' | awk '{print $1}')"; then
+    return 1
+  fi
+  if [[ -z "$source_hash" ]]; then return 1; fi
+  if ! docker exec --user 0 "$container" rm -f -- /tmp/finoo-smoke-auth-dashboard.mjs; then
+    return 1
+  fi
+  if ! docker run --rm --entrypoint /bin/cat "$immutable_image" /app/scripts/smoke-auth-dashboard.mjs |
+    docker exec --user 0 -i "$container" sh -c 'umask 022; cat > /tmp/finoo-smoke-auth-dashboard.mjs'; then
+    return 1
+  fi
+  if ! target_hash="$(docker exec "$container" sha256sum /tmp/finoo-smoke-auth-dashboard.mjs | awk '{print $1}')"; then
+    return 1
+  fi
+  [[ "$target_hash" == "$source_hash" ]]
+}
+run_finoo_admin_smoke() {
+  local container="$1"
+  timeout --signal=TERM --kill-after=5s 20s aws secretsmanager get-secret-value \
+    --region "$aws_region" \
+    --secret-id "$finoo_admin_secret_id" \
+    --cli-connect-timeout 5 \
+    --cli-read-timeout 10 \
+    --query SecretString \
+    --output text |
+    timeout --signal=TERM --kill-after=5s 30s docker exec -i \
+      -e SMOKE_TEST_EMAIL=admin@finoo.om.they.dev \
+      -e 'EXPECTED_ROLE=Finoo Superadmin' \
+      -e "SMOKE_TEST_TENANT_ID=${finoo_tenant_id}" \
+      -e REQUIRE_TENANT_SCOPE=true \
+      -e SMOKE_REQUEST_TIMEOUT_MS=5000 \
+      -e BASE_URL=http://127.0.0.1:3000 \
+      "$container" sh -lc 'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /tmp/finoo-smoke-auth-dashboard.mjs --run-smoke'
+}
+wait_for_finoo_admin_smoke() {
+  local container="$1"
+  for attempt in $(seq 1 6); do
+    if run_finoo_admin_smoke "$container"; then return 0; fi
+    sleep 65
+  done
+  return 1
 }
 restore_staged_ses_credentials() {
   if [[ "$ses_credentials_staged" != true ]]; then return 0; fi
@@ -1131,19 +1208,12 @@ restore_preserved_new_runtime() {
 }
 verify_persistent_finoo_admin_credential() {
   if [[ "$admin_credential_attempted" != true ]]; then return 0; fi
-  docker cp scripts/smoke-auth-dashboard.mjs "${active_container}:/tmp/finoo-smoke-auth-dashboard.mjs"
-  aws secretsmanager get-secret-value \
-    --region "$aws_region" \
-    --secret-id "$finoo_admin_secret_id" \
-    --query SecretString \
-    --output text |
-    docker exec -i \
-      -e SMOKE_TEST_EMAIL=admin@finoo.om.they.dev \
-      -e 'EXPECTED_ROLE=Finoo Superadmin' \
-      -e "SMOKE_TEST_TENANT_ID=${finoo_tenant_id}" \
-      -e REQUIRE_TENANT_SCOPE=true \
-      -e BASE_URL=http://127.0.0.1:3000 \
-      "$active_container" sh -lc 'IFS= read -r SMOKE_TEST_PASSWORD; export SMOKE_TEST_PASSWORD; exec node /tmp/finoo-smoke-auth-dashboard.mjs --run-smoke'
+  if ! install_finoo_smoke_helper "$active_container"; then
+    return 1
+  fi
+  if ! wait_for_finoo_admin_smoke "$active_container"; then
+    return 1
+  fi
   echo "persistent_finoo_admin_credential_verified_after_rollback=true"
 }
 if [[ "$decision" == finalize ]]; then

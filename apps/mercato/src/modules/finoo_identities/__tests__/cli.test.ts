@@ -36,9 +36,9 @@ describe('FINOO identity legacy CLI argument gates', () => {
       '--maintenance-window',
       '--confirm', 'THOM-108',
     ]
-    expect(parseLegacyCutoverArgs(valid, 'cutover')).toEqual({ tenantId, organizationId, action: 'cutover' })
-    expect(parseLegacyCutoverArgs(valid.filter((value) => value !== '--maintenance-window'), 'cutover')).toBeNull()
-    expect(parseLegacyCutoverArgs(valid.map((value) => value === 'THOM-108' ? 'wrong' : value), 'rollback')).toBeNull()
+    expect(parseLegacyCutoverArgs(valid)).toEqual({ tenantId, organizationId })
+    expect(parseLegacyCutoverArgs(valid.filter((value) => value !== '--maintenance-window'))).toBeNull()
+    expect(parseLegacyCutoverArgs(valid.map((value) => value === 'THOM-108' ? 'wrong' : value))).toBeNull()
   })
 
   it('allows purge dry-run but gates purge apply with the explicit token', () => {

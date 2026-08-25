@@ -196,7 +196,7 @@ export function parseLegacyVerifyArgs(args: string[]) {
   return parseScope(args)
 }
 
-export function parseLegacyCutoverArgs(args: string[], action: 'cutover' | 'rollback') {
+export function parseLegacyCutoverArgs(args: string[]) {
   const allowed = new Set(['--tenant', '--organization', '--apply', '--maintenance-window', '--confirm'])
   const flags = args.filter((argument) => argument.startsWith('--'))
   const scope = parseScope(args)
@@ -209,7 +209,7 @@ export function parseLegacyCutoverArgs(args: string[], action: 'cutover' | 'roll
     || !hasExactlyOne(args, 'organization')
     || !hasExactlyOne(args, 'confirm')
     || flags.some((flag) => !allowed.has(flag))) return null
-  return { ...scope, action }
+  return scope
 }
 
 export function parseLegacyPurgeArgs(args: string[]) {
@@ -306,7 +306,7 @@ function cutoverCommand(command: 'cutover-legacy' | 'rollback-legacy', active: b
   return {
     command,
     async run(args) {
-      const scope = parseLegacyCutoverArgs(args, active ? 'rollback' : 'cutover')
+      const scope = parseLegacyCutoverArgs(args)
       if (!scope) {
         throw new Error(`[internal] Usage: mercato finoo_identities ${command} --tenant <uuid> --organization <uuid> --apply --maintenance-window --confirm ${CONFIRMATION_TOKEN}`)
       }

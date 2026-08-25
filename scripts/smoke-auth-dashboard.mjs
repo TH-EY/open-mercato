@@ -35,6 +35,43 @@ async function readText(response) {
   }
 }
 
+function resolveRequestTimeout(env) {
+  const rawValue = env.SMOKE_REQUEST_TIMEOUT_MS || '10000'
+  if (!/^\d+$/.test(rawValue)) {
+    throw new Error('SMOKE_REQUEST_TIMEOUT_MS must be an integer between 1 and 60000')
+  }
+  const timeoutMs = Number(rawValue)
+  if (timeoutMs < 1 || timeoutMs > 60000) {
+    throw new Error('SMOKE_REQUEST_TIMEOUT_MS must be an integer between 1 and 60000')
+  }
+  return timeoutMs
+}
+
+async function fetchWithTimeout(fetchImpl, url, options, timeoutMs, readBody = false) {
+  const controller = new AbortController()
+  let timeoutId
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      controller.abort()
+      reject(new Error(`Request timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+  })
+  try {
+    return await Promise.race([
+      Promise.resolve().then(async () => {
+        const response = await fetchImpl(url, { ...options, signal: controller.signal })
+        return {
+          response,
+          text: readBody ? await readText(response) : '',
+        }
+      }),
+      timeoutPromise,
+    ])
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
 export async function runSmoke(options = {}) {
   const env = options.env ?? process.env
   const fetchImpl = options.fetch ?? globalThis.fetch
@@ -45,6 +82,7 @@ export async function runSmoke(options = {}) {
   const expectedRole = env.EXPECTED_ROLE || ''
   const tenantId = env.SMOKE_TEST_TENANT_ID || ''
   const requireTenantScope = env.REQUIRE_TENANT_SCOPE === 'true'
+  const requestTimeoutMs = resolveRequestTimeout(env)
 
   if (!email) throw new Error('Missing required environment variable: SMOKE_TEST_EMAIL')
   if (!password) throw new Error('Missing required environment variable: SMOKE_TEST_PASSWORD')
@@ -56,22 +94,21 @@ export async function runSmoke(options = {}) {
   const loginUrl = tenantId
     ? `${baseUrl}/login?tenant=${encodeURIComponent(tenantId)}`
     : `${baseUrl}/login`
-  const loginPageResponse = await fetchImpl(loginUrl, {
+  const { response: loginPageResponse } = await fetchWithTimeout(fetchImpl, loginUrl, {
     headers: { 'accept-language': 'en-US,en;q=0.9' },
-  })
+  }, requestTimeoutMs)
   if (!loginPageResponse.ok) throw new Error(`Login page returned HTTP ${loginPageResponse.status}`)
 
   const loginBody = new URLSearchParams({ email, password, remember: '0' })
   if (tenantId) loginBody.set('tenantId', tenantId)
-  const loginResponse = await fetchImpl(`${baseUrl}/api/auth/login`, {
+  const { response: loginResponse, text: loginText } = await fetchWithTimeout(fetchImpl, `${baseUrl}/api/auth/login`, {
     method: 'POST',
     headers: {
       'content-type': 'application/x-www-form-urlencoded',
       'accept-language': 'en-US,en;q=0.9',
     },
     body: loginBody,
-  })
-  const loginText = await readText(loginResponse)
+  }, requestTimeoutMs, true)
   let loginJson = null
   try {
     loginJson = loginText ? JSON.parse(loginText) : null
@@ -90,10 +127,9 @@ export async function runSmoke(options = {}) {
     throw new Error('Authenticated login did not return auth_token cookie')
   }
 
-  const profileResponse = await fetchImpl(`${baseUrl}/api/auth/profile`, {
+  const { response: profileResponse, text: profileText } = await fetchWithTimeout(fetchImpl, `${baseUrl}/api/auth/profile`, {
     headers: { cookie: cookieHeader, 'accept-language': 'en-US,en;q=0.9' },
-  })
-  const profileText = await readText(profileResponse)
+  }, requestTimeoutMs, true)
   let profile = null
   try {
     profile = profileText ? JSON.parse(profileText) : null
@@ -104,9 +140,9 @@ export async function runSmoke(options = {}) {
     throw new Error(`Authenticated profile did not prove ${expectedRole} access`)
   }
 
-  const dashboardResponse = await fetchImpl(`${baseUrl}/backend`, {
+  const { response: dashboardResponse } = await fetchWithTimeout(fetchImpl, `${baseUrl}/backend`, {
     headers: { cookie: cookieHeader, 'accept-language': 'en-US,en;q=0.9' },
-  })
+  }, requestTimeoutMs)
   if (!dashboardResponse.ok) {
     throw new Error(`Authenticated dashboard returned HTTP ${dashboardResponse.status}`)
   }
