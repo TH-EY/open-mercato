@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 import { parse } from 'yaml'
 
@@ -194,12 +196,22 @@ test('every external action is pinned to a full commit SHA', () => {
 })
 
 test('image and registry handling stays immutable and removes credentials', () => {
+  const hostPullStep = workflow.jobs.deploy.steps.find(
+    (step) => step.name === 'Pull immutable image with guaranteed host logout',
+  )
+
+  assert.ok(hostPullStep)
   assert.match(workflowSource, /imageTag=\$\{GITHUB_SHA\}/)
   assert.match(workflowSource, /repository_uri\}@\$\{image_digest\}/)
   assert.doesNotMatch(workflowSource, /(?:tags?|APP_IMAGE|image_uri)=[^\n]*:latest|:\s*latest/)
   assert.doesNotMatch(workflowSource, /docker (?:image|container|system) prune/)
-  assert.match(workflowSource, /trap logout_registry EXIT/)
-  assert.match(workflowSource, /docker logout "\$\{registry\}"/)
+  assert.match(hostPullStep.run, /docker_config_dir="\$\(mktemp -d\)"/)
+  assert.match(hostPullStep.run, /docker --config "\$\{docker_config_dir\}" logout "\$\{registry\}"/)
+  assert.match(hostPullStep.run, /docker --config "\$\{docker_config_dir\}" pull "\$\{app_image\}"/)
+  assert.match(hostPullStep.run, /rm -f -- "\$\{docker_config_dir\}\/config\.json"/)
+  assert.match(hostPullStep.run, /rmdir -- "\$\{docker_config_dir\}"/)
+  assert.match(hostPullStep.run, /trap logout_registry EXIT/)
+  assert.doesNotMatch(hostPullStep.run, /\$\{HOME\}|\$HOME/)
   assert.match(workflowSource, /Remove runner registry credentials and image artifact/)
   const buildxStep = workflow.jobs.build.steps.find((step) => step.name === 'Set up Docker Buildx')
   assert.match(buildxStep.with['driver-opts'], /^image=moby\/buildkit:[^@]+@sha256:[0-9a-f]{64}$/)
@@ -213,6 +225,90 @@ test('image and registry handling stays immutable and removes credentials', () =
   for (const serviceName of ['postgres', 'redis', 'meilisearch']) {
     assert.match(compose.services[serviceName].image, /@sha256:[0-9a-f]{64}$/)
   }
+})
+
+test('host image pull cleans isolated registry credentials when HOME is unset', (context) => {
+  const hostPullStep = workflow.jobs.deploy.steps.find(
+    (step) => step.name === 'Pull immutable image with guaranteed host logout',
+  )
+  const remoteBody = hostPullStep?.run.match(/cat <<'SSM'\n([\s\S]*?)\nSSM\n/u)?.[1]
+  assert.ok(remoteBody)
+
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'public-demo-docker-config-'))
+  const fakeBin = path.join(fixtureRoot, 'bin')
+  const dockerConfigDir = path.join(fixtureRoot, 'docker-config')
+  fs.mkdirSync(fakeBin)
+  context.after(() => fs.rmSync(fixtureRoot, { force: true, recursive: true }))
+
+  const writeExecutable = (name, source) => {
+    const target = path.join(fakeBin, name)
+    fs.writeFileSync(target, source, { mode: 0o700 })
+  }
+  writeExecutable('aws', `#!/usr/bin/env bash
+set -euo pipefail
+test "$1" = ecr
+test "$2" = get-login-password
+printf 'temporary-token\\n'
+`)
+  writeExecutable('mktemp', `#!/usr/bin/env bash
+set -euo pipefail
+test "$1" = -d
+mkdir "\${TEST_DOCKER_CONFIG_DIR}"
+printf '%s\\n' "\${TEST_DOCKER_CONFIG_DIR}"
+`)
+  writeExecutable('timeout', `#!/usr/bin/env bash
+set -euo pipefail
+shift
+exec "$@"
+`)
+  writeExecutable('docker', `#!/usr/bin/env bash
+set -euo pipefail
+config_dir=''
+if [[ "\${1:-}" = --config ]]; then
+  config_dir="$2"
+  shift 2
+fi
+command_name="$1"
+shift
+case "\${command_name}" in
+  login)
+    read -r token
+    test "\${token}" = temporary-token
+    registry="\${!#}"
+    printf '{"auths":{"%s":{}}}\\n' "\${registry}" > "\${config_dir}/config.json"
+    ;;
+  logout)
+    printf '{"auths":{}}\\n' > "\${config_dir}/config.json"
+    ;;
+  pull)
+    test "$1" = 'registry.example/openmercato-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    ;;
+  image)
+    test "$1" = inspect
+    printf '["registry.example/openmercato-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]\\n'
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`)
+
+  const { HOME: _home, ...environmentWithoutHome } = process.env
+  const result = spawnSync('bash', ['-c', `
+    set -euo pipefail
+    app_image=registry.example/openmercato-app@sha256:${'a'.repeat(64)}
+    ${remoteBody}
+  `], {
+    encoding: 'utf8',
+    env: {
+      ...environmentWithoutHome,
+      PATH: `${fakeBin}:${process.env.PATH}`,
+      TEST_DOCKER_CONFIG_DIR: dockerConfigDir,
+    },
+  })
+
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+  assert.equal(fs.existsSync(dockerConfigDir), false)
 })
 
 test('SSM runner requires one explicit instance and removes all local payload files', () => {

@@ -510,10 +510,14 @@ jobs:
             cat <<'SSM'
           set +x
           registry="${app_image%%/*}"
+          docker_config_dir="$(mktemp -d)"
+          chmod 700 "${docker_config_dir}"
           logout_registry() {
-            docker logout "${registry}" >/dev/null 2>&1 || true
-            if [[ -f "${HOME}/.docker/config.json" ]] \
-              && python3 - "${HOME}/.docker/config.json" "${registry}" <<'PY'
+            local cleanup_status=0
+            [[ -d "${docker_config_dir}" ]] || return 0
+            docker --config "${docker_config_dir}" logout "${registry}" >/dev/null 2>&1 || true
+            if [[ -f "${docker_config_dir}/config.json" ]] \
+              && python3 - "${docker_config_dir}/config.json" "${registry}" <<'PY'
           import json
           import sys
           from pathlib import Path
@@ -523,13 +527,20 @@ jobs:
           PY
             then
               echo "ECR registry credentials remain on the host after logout." >&2
-              return 1
+              cleanup_status=1
             fi
+            rm -f -- "${docker_config_dir}/config.json"
+            if ! rmdir -- "${docker_config_dir}"; then
+              echo "Unexpected files remain in the isolated Docker config directory." >&2
+              cleanup_status=1
+            fi
+            return "${cleanup_status}"
           }
           trap logout_registry EXIT
           aws ecr get-login-password --region eu-west-2 \
-            | docker login --username AWS --password-stdin "${registry}" >/dev/null
-          timeout 900 docker pull "${app_image}"
+            | docker --config "${docker_config_dir}" login \
+                --username AWS --password-stdin "${registry}" >/dev/null
+          timeout 900 docker --config "${docker_config_dir}" pull "${app_image}"
           docker image inspect "${app_image}" --format '{{json .RepoDigests}}'
           logout_registry
           trap - EXIT
