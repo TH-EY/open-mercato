@@ -267,7 +267,7 @@ COPY --from=builder /app/apps/mercato/tsconfig.json ./apps/mercato/
 COPY --from=builder /app/apps/mercato/postcss.config.mjs ./apps/mercato/
 
 # Copy generated files and other runtime necessities
-COPY --from=builder /app/apps/mercato/.mercato/generated ./apps/mercato/.mercato/generated
+COPY --chown=1001:1001 --from=builder /app/apps/mercato/.mercato/generated ./apps/mercato/.mercato/generated
 COPY --from=builder /app/apps/mercato/src ./apps/mercato/src
 COPY --from=builder /app/apps/mercato/types ./apps/mercato/types
 COPY --from=builder /app/scripts/public-demo/init-or-migrate.sh ./scripts/public-demo/init-or-migrate.sh

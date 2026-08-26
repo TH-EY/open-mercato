@@ -562,7 +562,7 @@ jobs:
           docker compose --env-file .env.public-demo -f docker-compose.public-demo.yml \
             up -d --no-build --remove-orphans --wait --wait-timeout 180 aws-credential-broker postgres redis meilisearch
           docker compose --env-file .env.public-demo -f docker-compose.public-demo.yml \
-            run --rm --no-deps bootstrap
+            run --rm --no-deps bootstrap < /dev/null
           docker compose --env-file .env.public-demo -f docker-compose.public-demo.yml \
             up -d --no-build --remove-orphans app mcp worker
           docker compose --env-file .env.public-demo -f docker-compose.public-demo.yml ps

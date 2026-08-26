@@ -438,6 +438,7 @@ test('public workflow contains references, never secret values or private infras
   assert.match(workflowSource, /chmod 600/)
   assert.match(workflowSource, /steps\.prepare-runtime\.outcome != 'skipped'/)
   assert.match(workflowSource, /Remove protected host bootstrap files/)
+  assert.match(workflowSource, /run --rm --no-deps bootstrap < \/dev\/null/)
   assert.match(workflowSource, /trap cleanup_prepare EXIT HUP INT TERM/)
   assert.match(workflowSource, /prepare_complete=1/)
   assert.match(workflowSource, /wait_for_stable_running_container/)
@@ -480,6 +481,10 @@ test('bootstrap hides credential-bearing output and records completion only afte
   assert.match(
     dockerfileSource,
     /COPY --from=builder \/app\/scripts\/public-demo\/aws-credential-broker\.mjs \.\/scripts\/public-demo\/aws-credential-broker\.mjs/,
+  )
+  assert.match(
+    dockerfileSource,
+    /COPY --chown=1001:1001 --from=builder \/app\/apps\/mercato\/\.mercato\/generated \.\/apps\/mercato\/\.mercato\/generated/,
   )
 })
 
