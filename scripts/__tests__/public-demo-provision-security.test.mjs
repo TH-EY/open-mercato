@@ -132,7 +132,7 @@ test('Compose has seven long-running services plus one secret-scoped bootstrap w
   for (const serviceName of ['app', 'worker']) {
     assert.equal(
       compose.services[serviceName].environment.AWS_CONTAINER_CREDENTIALS_FULL_URI,
-      'https://public-demo-aws-credential-broker:4790/credentials',
+      'https://public-demo-aws-credential-broker:4900/credentials',
     )
     assert.equal(
       compose.services[serviceName].environment.AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE,
@@ -171,7 +171,7 @@ test('Compose has seven long-running services plus one secret-scoped bootstrap w
   assert.deepEqual(broker.cap_drop, ['ALL'])
   assert.deepEqual(broker.security_opt, ['no-new-privileges:true'])
   assert.equal(broker.ports, undefined)
-  assert.equal(broker.environment.AWS_CREDENTIAL_BROKER_PORT, '4790')
+  assert.equal(broker.environment.AWS_CREDENTIAL_BROKER_PORT, '4900')
   assert.equal(broker.environment.AWS_CREDENTIAL_BROKER_TOKEN_FILE, '/run/aws-credential-broker/token')
   assert.equal(broker.environment.NODE_EXTRA_CA_CERTS, '/run/aws-credential-broker/ca.pem')
   for (const serviceName of longRunningApplicationServices) {
@@ -198,7 +198,7 @@ test('public workflow contains references, never secret values or private infras
   assert.match(workflowSource, /restart count.*60 seconds/)
   assert.match(workflowSource, /openssl rand -hex 32/)
   assert.match(workflowSource, /subjectAltName=DNS:public-demo-aws-credential-broker/)
-  assert.match(workflowSource, /sport = :4790/)
+  assert.match(workflowSource, /sport = :4900/)
   assert.match(workflowSource, /docker network inspect bridge/)
   assert.match(workflowSource, /MetadataOptions\.HttpTokens == "required"/)
   assert.match(workflowSource, /MetadataOptions\.HttpEndpoint == "enabled"/)

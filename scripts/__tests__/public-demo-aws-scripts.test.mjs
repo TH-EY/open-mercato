@@ -526,7 +526,7 @@ test('routing contract is exact and cannot mutate shared DNS, certificates, or s
     'public-demo.om.they.dev',
     '4787',
     '4788',
-    '4790',
+    '4900',
     '1007',
     '1008',
     '/login',
@@ -535,6 +535,7 @@ test('routing contract is exact and cannot mutate shared DNS, certificates, or s
     'LOAD_BALANCER_SECURITY_GROUP_ID',
     'LISTENER_SSL_POLICY',
     'describe-listeners',
+    'describe-listener-certificates',
     'describe-load-balancers',
     'describe-certificate',
     'describe-security-group-rules',
@@ -562,13 +563,20 @@ case "$1 $2" in
     printf '{"SecurityGroupRules":[{"IsEgress":false,"IpProtocol":"tcp","FromPort":%s,"ToPort":%s,"ReferencedGroupInfo":{"GroupId":"%s"}}]}\n' "$FAKE_INGRESS_FROM_PORT" "$FAKE_INGRESS_TO_PORT" "$FAKE_INGRESS_SOURCE"
     ;;
   "elbv2 describe-listeners")
-    printf '{"Listeners":[{"ListenerArn":"arn:test:listener","LoadBalancerArn":"arn:test:load-balancer","Protocol":"%s","Port":%s,"SslPolicy":"ELBSecurityPolicy-TLS13-1-2-2021-06","Certificates":[{"CertificateArn":"arn:test:certificate"}]}]}\n' "$FAKE_LISTENER_PROTOCOL" "$FAKE_LISTENER_PORT"
+    printf '{"Listeners":[{"ListenerArn":"arn:test:listener","LoadBalancerArn":"arn:test:load-balancer","Protocol":"%s","Port":%s,"SslPolicy":"ELBSecurityPolicy-TLS13-1-2-2021-06","Certificates":[{"CertificateArn":"arn:test:default-certificate"}]}]}\n' "$FAKE_LISTENER_PROTOCOL" "$FAKE_LISTENER_PORT"
+    ;;
+  "elbv2 describe-listener-certificates")
+    printf '%s\n' '{"Certificates":[{"CertificateArn":"arn:test:default-certificate","IsDefault":true},{"CertificateArn":"arn:test:certificate","IsDefault":false}]}'
     ;;
   "elbv2 describe-load-balancers")
     printf '%s\n' '{"LoadBalancers":[{"LoadBalancerArn":"arn:test:load-balancer","VpcId":"vpc-test","Type":"application","Scheme":"internet-facing","State":{"Code":"active"},"SecurityGroups":["sg-alb"]}]}'
     ;;
   "acm describe-certificate")
-    printf '%s\n' '{"Certificate":{"DomainName":"*.om.they.dev","SubjectAlternativeNames":["*.om.they.dev"]}}'
+    if [[ "$*" == *"default-certificate"* ]]; then
+      printf '%s\n' '{"Certificate":{"DomainName":"crm.they.dev","SubjectAlternativeNames":["crm.they.dev"]}}'
+    else
+      printf '%s\n' '{"Certificate":{"DomainName":"*.om.they.dev","SubjectAlternativeNames":["*.om.they.dev"]}}'
+    fi
     ;;
   "elbv2 describe-target-groups")
     echo 'TargetGroupNotFound' >&2
@@ -610,8 +618,8 @@ esac`)
       },
       {
         name: 'credential broker ingress',
-        env: { FAKE_INGRESS_FROM_PORT: '4787', FAKE_INGRESS_TO_PORT: '4790' },
-        error: /exposes credential broker port 4790/,
+        env: { FAKE_INGRESS_FROM_PORT: '4787', FAKE_INGRESS_TO_PORT: '4900' },
+        error: /exposes credential broker port 4900/,
       },
       {
         name: 'wildcard collision',
@@ -646,7 +654,10 @@ case "$1 $2" in
     printf '%s\n' '{"SecurityGroupRules":[{"IsEgress":false,"IpProtocol":"tcp","FromPort":4787,"ToPort":4788,"ReferencedGroupInfo":{"GroupId":"sg-alb"}}]}'
     ;;
   "elbv2 describe-listeners")
-    printf '%s\n' '{"Listeners":[{"ListenerArn":"arn:test:listener","LoadBalancerArn":"arn:test:load-balancer","Protocol":"HTTPS","Port":443,"SslPolicy":"ELBSecurityPolicy-TLS13-1-2-2021-06","Certificates":[{"CertificateArn":"arn:test:certificate"}]}]}'
+    printf '%s\n' '{"Listeners":[{"ListenerArn":"arn:test:listener","LoadBalancerArn":"arn:test:load-balancer","Protocol":"HTTPS","Port":443,"SslPolicy":"ELBSecurityPolicy-TLS13-1-2-2021-06","Certificates":[{"CertificateArn":"arn:test:default-certificate"}]}]}'
+    ;;
+  "elbv2 describe-listener-certificates")
+    printf '%s\n' '{"Certificates":[{"CertificateArn":"arn:test:default-certificate","IsDefault":true},{"CertificateArn":"arn:test:certificate","IsDefault":false}]}'
     ;;
   "elbv2 describe-load-balancers")
     printf '%s\n' '{"LoadBalancers":[{"LoadBalancerArn":"arn:test:load-balancer","VpcId":"vpc-test","Type":"application","Scheme":"internet-facing","State":{"Code":"active"},"SecurityGroups":["sg-alb"]}]}'
@@ -731,7 +742,10 @@ case "$1 $2" in
     printf '%s\n' '{"SecurityGroupRules":[{"IsEgress":false,"IpProtocol":"tcp","FromPort":4787,"ToPort":4788,"ReferencedGroupInfo":{"GroupId":"sg-alb"}}]}'
     ;;
   "elbv2 describe-listeners")
-    printf '%s\n' '{"Listeners":[{"ListenerArn":"arn:test:listener","LoadBalancerArn":"arn:test:load-balancer","Protocol":"HTTPS","Port":443,"SslPolicy":"ELBSecurityPolicy-TLS13-1-2-2021-06","Certificates":[{"CertificateArn":"arn:test:certificate"}]}]}'
+    printf '%s\n' '{"Listeners":[{"ListenerArn":"arn:test:listener","LoadBalancerArn":"arn:test:load-balancer","Protocol":"HTTPS","Port":443,"SslPolicy":"ELBSecurityPolicy-TLS13-1-2-2021-06","Certificates":[{"CertificateArn":"arn:test:default-certificate"}]}]}'
+    ;;
+  "elbv2 describe-listener-certificates")
+    printf '%s\n' '{"Certificates":[{"CertificateArn":"arn:test:default-certificate","IsDefault":true},{"CertificateArn":"arn:test:certificate","IsDefault":false}]}'
     ;;
   "elbv2 describe-load-balancers")
     printf '%s\n' '{"LoadBalancers":[{"LoadBalancerArn":"arn:test:load-balancer","VpcId":"vpc-test","Type":"application","Scheme":"internet-facing","State":{"Code":"active"},"SecurityGroups":["sg-alb"]}]}'

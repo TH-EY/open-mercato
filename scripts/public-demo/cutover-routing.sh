@@ -38,7 +38,7 @@ app_target_group_name="om-demo-public-demo"
 mcp_target_group_name="om-demo-public-demo-mcp"
 app_port=4787
 mcp_port=4788
-credential_broker_port=4790
+credential_broker_port=4900
 app_priority=1008
 mcp_priority=1007
 public_host="public-demo.om.they.dev"
@@ -301,6 +301,10 @@ load_state() {
       return 1
     }
 
+  listener_certificates_json="$(aws elbv2 describe-listener-certificates \
+    --region "${AWS_REGION}" \
+    --listener-arn "${LISTENER_ARN}" \
+    --output json)"
   while IFS= read -r certificate_arn; do
     certificate_file="${temporary_directory}/certificate-$(( ${#certificate_files[@]} + 1 )).json"
     aws acm describe-certificate \
@@ -308,7 +312,11 @@ load_state() {
       --certificate-arn "${certificate_arn}" \
       --output json >"${certificate_file}"
     certificate_files+=("${certificate_file}")
-  done < <(jq -r '.Listeners[0].Certificates[].CertificateArn' <<<"${listener_json}")
+  done < <(jq -r '.Certificates[].CertificateArn' <<<"${listener_certificates_json}" | sort -u)
+  [[ "${#certificate_files[@]}" -gt 0 ]] || {
+    echo "The HTTPS listener has no attached certificates." >&2
+    return 1
+  }
   python3 - "${public_host}" "${certificate_files[@]}" <<'PY' || {
 import json
 import sys

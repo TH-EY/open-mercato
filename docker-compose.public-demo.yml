@@ -64,7 +64,7 @@ services:
       AWS_REGION: ${AWS_REGION:-eu-west-2}
       AWS_SES_REGION: ${AWS_SES_REGION:-eu-west-2}
       AWS_EC2_METADATA_DISABLED: "true"
-      AWS_CONTAINER_CREDENTIALS_FULL_URI: https://public-demo-aws-credential-broker:4790/credentials
+      AWS_CONTAINER_CREDENTIALS_FULL_URI: https://public-demo-aws-credential-broker:4900/credentials
       AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE: /run/aws-credential-broker/token
       NODE_EXTRA_CA_CERTS: /run/aws-credential-broker/ca.pem
       NEXT_PUBLIC_UPGRADE_ACTIONS_ENABLED: "false"
@@ -152,7 +152,7 @@ services:
       AWS_REGION: ${AWS_REGION:-eu-west-2}
       AWS_SES_REGION: ${AWS_SES_REGION:-eu-west-2}
       AWS_EC2_METADATA_DISABLED: "true"
-      AWS_CONTAINER_CREDENTIALS_FULL_URI: https://public-demo-aws-credential-broker:4790/credentials
+      AWS_CONTAINER_CREDENTIALS_FULL_URI: https://public-demo-aws-credential-broker:4900/credentials
       AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE: /run/aws-credential-broker/token
       NODE_EXTRA_CA_CERTS: /run/aws-credential-broker/ca.pem
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?OPENROUTER_API_KEY must be set}
@@ -271,7 +271,7 @@ services:
       AWS_REGION: ${AWS_REGION:-eu-west-2}
       AWS_CREDENTIAL_BROKER_ROLE_ARN: ${AWS_CREDENTIAL_BROKER_ROLE_ARN:?AWS_CREDENTIAL_BROKER_ROLE_ARN must be set}
       AWS_CREDENTIAL_BROKER_BIND_ADDRESS: ${AWS_CREDENTIAL_BROKER_BIND_ADDRESS:?AWS_CREDENTIAL_BROKER_BIND_ADDRESS must be set}
-      AWS_CREDENTIAL_BROKER_PORT: "4790"
+      AWS_CREDENTIAL_BROKER_PORT: "4900"
       AWS_CREDENTIAL_BROKER_TOKEN_FILE: /run/aws-credential-broker/token
       AWS_CREDENTIAL_BROKER_TLS_KEY_FILE: /run/aws-credential-broker/server-key.pem
       AWS_CREDENTIAL_BROKER_TLS_CERT_FILE: /run/aws-credential-broker/server-cert.pem

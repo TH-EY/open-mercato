@@ -5,7 +5,7 @@ import { createServer, get as httpsGet } from 'node:https'
 import { pathToFileURL } from 'node:url'
 
 const DEFAULT_PATH = '/credentials'
-const DEFAULT_PORT = 4790
+const DEFAULT_PORT = 4900
 const DEFAULT_REFRESH_WINDOW_MS = 5 * 60 * 1000
 const DEFAULT_STS_TIMEOUT_MS = 5_000
 

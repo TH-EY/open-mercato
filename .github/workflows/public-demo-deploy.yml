@@ -226,10 +226,10 @@ jobs:
             fi
           done
 
-          broker_listener="$(ss -H -ltn 'sport = :4790' || true)"
+          broker_listener="$(ss -H -ltn 'sport = :4900' || true)"
           broker_container="$(docker ps --filter name='^/openmercato-public-demo-aws-credential-broker$' --format '{{.Names}}')"
           if [[ -n "${broker_listener}" && "${broker_container}" != "openmercato-public-demo-aws-credential-broker" ]]; then
-            echo "Host port 4790 is already owned outside the public-demo namespace." >&2
+            echo "Host port 4900 is already owned outside the public-demo namespace." >&2
             exit 1
           fi
 
