@@ -380,6 +380,27 @@ test('Compose has seven long-running services plus one secret-scoped bootstrap w
     /chown -R 1001:1001 \/tmp\/init-marker \/app\/apps\/mercato\/storage \/run\/mcp-shared \/app\/apps\/mercato\/\.mercato\/generated \/app\/node_modules\/\.cache/,
   )
   assert.doesNotMatch(bootstrapCommand, /chown -R 1001:1001 \/app(?:\s|$)/)
+  assert.match(bootstrapCommand, /mkdir -p \/run\/public-demo-bootstrap/)
+  assert.match(bootstrapCommand, /chmod 700 \/run\/public-demo-bootstrap/)
+  assert.match(bootstrapCommand, /source_modes_file=\/run\/public-demo-bootstrap\/db-source-directory-modes/)
+  assert.match(
+    bootstrapCommand,
+    /find \/app\/packages \/app\/apps\/mercato\/src\/modules -type f \\\( -name entities\.ts -o -name schema\.ts \\\) -exec dirname \{\} \\\;/,
+  )
+  assert.match(bootstrapCommand, /chmod 1777 "\$\$\{source_directory\}"/)
+  assert.match(bootstrapCommand, /trap restore_db_source_modes EXIT HUP INT TERM/)
+  assert.match(bootstrapCommand, /chmod "\$\$\{source_mode\}" "\$\$\{source_directory\}"/)
+  assert.ok(
+    bootstrapCommand.indexOf('trap restore_db_source_modes EXIT HUP INT TERM') <
+      bootstrapCommand.indexOf('chmod 1777 "$${source_directory}"'),
+  )
+  assert.match(bootstrapCommand, /if \[ ! -s "\$\$\{source_modes_file\}" \]; then/)
+  const explicitRestoreIndex = bootstrapCommand.lastIndexOf('\nrestore_db_source_modes\n')
+  assert.notEqual(explicitRestoreIndex, -1)
+  assert.ok(
+    explicitRestoreIndex <
+      bootstrapCommand.indexOf('unset OM_INIT_SUPERADMIN_PASSWORD'),
+  )
   assert.match(bootstrapCommand, /export HOME=\/home\/omuser/)
   assert.match(bootstrapCommand, /scripts\/public-demo\/init-or-migrate\.sh/)
   assert.match(bootstrapCommand, /su -p omuser/)

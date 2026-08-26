@@ -298,11 +298,38 @@ services:
       - |
         mkdir -p /app/node_modules/.cache
         chown -R 1001:1001 /tmp/init-marker /app/apps/mercato/storage /run/mcp-shared /app/apps/mercato/.mercato/generated /app/node_modules/.cache
+        mkdir -p /run/public-demo-bootstrap
+        chmod 700 /run/public-demo-bootstrap
+        source_modes_file=/run/public-demo-bootstrap/db-source-directory-modes
+        : > "$${source_modes_file}"
+        chmod 600 "$${source_modes_file}"
+        restore_db_source_modes() {
+          if [ ! -f "$${source_modes_file}" ]; then
+            return 0
+          fi
+          while IFS="$$(printf '\t')" read -r source_mode source_directory; do
+            if [ -n "$${source_directory}" ]; then
+              chmod "$${source_mode}" "$${source_directory}"
+            fi
+          done < "$${source_modes_file}"
+          rm -f "$${source_modes_file}"
+        }
+        trap restore_db_source_modes EXIT HUP INT TERM
+        find /app/packages /app/apps/mercato/src/modules -type f \( -name entities.ts -o -name schema.ts \) -exec dirname {} \; | sort -u | while IFS= read -r source_directory; do
+          source_mode="$$(stat -c '%a' "$${source_directory}")"
+          printf '%s\t%s\n' "$${source_mode}" "$${source_directory}" >> "$${source_modes_file}"
+          chmod 1777 "$${source_directory}"
+        done
+        if [ ! -s "$${source_modes_file}" ]; then
+          echo "Public-demo bootstrap found no database source directories." >&2
+          exit 1
+        fi
         export HOME=/home/omuser
         export OM_INIT_SUPERADMIN_PASSWORD="$$(tr -d '\r\n' < /run/secrets/public_demo_superadmin_password)"
         export OM_INIT_ADMIN_PASSWORD="$$(tr -d '\r\n' < /run/secrets/public_demo_admin_password)"
         export OM_INIT_EMPLOYEE_PASSWORD="$$(tr -d '\r\n' < /run/secrets/public_demo_employee_password)"
         su -p omuser -c 'sh /app/scripts/public-demo/init-or-migrate.sh'
+        restore_db_source_modes
         unset OM_INIT_SUPERADMIN_PASSWORD OM_INIT_ADMIN_PASSWORD OM_INIT_EMPLOYEE_PASSWORD
     working_dir: /app/apps/mercato
     volumes:
