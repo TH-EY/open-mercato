@@ -11,6 +11,7 @@ const privateSearchBlockedHosts = [
   'manoj.om.they.dev',
   'om.they.dev',
   'preview-epc.om.they.dev',
+  'public-demo.om.they.dev',
 ]
 
 const contentSecurityPolicy = [

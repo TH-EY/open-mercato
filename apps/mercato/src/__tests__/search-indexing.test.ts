@@ -12,6 +12,7 @@ describe('apps/mercato search indexing headers', () => {
       'manoj.om.they.dev',
       'om.they.dev',
       'preview-epc.om.they.dev',
+      'public-demo.om.they.dev',
     ]
     const configuredHostPatterns = rules
       .flatMap((rule) => rule.has ?? [])

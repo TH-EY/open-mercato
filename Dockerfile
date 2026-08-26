@@ -1,4 +1,4 @@
-FROM node:24-alpine AS builder
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS builder
 
 ARG NEXT_PUBLIC_DOCUMENTS_COLLAB_URL
 
@@ -82,7 +82,7 @@ RUN yarn build
 #
 # TURBO_CACHE_DIR rides inside node_modules so the turbo cache travels with
 # the seeded volume and `yarn build:packages` at boot becomes cache hits.
-FROM node:24-alpine AS dev-build
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS dev-build
 
 ENV NODE_ENV=development     NEXT_TELEMETRY_DISABLED=1     TURBO_CACHE_DIR=/app/node_modules/.cache/turbo
 
@@ -146,7 +146,7 @@ RUN yarn build:packages && yarn generate && yarn build:packages
 # Dev stage: lean runtime + /opt/prebuilt artifacts for volume seeding.
 # Stage-to-stage COPY keeps a SINGLE copy of node_modules in the final image
 # (moving it within one stage would double the layer size).
-FROM node:24-alpine AS dev
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS dev
 
 ENV NODE_ENV=development     NEXT_TELEMETRY_DISABLED=1     TURBO_CACHE_DIR=/app/node_modules/.cache/turbo
 
@@ -192,7 +192,7 @@ EXPOSE 3000 4101
 CMD ["/bin/sh", "/app/docker/scripts/dev-entrypoint.sh"]
 
 # Production stage
-FROM node:24-alpine AS runner
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS runner
 
 ARG CONTAINER_PORT=3000
 ARG DOCUMENTS_COLLAB_PORT=4101
@@ -270,6 +270,9 @@ COPY --from=builder /app/apps/mercato/postcss.config.mjs ./apps/mercato/
 COPY --from=builder /app/apps/mercato/.mercato/generated ./apps/mercato/.mercato/generated
 COPY --from=builder /app/apps/mercato/src ./apps/mercato/src
 COPY --from=builder /app/apps/mercato/types ./apps/mercato/types
+COPY --from=builder /app/scripts/public-demo/init-or-migrate.sh ./scripts/public-demo/init-or-migrate.sh
+COPY --from=builder /app/scripts/public-demo/bootstrap-state.mjs ./scripts/public-demo/bootstrap-state.mjs
+COPY --from=builder /app/scripts/public-demo/aws-credential-broker.mjs ./scripts/public-demo/aws-credential-broker.mjs
 
 # Copy runtime configuration files
 COPY --from=builder /app/newrelic.js ./
@@ -281,6 +284,7 @@ COPY docker/scripts/mcp-entrypoint.sh /app/docker/scripts/mcp-entrypoint.sh
 RUN chmod +x /app/docker/scripts/railway-entrypoint.sh
 RUN chmod +x /app/docker/scripts/init-or-migrate.sh
 RUN chmod +x /app/docker/scripts/mcp-entrypoint.sh
+RUN chmod +x /app/scripts/public-demo/init-or-migrate.sh
 
 # Prepare storage directory for Railway volume mount
 RUN mkdir -p /app/apps/mercato/storage

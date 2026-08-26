@@ -1,0 +1,738 @@
+name: Deploy public-demo.om.they.dev
+
+on:
+  push:
+    branches:
+      - feat/THOM-113-public-demo
+
+concurrency:
+  group: public-demo-om-they-dev-deploy
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  AWS_REGION: eu-west-2
+  ECR_REPOSITORY: openmercato-app
+  EXPECTED_REPOSITORY: TH-EY/open-mercato
+  EXPECTED_REF: refs/heads/feat/THOM-113-public-demo
+
+jobs:
+  build:
+    name: Build immutable candidate
+    if: github.repository == 'TH-EY/open-mercato' && github.ref == 'refs/heads/feat/THOM-113-public-demo'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Guard repository and ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = "${EXPECTED_REPOSITORY}"
+          test "${GITHUB_REF}" = "${EXPECTED_REF}"
+          test -n "${GITHUB_SHA}"
+
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify checkout identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(git status --short)" = ""
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        with:
+          driver-opts: image=moby/buildkit:buildx-stable-1@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+
+      - name: Build candidate without cloud credentials
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: false
+          tags: public-demo-candidate:${{ github.sha }}
+          outputs: type=docker,dest=/tmp/public-demo-image.tar
+
+      - name: Bind image artifact digest
+        shell: bash
+        run: sha256sum /tmp/public-demo-image.tar > /tmp/public-demo-image.tar.sha256
+
+      - name: Upload candidate artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: public-demo-image-${{ github.sha }}
+          path: |
+            /tmp/public-demo-image.tar
+            /tmp/public-demo-image.tar.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  deploy:
+    name: Push and stage approved candidate
+    needs: build
+    if: >-
+      github.repository == 'TH-EY/open-mercato' &&
+      github.ref == 'refs/heads/feat/THOM-113-public-demo' &&
+      vars.PUBLIC_DEMO_APPROVED_SHA != '' &&
+      vars.PUBLIC_DEMO_APPROVED_SHA == github.sha
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+
+    steps:
+      - name: Guard approved repository, ref, and SHA
+        shell: bash
+        env:
+          APPROVED_SHA: ${{ vars.PUBLIC_DEMO_APPROVED_SHA }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = "${EXPECTED_REPOSITORY}"
+          test "${GITHUB_REF}" = "${EXPECTED_REF}"
+          test -n "${APPROVED_SHA}"
+          test "${GITHUB_SHA}" = "${APPROVED_SHA}"
+
+      - name: Checkout exact approved candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify checkout identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(git status --short)" = ""
+
+      - name: Download exact candidate artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: public-demo-image-${{ github.sha }}
+          path: /tmp
+
+      - name: Verify image artifact digest
+        shell: bash
+        working-directory: /tmp
+        run: sha256sum --check public-demo-image.tar.sha256
+
+      - name: Configure exact-ref AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ secrets.AWS_PUBLIC_DEMO_DEPLOY_ROLE_ARN }}
+          role-session-name: public-demo-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Verify AWS target and host availability
+        shell: bash
+        env:
+          INSTANCE_ID: ${{ secrets.PUBLIC_DEMO_INSTANCE_ID }}
+        run: |
+          set -euo pipefail
+          test -n "${INSTANCE_ID}"
+          caller_account="$(aws sts get-caller-identity --query Account --output text)"
+          role_account="$(cut -d: -f5 <<<"${{ secrets.AWS_PUBLIC_DEMO_DEPLOY_ROLE_ARN }}")"
+          test "${caller_account}" = "${role_account}"
+          instance_json="$(aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --output json)"
+          jq -e '
+            .Reservations | length == 1 and
+            .[0].Instances | length == 1 and
+            .[0].Instances[0].State.Name == "running" and
+            .[0].Instances[0].MetadataOptions.HttpTokens == "required" and
+            .[0].Instances[0].MetadataOptions.HttpEndpoint == "enabled" and
+            .[0].Instances[0].MetadataOptions.HttpPutResponseHopLimit == 1 and
+            .[0].Instances[0].MetadataOptions.State == "applied"
+          ' <<<"${instance_json}" >/dev/null
+          ping_status="$(aws ssm describe-instance-information \
+            --region "${AWS_REGION}" \
+            --filters "Key=InstanceIds,Values=${INSTANCE_ID}" \
+            --query 'InstanceInformationList[0].PingStatus' \
+            --output text)"
+          test "${ping_status}" = "Online"
+
+      - name: Login to the existing ECR registry
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - name: Push immutable candidate tag
+        id: image
+        shell: bash
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          set -euo pipefail
+          test -n "${REGISTRY}"
+          repository_uri="$(aws ecr describe-repositories \
+            --region "${AWS_REGION}" \
+            --repository-names "${ECR_REPOSITORY}" \
+            --query 'repositories[0].repositoryUri' \
+            --output text)"
+          test "${repository_uri}" = "${REGISTRY}/${ECR_REPOSITORY}"
+          docker load --input /tmp/public-demo-image.tar
+          tagged_image="${repository_uri}:${GITHUB_SHA}"
+          docker tag "public-demo-candidate:${GITHUB_SHA}" "${tagged_image}"
+          docker push "${tagged_image}"
+          image_digest="$(aws ecr describe-images \
+            --region "${AWS_REGION}" \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=${GITHUB_SHA}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          [[ "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "image_uri=${repository_uri}@${image_digest}" >> "${GITHUB_OUTPUT}"
+          echo "image_digest=${image_digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Preflight isolated host namespace
+        shell: bash
+        env:
+          INSTANCE_ID: ${{ secrets.PUBLIC_DEMO_INSTANCE_ID }}
+          SSM_STEP_NAME: Preflight isolated public-demo namespace
+          SSM_TIMEOUT_SECONDS: 240
+        run: |
+          bash scripts/public-demo/ssm-run-step.sh <<'SSM'
+          set +x
+          required_commands=(aws curl docker git openssl python3 ss)
+          for command_name in "${required_commands[@]}"; do
+            command -v "${command_name}" >/dev/null
+          done
+
+          minimum_available_gb=8
+          available_kb="$(df -Pk / | awk 'NR == 2 { print $4 }')"
+          available_gb=$((available_kb / 1024 / 1024))
+          if ((available_gb < minimum_available_gb)); then
+            echo "Insufficient root filesystem rollback margin: ${available_gb}GB available." >&2
+            exit 1
+          fi
+
+          for port in 4787 4788; do
+            listeners="$(docker ps --format '{{.Ports}}' | grep -E "(^|[^0-9])${port}->" || true)"
+            if [[ -n "${listeners}" ]] && ! docker ps --format '{{.Names}} {{.Ports}}' | grep -q "^openmercato-public-demo-.*${port}->"; then
+              echo "Host port ${port} is already owned outside the public-demo namespace." >&2
+              exit 1
+            fi
+          done
+
+          broker_listener="$(ss -H -ltn 'sport = :4790' || true)"
+          broker_container="$(docker ps --filter name='^/openmercato-public-demo-aws-credential-broker$' --format '{{.Names}}')"
+          if [[ -n "${broker_listener}" && "${broker_container}" != "openmercato-public-demo-aws-credential-broker" ]]; then
+            echo "Host port 4790 is already owned outside the public-demo namespace." >&2
+            exit 1
+          fi
+
+          echo "Preflight passed with ${available_gb}GB available and no foreign port collision."
+          SSM
+
+      - name: Prepare exact checkout and protected runtime config
+        id: prepare-runtime
+        shell: bash
+        env:
+          APP_IMAGE: ${{ steps.image.outputs.image_uri }}
+          INSTANCE_ID: ${{ secrets.PUBLIC_DEMO_INSTANCE_ID }}
+          OPENROUTER_SECRET_ID: ${{ secrets.PUBLIC_DEMO_OPENROUTER_SECRET_ID }}
+          WORKLOAD_ROLE_ARN: ${{ secrets.AWS_PUBLIC_DEMO_WORKLOAD_ROLE_ARN }}
+          SSM_STEP_NAME: Prepare public-demo checkout and runtime config
+          SSM_TIMEOUT_SECONDS: 360
+        run: |
+          {
+            printf 'app_image=%q\n' "${APP_IMAGE}"
+            printf 'deployment_sha=%q\n' "${GITHUB_SHA}"
+            printf 'source_ref=%q\n' "${EXPECTED_REF}"
+            printf 'openrouter_secret_id=%q\n' "${OPENROUTER_SECRET_ID}"
+            printf 'workload_role_arn=%q\n' "${WORKLOAD_ROLE_ARN}"
+            cat <<'SSM'
+          set +x
+          umask 077
+          workdir=/opt/openmercato-public-demo
+          repo_url=https://github.com/TH-EY/open-mercato.git
+          source_branch="${source_ref#refs/heads/}"
+
+          if [[ -e "${workdir}" && ! -d "${workdir}/.git" ]]; then
+            echo "Refusing to replace non-Git path ${workdir}." >&2
+            exit 1
+          fi
+          if [[ ! -d "${workdir}/.git" ]]; then
+            git clone --no-checkout "${repo_url}" "${workdir}"
+          fi
+
+          git -C "${workdir}" remote set-url origin "${repo_url}"
+          git -C "${workdir}" fetch origin "+${source_ref}:refs/remotes/origin/${source_branch}" --prune
+          remote_sha="$(git -C "${workdir}" rev-parse "refs/remotes/origin/${source_branch}")"
+          test "${remote_sha}" = "${deployment_sha}"
+          git -C "${workdir}" checkout -B "${source_branch}" "${deployment_sha}"
+          git -C "${workdir}" reset --hard "${deployment_sha}"
+          git -C "${workdir}" clean -fdx -e .env.public-demo -e .credential-broker
+          secrets_dir="${workdir}/.secrets"
+          install -d -m 700 "${secrets_dir}"
+          broker_root="${workdir}/.credential-broker"
+          broker_server_dir="${broker_root}/server"
+          broker_client_dir="${broker_root}/client"
+          broker_created=0
+          broker_temporary=""
+          runtime_file=""
+          prepare_complete=0
+          cleanup_prepare() {
+            if [[ "${prepare_complete}" -ne 1 ]]; then
+              rm -f "${workdir}/.env.public-demo"
+              if [[ -d "${secrets_dir}" ]]; then
+                find "${secrets_dir}" -type f -delete
+                rmdir "${secrets_dir}" 2>/dev/null || true
+              fi
+              if [[ "${broker_created}" -eq 1 && -d "${broker_root}" ]]; then
+                find "${broker_root}" -type f -delete
+                find "${broker_root}" -depth -type d -empty -delete
+              fi
+              if [[ -n "${broker_temporary}" && -d "${broker_temporary}" ]]; then
+                find "${broker_temporary}" -type f -delete
+                find "${broker_temporary}" -depth -type d -empty -delete
+              fi
+            fi
+            if [[ -n "${runtime_file}" ]]; then
+              rm -f "${runtime_file}"
+            fi
+          }
+          trap cleanup_prepare EXIT HUP INT TERM
+
+          parameter_value() {
+            aws ssm get-parameter \
+              --region eu-west-2 \
+              --name "$1" \
+              --with-decryption \
+              --query Parameter.Value \
+              --output text
+          }
+
+          secret_value() {
+            aws secretsmanager get-secret-value \
+              --region eu-west-2 \
+              --secret-id "$1" \
+              --query SecretString \
+              --output text
+          }
+
+          write_parameter_file() {
+            local parameter_name="$1"
+            local target_file="$2"
+            local temporary_file
+            temporary_file="$(mktemp "${secrets_dir}/.parameter.XXXXXX")"
+            aws ssm get-parameter \
+              --region eu-west-2 \
+              --name "${parameter_name}" \
+              --with-decryption \
+              --query Parameter.Value \
+              --output text > "${temporary_file}"
+            python3 - "${temporary_file}" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          value = Path(sys.argv[1]).read_text(encoding="utf-8").rstrip("\r\n")
+          if not re.fullmatch(r"[A-Za-z0-9._~-]+", value):
+              raise SystemExit("protected parameter is not a single URL-safe token")
+          Path(sys.argv[1]).write_text(value + "\n", encoding="utf-8")
+          PY
+            chmod 600 "${temporary_file}"
+            mv "${temporary_file}" "${target_file}"
+          }
+
+          require_env_token() {
+            local variable_name="$1"
+            local variable_value="$2"
+            if [[ ! "${variable_value}" =~ ^[A-Za-z0-9._~-]+$ ]]; then
+              echo "${variable_name} is not a single URL-safe environment token." >&2
+              exit 1
+            fi
+          }
+
+          if [[ ! "${workload_role_arn}" =~ ^arn:(aws|aws-us-gov|aws-cn):iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$ ]]; then
+            echo "The workload role ARN is invalid." >&2
+            exit 1
+          fi
+
+          broker_expected_files=(
+            "${broker_server_dir}/server-key.pem"
+            "${broker_server_dir}/server-cert.pem"
+            "${broker_server_dir}/ca.pem"
+            "${broker_server_dir}/token"
+            "${broker_client_dir}/ca.pem"
+            "${broker_client_dir}/token"
+          )
+          if [[ ! -e "${broker_root}" ]]; then
+            broker_temporary="$(mktemp -d "${workdir}/.credential-broker.tmp.XXXXXX")"
+            install -d -m 700 "${broker_temporary}/server" "${broker_temporary}/client"
+            openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 397 \
+              -subj '/CN=public-demo-aws-credential-broker' \
+              -addext 'subjectAltName=DNS:public-demo-aws-credential-broker' \
+              -keyout "${broker_temporary}/server/server-key.pem" \
+              -out "${broker_temporary}/server/server-cert.pem" >/dev/null 2>&1
+            cp "${broker_temporary}/server/server-cert.pem" "${broker_temporary}/server/ca.pem"
+            cp "${broker_temporary}/server/server-cert.pem" "${broker_temporary}/client/ca.pem"
+            openssl rand -hex 32 | tr -d '\r\n' > "${broker_temporary}/server/token"
+            printf 'Bearer ' > "${broker_temporary}/client/token"
+            cat "${broker_temporary}/server/token" >> "${broker_temporary}/client/token"
+            chown -R 1001:1001 "${broker_temporary}"
+            find "${broker_temporary}" -type d -exec chmod 700 {} +
+            chmod 600 \
+              "${broker_temporary}/server/server-key.pem" \
+              "${broker_temporary}/server/token" \
+              "${broker_temporary}/client/token"
+            chmod 644 \
+              "${broker_temporary}/server/server-cert.pem" \
+              "${broker_temporary}/server/ca.pem" \
+              "${broker_temporary}/client/ca.pem"
+            mv "${broker_temporary}" "${broker_root}"
+            broker_temporary=""
+            broker_created=1
+          fi
+          for broker_file in "${broker_expected_files[@]}"; do
+            [[ -f "${broker_file}" && ! -L "${broker_file}" ]] || {
+              echo "Credential broker material is missing or unsafe." >&2
+              exit 1
+            }
+          done
+          [[ "$(stat -c '%a' "${broker_server_dir}/server-key.pem")" == 600 ]]
+          [[ "$(stat -c '%a' "${broker_server_dir}/token")" == 600 ]]
+          [[ "$(stat -c '%a' "${broker_client_dir}/token")" == 600 ]]
+          [[ "$(stat -c '%u:%g' "${broker_server_dir}/server-key.pem")" == 1001:1001 ]]
+          [[ "$(stat -c '%u:%g' "${broker_server_dir}/token")" == 1001:1001 ]]
+          [[ "$(stat -c '%u:%g' "${broker_client_dir}/token")" == 1001:1001 ]]
+          [[ "$(wc -c < "${broker_server_dir}/token")" -eq 64 ]]
+          [[ "$(wc -c < "${broker_client_dir}/token")" -eq 71 ]]
+          grep -Eq '^[A-Fa-f0-9]{64}$' "${broker_server_dir}/token"
+          grep -Eq '^Bearer [A-Fa-f0-9]{64}$' "${broker_client_dir}/token"
+          openssl verify -CAfile "${broker_client_dir}/ca.pem" "${broker_server_dir}/server-cert.pem" >/dev/null
+          openssl x509 -checkend 2592000 -noout -in "${broker_server_dir}/server-cert.pem"
+          openssl x509 -noout -ext subjectAltName -in "${broker_server_dir}/server-cert.pem" \
+            | grep -q 'DNS:public-demo-aws-credential-broker'
+
+          broker_bind_address="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
+          python3 - "${broker_bind_address}" <<'PY'
+          import ipaddress
+          import sys
+
+          address = ipaddress.ip_address(sys.argv[1])
+          if address.version != 4 or not address.is_private:
+              raise SystemExit("Docker host gateway must be one private IPv4 address")
+          PY
+
+          database_password="$(parameter_value /openmercato-public-demo/runtime/postgres-password)"
+          jwt_secret="$(parameter_value /openmercato-public-demo/runtime/jwt-secret)"
+          tenant_key="$(parameter_value /openmercato-public-demo/runtime/tenant-data-encryption-key)"
+          meili_key="$(parameter_value /openmercato-public-demo/runtime/meilisearch-master-key)"
+          hub_oauth_state_key="$(parameter_value /openmercato-public-demo/runtime/om-hub-oauth-state-key)"
+          openrouter_api_key="$(secret_value "${openrouter_secret_id}")"
+
+          write_parameter_file \
+            /openmercato-public-demo/runtime/initial-admin-password \
+            "${secrets_dir}/initial-admin-password"
+          write_parameter_file \
+            /openmercato-public-demo/runtime/admin-password \
+            "${secrets_dir}/admin-password"
+          write_parameter_file \
+            /openmercato-public-demo/runtime/employee-password \
+            "${secrets_dir}/employee-password"
+
+          require_env_token database_password "${database_password}"
+          require_env_token jwt_secret "${jwt_secret}"
+          require_env_token tenant_key "${tenant_key}"
+          require_env_token meili_key "${meili_key}"
+          require_env_token hub_oauth_state_key "${hub_oauth_state_key}"
+          require_env_token openrouter_api_key "${openrouter_api_key}"
+
+          runtime_file="$(mktemp "${workdir}/.env.public-demo.tmp.XXXXXX")"
+          cat > "${runtime_file}" <<ENV_PUBLIC_DEMO
+          APP_IMAGE=${app_image}
+          DEPLOYMENT_SHA=${deployment_sha}
+          PUBLIC_DEMO_SECRETS_DIR=${secrets_dir}
+          APP_URL=https://public-demo.om.they.dev
+          APP_PORT=4787
+          MCP_HOST_PORT=4788
+          CONTAINER_PORT=3000
+          POSTGRES_USER=openmercato_public_demo
+          POSTGRES_PASSWORD=${database_password}
+          POSTGRES_DB=openmercato_public_demo
+          DATABASE_URL=postgresql://openmercato_public_demo:${database_password}@postgres:5432/openmercato_public_demo
+          JWT_SECRET=${jwt_secret}
+          TENANT_DATA_ENCRYPTION_KEY=${tenant_key}
+          MEILISEARCH_MASTER_KEY=${meili_key}
+          OM_INIT_SUPERADMIN_EMAIL=success@simulator.amazonses.com
+          OM_INIT_ADMIN_EMAIL=admin@public-demo.invalid
+          OM_INIT_EMPLOYEE_EMAIL=employee@public-demo.invalid
+          ADMIN_EMAIL=success@simulator.amazonses.com
+          EMAIL_FROM=no-reply@they.dev
+          AWS_REGION=eu-west-2
+          AWS_SES_REGION=eu-west-2
+          AWS_CREDENTIAL_BROKER_ROLE_ARN=${workload_role_arn}
+          AWS_CREDENTIAL_BROKER_BIND_ADDRESS=${broker_bind_address}
+          PUBLIC_DEMO_CREDENTIAL_BROKER_SERVER_DIR=${broker_server_dir}
+          PUBLIC_DEMO_CREDENTIAL_BROKER_CLIENT_DIR=${broker_client_dir}
+          OPENROUTER_API_KEY=${openrouter_api_key}
+          OM_HUB_OAUTH_STATE_KEY=${hub_oauth_state_key}
+          ENV_PUBLIC_DEMO
+          chmod 600 "${runtime_file}"
+          mv "${runtime_file}" "${workdir}/.env.public-demo"
+          runtime_file=""
+
+          git -C "${workdir}" status --short
+          test "$(git -C "${workdir}" rev-parse HEAD)" = "${deployment_sha}"
+          docker compose \
+            --env-file "${workdir}/.env.public-demo" \
+            -f "${workdir}/docker-compose.public-demo.yml" \
+            config --quiet
+          prepare_complete=1
+          trap - EXIT HUP INT TERM
+          echo "Prepared immutable candidate ${deployment_sha}."
+          SSM
+          } | bash scripts/public-demo/ssm-run-step.sh
+
+      - name: Pull immutable image with guaranteed host logout
+        shell: bash
+        env:
+          APP_IMAGE: ${{ steps.image.outputs.image_uri }}
+          INSTANCE_ID: ${{ secrets.PUBLIC_DEMO_INSTANCE_ID }}
+          SSM_STEP_NAME: Pull public-demo immutable image
+          SSM_TIMEOUT_SECONDS: 1200
+        run: |
+          {
+            printf 'app_image=%q\n' "${APP_IMAGE}"
+            cat <<'SSM'
+          set +x
+          registry="${app_image%%/*}"
+          logout_registry() {
+            docker logout "${registry}" >/dev/null 2>&1 || true
+            if [[ -f "${HOME}/.docker/config.json" ]] \
+              && python3 - "${HOME}/.docker/config.json" "${registry}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          config = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          raise SystemExit(0 if sys.argv[2] in config.get("auths", {}) else 1)
+          PY
+            then
+              echo "ECR registry credentials remain on the host after logout." >&2
+              return 1
+            fi
+          }
+          trap logout_registry EXIT
+          aws ecr get-login-password --region eu-west-2 \
+            | docker login --username AWS --password-stdin "${registry}" >/dev/null
+          timeout 900 docker pull "${app_image}"
+          docker image inspect "${app_image}" --format '{{json .RepoDigests}}'
+          logout_registry
+          trap - EXIT
+          SSM
+          } | bash scripts/public-demo/ssm-run-step.sh
+
+      - name: Start isolated services
+        id: start-services
+        shell: bash
+        env:
+          INSTANCE_ID: ${{ secrets.PUBLIC_DEMO_INSTANCE_ID }}
+          SSM_STEP_NAME: Start isolated public-demo services
+          SSM_TIMEOUT_SECONDS: 1200
+        run: |
+          bash scripts/public-demo/ssm-run-step.sh <<'SSM'
+          set +x
+          workdir=/opt/openmercato-public-demo
+          cd "${workdir}"
+          docker compose --env-file .env.public-demo -f docker-compose.public-demo.yml \
+            up -d --no-build --remove-orphans --wait --wait-timeout 180 aws-credential-broker postgres redis meilisearch
+          docker compose --env-file .env.public-demo -f docker-compose.public-demo.yml \
+            run --rm --no-deps bootstrap
+          docker compose --env-file .env.public-demo -f docker-compose.public-demo.yml \
+            up -d --no-build --remove-orphans app mcp worker
+          docker compose --env-file .env.public-demo -f docker-compose.public-demo.yml ps
+          SSM
+
+      - name: Probe candidate services in parallel
+        shell: bash
+        env:
+          INSTANCE_ID: ${{ secrets.PUBLIC_DEMO_INSTANCE_ID }}
+          SSM_STEP_NAME: Probe public-demo candidate services
+          SSM_TIMEOUT_SECONDS: 600
+        run: |
+          bash scripts/public-demo/ssm-run-step.sh <<'SSM'
+          set +x
+          workdir=/opt/openmercato-public-demo
+          cd "${workdir}"
+
+          wait_for_http() {
+            local name="$1"
+            local url="$2"
+            local accepted_pattern="$3"
+            local status=""
+            for attempt in $(seq 1 90); do
+              status="$(curl -sS -o /dev/null -w '%{http_code}' "${url}" 2>/dev/null || true)"
+              if [[ "${status}" =~ ${accepted_pattern} ]]; then
+                echo "${name}: ${status}"
+                return 0
+              fi
+              sleep 5
+            done
+            echo "${name} did not become healthy; last status ${status:-none}." >&2
+            return 1
+          }
+
+          wait_for_healthy_container() {
+            local name="$1"
+            for attempt in $(seq 1 90); do
+              health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${name}" 2>/dev/null || true)"
+              if [[ "${health}" == "healthy" || "${health}" == "running" ]]; then
+                echo "${name}: ${health}"
+                return 0
+              fi
+              sleep 5
+            done
+            echo "${name} did not become healthy." >&2
+            return 1
+          }
+
+          wait_for_stable_running_container() {
+            local name="$1"
+            local initial_restart_count=""
+            local state=""
+            for attempt in $(seq 1 90); do
+              state="$(docker inspect --format '{{.State.Status}} {{.RestartCount}}' "${name}" 2>/dev/null || true)"
+              if [[ "${state}" =~ ^running\ ([0-9]+)$ ]]; then
+                initial_restart_count="${BASH_REMATCH[1]}"
+                break
+              fi
+              sleep 5
+            done
+            [[ -n "${initial_restart_count}" ]] || {
+              echo "${name} did not reach running state." >&2
+              return 1
+            }
+            for observation in $(seq 1 12); do
+              sleep 5
+              state="$(docker inspect --format '{{.State.Status}} {{.RestartCount}}' "${name}" 2>/dev/null || true)"
+              if [[ "${state}" != "running ${initial_restart_count}" ]]; then
+                echo "${name} was not stable; expected running with restart count ${initial_restart_count}, got ${state:-missing}." >&2
+                return 1
+              fi
+            done
+            echo "${name}: stable running with restart count ${initial_restart_count} for 60 seconds"
+          }
+
+          wait_for_http app http://127.0.0.1:4787/login '^[23][0-9][0-9]$' & app_probe=$!
+          wait_for_http mcp http://127.0.0.1:4788/health '^200$' & mcp_probe=$!
+          wait_for_healthy_container openmercato-public-demo-postgres & postgres_probe=$!
+          wait_for_healthy_container openmercato-public-demo-redis & redis_probe=$!
+          wait_for_healthy_container openmercato-public-demo-meilisearch & meili_probe=$!
+          wait_for_healthy_container openmercato-public-demo-aws-credential-broker & broker_probe=$!
+          wait_for_stable_running_container openmercato-public-demo-worker & worker_probe=$!
+
+          probe_status=0
+          for probe_pid in "${app_probe}" "${mcp_probe}" "${postgres_probe}" "${redis_probe}" "${meili_probe}" "${broker_probe}" "${worker_probe}"; do
+            wait "${probe_pid}" || probe_status=1
+          done
+          test "${probe_status}" -eq 0
+
+          expected_image="$(awk -F= '$1=="APP_IMAGE"{print substr($0, index($0, "=") + 1)}' .env.public-demo)"
+          for container in app worker mcp aws-credential-broker; do
+            actual_image="$(docker inspect --format '{{.Config.Image}}' "openmercato-public-demo-${container}")"
+            test "${actual_image}" = "${expected_image}"
+          done
+          docker compose --env-file .env.public-demo -f docker-compose.public-demo.yml ps
+          SSM
+
+      - name: Stop unsuccessful pre-cutover candidate
+        id: rollback-candidate
+        if: always() && steps.start-services.outcome != 'skipped' && job.status != 'success'
+        shell: bash
+        env:
+          INSTANCE_ID: ${{ secrets.PUBLIC_DEMO_INSTANCE_ID }}
+          SSM_STEP_NAME: Roll back failed pre-cutover public-demo candidate
+          SSM_TIMEOUT_SECONDS: 300
+        run: |
+          bash scripts/public-demo/ssm-run-step.sh <<'SSM'
+          set +x
+          workdir=/opt/openmercato-public-demo
+          if [[ -f "${workdir}/.env.public-demo" ]]; then
+            docker compose --env-file "${workdir}/.env.public-demo" \
+              -f "${workdir}/docker-compose.public-demo.yml" \
+              down --remove-orphans --timeout 60
+          fi
+          remaining="$(docker ps -aq --filter label=com.docker.compose.project=openmercato-public-demo)"
+          test -z "${remaining}"
+          echo "Failed pre-cutover project stopped; named data volumes were preserved."
+          SSM
+
+      - name: Remove protected host bootstrap files
+        if: always() && steps.prepare-runtime.outcome != 'skipped'
+        shell: bash
+        env:
+          INSTANCE_ID: ${{ secrets.PUBLIC_DEMO_INSTANCE_ID }}
+          DEPLOY_JOB_STATUS: ${{ job.status }}
+          SSM_STEP_NAME: Remove protected public-demo bootstrap files
+          SSM_TIMEOUT_SECONDS: 300
+        run: |
+          {
+            printf 'deploy_job_status=%q\n' "${DEPLOY_JOB_STATUS}"
+            cat <<'SSM'
+          set +x
+          workdir=/opt/openmercato-public-demo
+          if [[ -d "${workdir}/.secrets" ]]; then
+            find "${workdir}/.secrets" -type f -delete
+            rmdir "${workdir}/.secrets"
+          fi
+          if [[ "${deploy_job_status}" != "success" ]]; then
+            remaining="$(docker ps -aq --filter label=com.docker.compose.project=openmercato-public-demo)"
+            if [[ -n "${remaining}" ]]; then
+              echo "Refusing to remove runtime config while public-demo containers remain." >&2
+              exit 1
+            fi
+            rm -f "${workdir}/.env.public-demo"
+          fi
+          test ! -e "${workdir}/.secrets"
+          if [[ "${deploy_job_status}" != "success" ]]; then
+            test ! -e "${workdir}/.env.public-demo"
+          fi
+          echo "Protected bootstrap files removed from the host."
+          SSM
+          } | bash scripts/public-demo/ssm-run-step.sh
+
+      - name: Candidate staging summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### public-demo.om.they.dev candidate staging"
+            echo "- Repository: \`${GITHUB_REPOSITORY}\`"
+            echo "- Ref: \`${GITHUB_REF}\`"
+            echo "- Candidate: \`${GITHUB_SHA}\`"
+            echo "- Image digest: \`${{ steps.image.outputs.image_digest || 'not-pushed' }}\`"
+            echo "- ALB cutover: not performed by this workflow"
+            echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Remove runner registry credentials and image artifact
+        if: always()
+        shell: bash
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          set +e
+          if [[ -n "${REGISTRY}" ]]; then
+            docker logout "${REGISTRY}" >/dev/null 2>&1
+            if [[ -f "${HOME}/.docker/config.json" ]] \
+              && jq -e --arg registry "${REGISTRY}" '.auths[$registry] != null' "${HOME}/.docker/config.json" >/dev/null; then
+              echo "ECR registry credentials remain on the runner." >&2
+              exit 1
+            fi
+          fi
+          rm -f /tmp/public-demo-image.tar /tmp/public-demo-image.tar.sha256

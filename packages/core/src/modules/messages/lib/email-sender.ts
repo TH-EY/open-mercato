@@ -179,13 +179,12 @@ export async function sendMessageEmailToRecipient(params: {
   const copy = await buildEmailCopy(message.sentAt ?? new Date())
   const bodyHtml = await buildEmailBodyHtml(message)
   const resendAttachments = await mapAttachmentsForEmail(message.id, attachments)
-  logDebug('Sending recipient email via Resend', {
+  logDebug('Sending recipient email', {
     messageId: message.id,
     recipientUserId,
     recipientEmail,
     hasViewUrl: Boolean(viewUrl),
     attachmentsCount: resendAttachments.length,
-    hasApiKey: Boolean(process.env.RESEND_API_KEY),
     from: resolveDefaultEmailFromAddress() ?? null,
   })
 
@@ -218,11 +217,10 @@ export async function sendMessageEmailToExternal(params: {
   const copy = await buildEmailCopy(message.sentAt ?? new Date())
   const bodyHtml = await buildEmailBodyHtml(message)
   const resendAttachments = await mapAttachmentsForEmail(message.id, attachments)
-  logDebug('Sending external email via Resend', {
+  logDebug('Sending external email', {
     messageId: message.id,
     email,
     attachmentsCount: resendAttachments.length,
-    hasApiKey: Boolean(process.env.RESEND_API_KEY),
     from: resolveDefaultEmailFromAddress() ?? null,
   })
 
@@ -242,7 +240,7 @@ export async function sendMessageEmailToExternal(params: {
     }),
     attachments: resendAttachments,
   })
-  logDebug('External email sent via Resend', {
+  logDebug('External email sent', {
     messageId: message.id,
     email,
   })

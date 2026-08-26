@@ -1,0 +1,451 @@
+name: openmercato-public-demo
+
+services:
+  app:
+    image: ${APP_IMAGE:?APP_IMAGE must reference an immutable image digest}
+    container_name: openmercato-public-demo-app
+    restart: unless-stopped
+    user: "1001:1001"
+    command: ["yarn", "start"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    working_dir: /app/apps/mercato
+    ports:
+      - "${APP_PORT:-4787}:${CONTAINER_PORT:-3000}"
+    volumes:
+      - public_demo_attachments_storage:/app/apps/mercato/storage
+      - public_demo_mcp_shared:/run/mcp-shared:ro
+      - ${PUBLIC_DEMO_CREDENTIAL_BROKER_CLIENT_DIR:?PUBLIC_DEMO_CREDENTIAL_BROKER_CLIENT_DIR must be set}:/run/aws-credential-broker:ro
+    extra_hosts:
+      - "public-demo-aws-credential-broker:host-gateway"
+    logging:
+      driver: local
+      options:
+        max-size: 20m
+        max-file: "5"
+        compress: "true"
+    environment:
+      NODE_ENV: production
+      DEPLOY_ENV: public-demo
+      DEPLOYMENT_SHA: ${DEPLOYMENT_SHA:?DEPLOYMENT_SHA must be set}
+      PORT: ${CONTAINER_PORT:-3000}
+      APP_URL: ${APP_URL:?APP_URL must be set}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must use the public-demo PostgreSQL service}
+      DB_SSL: "false"
+      DB_POOL_MIN: ${WEB_DB_POOL_MIN:-0}
+      DB_POOL_MAX: ${WEB_DB_POOL_MAX:-4}
+      DB_POOL_IDLE_TIMEOUT: ${DB_POOL_IDLE_TIMEOUT:-30000}
+      DB_POOL_ACQUIRE_TIMEOUT: ${DB_POOL_ACQUIRE_TIMEOUT:-30000}
+      CACHE_STRATEGY: redis
+      CACHE_REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://redis:6379
+      QUEUE_STRATEGY: async
+      QUEUE_REDIS_URL: redis://redis:6379
+      MEILISEARCH_HOST: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILISEARCH_MASTER_KEY:?MEILISEARCH_MASTER_KEY must be set}
+      TENANT_DATA_ENCRYPTION: "true"
+      TENANT_DATA_ENCRYPTION_KEY: ${TENANT_DATA_ENCRYPTION_KEY:?TENANT_DATA_ENCRYPTION_KEY must be set}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      SELF_SERVICE_ONBOARDING_ENABLED: "false"
+      DEMO_MODE: "false"
+      AUTO_SPAWN_WORKERS: "false"
+      AUTO_SPAWN_SCHEDULER: "false"
+      DATA_SYNC_QUEUE_CONCURRENCY: ${DATA_SYNC_QUEUE_CONCURRENCY:-1}
+      QUERY_INDEX_COVERAGE_WARMUP_ON_LOGIN: "false"
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      EMAIL_FROM: ${EMAIL_FROM:?EMAIL_FROM must be set}
+      EMAIL_STRATEGY: ses
+      EMAIL_DELIVERY_POLICY: restricted
+      EMAIL_DELIVERY_POLICY_KEY: openmercato-public-demo-v1
+      EMAIL_ALLOWED_RECIPIENT: success@simulator.amazonses.com
+      EMAIL_ALLOWED_FROM: ${EMAIL_FROM:?EMAIL_FROM must be set}
+      EMAIL_DELIVERY_LIMIT: "10"
+      EMAIL_DELIVERY_WINDOW_SECONDS: "86400"
+      AWS_REGION: ${AWS_REGION:-eu-west-2}
+      AWS_SES_REGION: ${AWS_SES_REGION:-eu-west-2}
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_CONTAINER_CREDENTIALS_FULL_URI: https://public-demo-aws-credential-broker:4790/credentials
+      AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE: /run/aws-credential-broker/token
+      NODE_EXTRA_CA_CERTS: /run/aws-credential-broker/ca.pem
+      NEXT_PUBLIC_UPGRADE_ACTIONS_ENABLED: "false"
+      UPGRADE_ACTIONS_ENABLED: "false"
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?OPENROUTER_API_KEY must be set}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-}
+      OM_AI_PROVIDER: openrouter
+      OM_AI_MODEL: meta-llama/llama-3.3-70b-instruct
+      MCP_URL: http://mcp:3002
+      MCP_SERVER_API_KEY_FILE: /run/mcp-shared/mcp-api-key
+      OM_HUB_OAUTH_STATE_KEY: ${OM_HUB_OAUTH_STATE_KEY:?OM_HUB_OAUTH_STATE_KEY must be set}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+      aws-credential-broker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:${CONTAINER_PORT:-3000}/login').then((response) => process.exit(response.status < 500 ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+    networks:
+      - public_demo_network
+
+  worker:
+    image: ${APP_IMAGE:?APP_IMAGE must reference an immutable image digest}
+    container_name: openmercato-public-demo-worker
+    restart: unless-stopped
+    user: "1001:1001"
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    command:
+      - sh
+      - -c
+      - yarn mercato queue worker --all
+    working_dir: /app/apps/mercato
+    volumes:
+      - ${PUBLIC_DEMO_CREDENTIAL_BROKER_CLIENT_DIR:?PUBLIC_DEMO_CREDENTIAL_BROKER_CLIENT_DIR must be set}:/run/aws-credential-broker:ro
+    extra_hosts:
+      - "public-demo-aws-credential-broker:host-gateway"
+    logging:
+      driver: local
+      options:
+        max-size: 20m
+        max-file: "5"
+        compress: "true"
+    environment:
+      NODE_ENV: production
+      DEPLOY_ENV: public-demo
+      APP_URL: ${APP_URL:?APP_URL must be set}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must use the public-demo PostgreSQL service}
+      DB_SSL: "false"
+      DB_POOL_MIN: ${WORKER_DB_POOL_MIN:-0}
+      DB_POOL_MAX: ${WORKER_DB_POOL_MAX:-2}
+      DB_POOL_IDLE_TIMEOUT: ${DB_POOL_IDLE_TIMEOUT:-30000}
+      DB_POOL_ACQUIRE_TIMEOUT: ${DB_POOL_ACQUIRE_TIMEOUT:-30000}
+      CACHE_STRATEGY: redis
+      CACHE_REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://redis:6379
+      QUEUE_STRATEGY: async
+      QUEUE_REDIS_URL: redis://redis:6379
+      MEILISEARCH_HOST: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILISEARCH_MASTER_KEY:?MEILISEARCH_MASTER_KEY must be set}
+      TENANT_DATA_ENCRYPTION: "true"
+      TENANT_DATA_ENCRYPTION_KEY: ${TENANT_DATA_ENCRYPTION_KEY:?TENANT_DATA_ENCRYPTION_KEY must be set}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      SELF_SERVICE_ONBOARDING_ENABLED: "false"
+      DEMO_MODE: "false"
+      DATA_SYNC_QUEUE_CONCURRENCY: ${DATA_SYNC_QUEUE_CONCURRENCY:-1}
+      QUERY_INDEX_COVERAGE_WARMUP_ON_LOGIN: "false"
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      EMAIL_FROM: ${EMAIL_FROM:?EMAIL_FROM must be set}
+      EMAIL_STRATEGY: ses
+      EMAIL_DELIVERY_POLICY: restricted
+      EMAIL_DELIVERY_POLICY_KEY: openmercato-public-demo-v1
+      EMAIL_ALLOWED_RECIPIENT: success@simulator.amazonses.com
+      EMAIL_ALLOWED_FROM: ${EMAIL_FROM:?EMAIL_FROM must be set}
+      EMAIL_DELIVERY_LIMIT: "10"
+      EMAIL_DELIVERY_WINDOW_SECONDS: "86400"
+      AWS_REGION: ${AWS_REGION:-eu-west-2}
+      AWS_SES_REGION: ${AWS_SES_REGION:-eu-west-2}
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_CONTAINER_CREDENTIALS_FULL_URI: https://public-demo-aws-credential-broker:4790/credentials
+      AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE: /run/aws-credential-broker/token
+      NODE_EXTRA_CA_CERTS: /run/aws-credential-broker/ca.pem
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?OPENROUTER_API_KEY must be set}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-}
+      OM_AI_PROVIDER: openrouter
+      OM_AI_MODEL: meta-llama/llama-3.3-70b-instruct
+      OM_HUB_OAUTH_STATE_KEY: ${OM_HUB_OAUTH_STATE_KEY:?OM_HUB_OAUTH_STATE_KEY must be set}
+    depends_on:
+      app:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+      aws-credential-broker:
+        condition: service_healthy
+    networks:
+      - public_demo_network
+
+  mcp:
+    image: ${APP_IMAGE:?APP_IMAGE must reference an immutable image digest}
+    container_name: openmercato-public-demo-mcp
+    restart: unless-stopped
+    user: "1001:1001"
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        if [ ! -f /app/docker/scripts/mcp-entrypoint.sh ]; then
+          echo "ERROR: mcp-entrypoint.sh not found. Rebuild the application image."
+          exit 1
+        fi
+        sh /app/docker/scripts/mcp-entrypoint.sh
+    volumes:
+      - public_demo_mcp_shared:/run/mcp-shared
+    ports:
+      - "${MCP_HOST_PORT:-4788}:3002"
+    logging:
+      driver: local
+      options:
+        max-size: 20m
+        max-file: "5"
+        compress: "true"
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: ${MCP_NODE_OPTIONS:---max-old-space-size=2048}
+      DEPLOY_ENV: public-demo
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must use the public-demo PostgreSQL service}
+      DB_SSL: "false"
+      CACHE_REDIS_URL: redis://redis:6379
+      CACHE_STRATEGY: redis
+      AUTO_SPAWN_WORKERS: "false"
+      AUTO_SPAWN_SCHEDULER: "false"
+      MEILISEARCH_HOST: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILISEARCH_MASTER_KEY:?MEILISEARCH_MASTER_KEY must be set}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      APP_URL: http://app:${CONTAINER_PORT:-3000}
+      NEXT_PUBLIC_APP_URL: http://app:${CONTAINER_PORT:-3000}
+      NEXT_PUBLIC_API_BASE_URL: ""
+      TENANT_DATA_ENCRYPTION: "true"
+      TENANT_DATA_ENCRYPTION_KEY: ${TENANT_DATA_ENCRYPTION_KEY:?TENANT_DATA_ENCRYPTION_KEY must be set}
+      OM_INIT_SUPERADMIN_EMAIL: ${OM_INIT_SUPERADMIN_EMAIL:?OM_INIT_SUPERADMIN_EMAIL must be set}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?OPENROUTER_API_KEY must be set}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-}
+      OM_AI_PROVIDER: openrouter
+      OM_AI_MODEL: meta-llama/llama-3.3-70b-instruct
+      MCP_PORT: "3002"
+      MCP_SERVER_API_KEY_FILE: /run/mcp-shared/mcp-api-key
+      MCP_WAIT_FOR_APP_TIMEOUT: ${MCP_WAIT_FOR_APP_TIMEOUT:-1800}
+      MCP_DEBUG: ${MCP_DEBUG:-false}
+      AWS_EC2_METADATA_DISABLED: "true"
+    depends_on:
+      app:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3002/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 20
+      start_period: 900s
+    networks:
+      - public_demo_network
+
+  aws-credential-broker:
+    image: ${APP_IMAGE:?APP_IMAGE must reference an immutable image digest}
+    container_name: openmercato-public-demo-aws-credential-broker
+    restart: unless-stopped
+    init: true
+    user: "1001:1001"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    command: ["node", "/app/scripts/public-demo/aws-credential-broker.mjs"]
+    working_dir: /app
+    network_mode: host
+    volumes:
+      - ${PUBLIC_DEMO_CREDENTIAL_BROKER_SERVER_DIR:?PUBLIC_DEMO_CREDENTIAL_BROKER_SERVER_DIR must be set}:/run/aws-credential-broker:ro
+    logging:
+      driver: local
+      options:
+        max-size: 20m
+        max-file: "5"
+        compress: "true"
+    environment:
+      NODE_ENV: production
+      AWS_REGION: ${AWS_REGION:-eu-west-2}
+      AWS_CREDENTIAL_BROKER_ROLE_ARN: ${AWS_CREDENTIAL_BROKER_ROLE_ARN:?AWS_CREDENTIAL_BROKER_ROLE_ARN must be set}
+      AWS_CREDENTIAL_BROKER_BIND_ADDRESS: ${AWS_CREDENTIAL_BROKER_BIND_ADDRESS:?AWS_CREDENTIAL_BROKER_BIND_ADDRESS must be set}
+      AWS_CREDENTIAL_BROKER_PORT: "4790"
+      AWS_CREDENTIAL_BROKER_TOKEN_FILE: /run/aws-credential-broker/token
+      AWS_CREDENTIAL_BROKER_TLS_KEY_FILE: /run/aws-credential-broker/server-key.pem
+      AWS_CREDENTIAL_BROKER_TLS_CERT_FILE: /run/aws-credential-broker/server-cert.pem
+      NODE_EXTRA_CA_CERTS: /run/aws-credential-broker/ca.pem
+    healthcheck:
+      test: ["CMD", "node", "/app/scripts/public-demo/aws-credential-broker.mjs", "--healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  bootstrap:
+    image: ${APP_IMAGE:?APP_IMAGE must reference an immutable image digest}
+    container_name: openmercato-public-demo-bootstrap
+    restart: "no"
+    user: "0"
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
+    security_opt: ["no-new-privileges:true"]
+    command:
+      - /bin/sh
+      - -eu
+      - -c
+      - |
+        chown -R 1001:1001 /tmp/init-marker /app/apps/mercato/storage /run/mcp-shared
+        export OM_INIT_SUPERADMIN_PASSWORD="$$(tr -d '\r\n' < /run/secrets/public_demo_superadmin_password)"
+        export OM_INIT_ADMIN_PASSWORD="$$(tr -d '\r\n' < /run/secrets/public_demo_admin_password)"
+        export OM_INIT_EMPLOYEE_PASSWORD="$$(tr -d '\r\n' < /run/secrets/public_demo_employee_password)"
+        su -p omuser -c 'sh /app/scripts/public-demo/init-or-migrate.sh'
+        unset OM_INIT_SUPERADMIN_PASSWORD OM_INIT_ADMIN_PASSWORD OM_INIT_EMPLOYEE_PASSWORD
+    working_dir: /app/apps/mercato
+    volumes:
+      - public_demo_init_marker:/tmp/init-marker
+      - public_demo_attachments_storage:/app/apps/mercato/storage
+      - public_demo_mcp_shared:/run/mcp-shared
+    secrets:
+      - public_demo_superadmin_password
+      - public_demo_admin_password
+      - public_demo_employee_password
+    logging:
+      driver: local
+      options:
+        max-size: 20m
+        max-file: "5"
+        compress: "true"
+    environment:
+      NODE_ENV: production
+      DEPLOY_ENV: public-demo
+      DEPLOYMENT_SHA: ${DEPLOYMENT_SHA:?DEPLOYMENT_SHA must be set}
+      PUBLIC_DEMO_DATABASE_NAME: ${POSTGRES_DB:-openmercato_public_demo}
+      PUBLIC_DEMO_DATABASE_USER: ${POSTGRES_USER:-openmercato_public_demo}
+      APP_URL: ${APP_URL:?APP_URL must be set}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must use the public-demo PostgreSQL service}
+      DB_SSL: "false"
+      CACHE_STRATEGY: redis
+      CACHE_REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://redis:6379
+      QUEUE_STRATEGY: async
+      QUEUE_REDIS_URL: redis://redis:6379
+      MEILISEARCH_HOST: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILISEARCH_MASTER_KEY:?MEILISEARCH_MASTER_KEY must be set}
+      TENANT_DATA_ENCRYPTION: "true"
+      TENANT_DATA_ENCRYPTION_KEY: ${TENANT_DATA_ENCRYPTION_KEY:?TENANT_DATA_ENCRYPTION_KEY must be set}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      SELF_SERVICE_ONBOARDING_ENABLED: "false"
+      DEMO_MODE: "false"
+      AUTO_SPAWN_WORKERS: "false"
+      AUTO_SPAWN_SCHEDULER: "false"
+      AWS_EC2_METADATA_DISABLED: "true"
+      OM_INIT_SUPERADMIN_EMAIL: ${OM_INIT_SUPERADMIN_EMAIL:?OM_INIT_SUPERADMIN_EMAIL must be set}
+      OM_INIT_ADMIN_EMAIL: ${OM_INIT_ADMIN_EMAIL:?OM_INIT_ADMIN_EMAIL must be set}
+      OM_INIT_EMPLOYEE_EMAIL: ${OM_INIT_EMPLOYEE_EMAIL:?OM_INIT_EMPLOYEE_EMAIL must be set}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    networks:
+      - public_demo_network
+
+  postgres:
+    image: pgvector/pgvector:pg17-trixie@sha256:724a4041afdb1750446e3f6b5cfa8f3b0ac5a2cf538ddfa6bfee4f94c2fa85c6
+    container_name: openmercato-public-demo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-openmercato_public_demo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:-openmercato_public_demo}
+    volumes:
+      - public_demo_postgres_data:/var/lib/postgresql/data
+    logging:
+      driver: local
+      options:
+        max-size: 20m
+        max-file: "5"
+        compress: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-openmercato_public_demo} -d ${POSTGRES_DB:-openmercato_public_demo}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - public_demo_network
+
+  redis:
+    image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    container_name: openmercato-public-demo-redis
+    restart: unless-stopped
+    volumes:
+      - public_demo_redis_data:/data
+    logging:
+      driver: local
+      options:
+        max-size: 20m
+        max-file: "5"
+        compress: "true"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - public_demo_network
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11@sha256:6f8f1fc29d1ff67b4d8d503bb4e0a69b55c8d42600decafde951344218193a27
+    container_name: openmercato-public-demo-meilisearch
+    restart: unless-stopped
+    environment:
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: ${MEILISEARCH_MASTER_KEY:?MEILISEARCH_MASTER_KEY must be set}
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - public_demo_meilisearch_data:/meili_data
+    logging:
+      driver: local
+      options:
+        max-size: 20m
+        max-file: "5"
+        compress: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - public_demo_network
+
+volumes:
+  public_demo_init_marker:
+    name: public_demo_init_marker
+  public_demo_attachments_storage:
+    name: public_demo_attachments_storage
+  public_demo_mcp_shared:
+    name: public_demo_mcp_shared
+  public_demo_postgres_data:
+    name: public_demo_postgres_data
+  public_demo_redis_data:
+    name: public_demo_redis_data
+  public_demo_meilisearch_data:
+    name: public_demo_meilisearch_data
+
+secrets:
+  public_demo_superadmin_password:
+    file: ${PUBLIC_DEMO_SECRETS_DIR:?PUBLIC_DEMO_SECRETS_DIR must be set}/initial-admin-password
+  public_demo_admin_password:
+    file: ${PUBLIC_DEMO_SECRETS_DIR:?PUBLIC_DEMO_SECRETS_DIR must be set}/admin-password
+  public_demo_employee_password:
+    file: ${PUBLIC_DEMO_SECRETS_DIR:?PUBLIC_DEMO_SECRETS_DIR must be set}/employee-password
+
+networks:
+  public_demo_network:
+    name: public_demo_network
+    driver: bridge

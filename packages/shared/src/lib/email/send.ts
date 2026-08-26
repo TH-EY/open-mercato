@@ -101,6 +101,22 @@ export async function sendEmail({ to, subject, react, from, replyTo, attachments
 
   if (emailDisabled) return
 
+  const strategy = process.env.EMAIL_STRATEGY?.trim().toLowerCase()
+  if (strategy && strategy !== 'resend' && strategy !== 'ses') {
+    throw new Error(`EMAIL_STRATEGY_UNSUPPORTED: ${strategy}`)
+  }
+  if (strategy === 'ses') {
+    const fromAddr = from || resolveDefaultEmailFromAddress()
+    if (!fromAddr) {
+      throw new Error('EMAIL_FROM_NOT_CONFIGURED: set NOTIFICATIONS_EMAIL_FROM, EMAIL_FROM, or ADMIN_EMAIL')
+    }
+    const { enforceRestrictedEmailDelivery } = await import('./restricted-delivery')
+    await enforceRestrictedEmailDelivery({ to, from: fromAddr })
+    const { sendEmailWithSes } = await import('./ses')
+    await sendEmailWithSes({ to, subject, react, from: fromAddr, replyTo, attachments })
+    return
+  }
+
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) throw new Error('RESEND_API_KEY is not set')
   const resend = new Resend(apiKey)
