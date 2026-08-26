@@ -98,6 +98,92 @@ test('AWS target guard evaluates the complete EC2 response without jq precedence
   }).status, 0)
 })
 
+test('consumer workspaces cannot import restricted email implementation subpaths', () => {
+  for (const specifier of [
+    '@open-mercato/shared/lib/email/ses',
+    '@open-mercato/shared/lib/email/ses.js',
+    '@open-mercato/shared/lib/email/ses.ts',
+    '@open-mercato/shared/lib/email/ses.tsx',
+    '@open-mercato/shared/lib/email/ses.js?x',
+    '@open-mercato/shared/lib/email/ses.js#x',
+    '@open-mercato/shared/lib/email/%73es',
+    '@open-mercato/shared/lib/email/restricted-delivery',
+    '@open-mercato/shared/lib/email/restricted-delivery.js',
+    '@open-mercato/shared/lib/email/restricted-delivery.ts',
+    '@open-mercato/shared/lib/email/restricted-delivery.tsx',
+    '@open-mercato/shared/lib/email/restricted-delivery.js?x',
+    '@open-mercato/shared/lib/email/restricted-delivery.js#x',
+    '@open-mercato/shared/lib/email/%72estricted-delivery',
+  ]) {
+    const result = spawnSync(
+      process.execPath,
+      ['--input-type=module', '--eval', `await import(${JSON.stringify(specifier)})`],
+      { cwd: 'apps/mercato', encoding: 'utf8' },
+    )
+
+    assert.notEqual(result.status, 0, specifier)
+    assert.match(`${result.stdout}\n${result.stderr}`, /ERR_PACKAGE_PATH_NOT_EXPORTED/u, specifier)
+  }
+})
+
+test('documented email facade paths remain importable from consumer workspaces', () => {
+  for (const [specifier, exportedName] of [
+    ['@open-mercato/shared/lib/email/send', 'sendEmail'],
+    ['@open-mercato/shared/lib/email/send.js', 'sendEmail'],
+    ['@open-mercato/shared/lib/email/send.ts', 'sendEmail'],
+    ['@open-mercato/shared/lib/email/send.tsx', 'sendEmail'],
+    ['@open-mercato/shared/lib/email/config', 'resolveDefaultEmailFromAddress'],
+    ['@open-mercato/shared/lib/email/config.js', 'resolveDefaultEmailFromAddress'],
+    ['@open-mercato/shared/lib/email/config.ts', 'resolveDefaultEmailFromAddress'],
+    ['@open-mercato/shared/lib/email/config.tsx', 'resolveDefaultEmailFromAddress'],
+  ]) {
+    const result = spawnSync(
+      process.execPath,
+      ['--input-type=module', '--eval', `
+        const imported = await import(${JSON.stringify(specifier)})
+        if (typeof imported[${JSON.stringify(exportedName)}] !== 'function') process.exit(2)
+      `],
+      { cwd: 'apps/mercato', encoding: 'utf8' },
+    )
+
+    assert.equal(result.status, 0, `${specifier}\n${result.stdout}\n${result.stderr}`)
+  }
+})
+
+test('deployment is first-provision-only and seals the immutable staged candidate', () => {
+  const deploySteps = workflow.jobs.deploy.steps
+  const stepNames = deploySteps.map((step) => step.name)
+  const preflight = deploySteps.find((step) => step.name === 'Preflight isolated host namespace')
+  const seal = deploySteps.find((step) => step.name === 'Seal first-provision staging')
+
+  assert.ok(preflight)
+  assert.ok(seal)
+  assert.match(preflight.run, /\.first-provision-staged/)
+  assert.match(
+    preflight.run,
+    /docker ps -aq --filter label=com\.docker\.compose\.project=openmercato-public-demo/,
+  )
+  assert.match(preflight.run, /for port in 4787 4788 4900/)
+  assert.doesNotMatch(preflight.run, /openmercato-public-demo-\.\*\$\{port\}->|broker_container/)
+  assert.match(seal.run, /printf 'deployment_sha=%q\\n' "\$\{GITHUB_SHA\}"/)
+  assert.match(seal.run, /mktemp "\$\{workdir\}\/\.first-provision-staged\.tmp\.XXXXXX"/)
+  assert.match(seal.run, /chmod 600 "\$\{temporary\}"/)
+  assert.match(seal.run, /ln "\$\{temporary\}" "\$\{marker\}"/)
+  assert.match(seal.run, /test "\$\(cat "\$\{marker\}"\)" = "\$\{deployment_sha\}"/)
+  assert.ok(
+    stepNames.indexOf('Probe candidate services in parallel') <
+      stepNames.indexOf('Seal first-provision staging'),
+  )
+  assert.ok(
+    stepNames.indexOf('Seal first-provision staging') <
+      stepNames.indexOf('Stop unsuccessful pre-cutover candidate'),
+  )
+  assert.ok(
+    stepNames.indexOf('Seal first-provision staging') <
+      stepNames.indexOf('Remove protected host bootstrap files'),
+  )
+})
+
 test('every external action is pinned to a full commit SHA', () => {
   const actions = Object.values(workflow.jobs).flatMap(actionSteps)
   assert.ok(actions.length >= 7)
@@ -233,7 +319,7 @@ test('public workflow contains references, never secret values or private infras
   assert.match(workflowSource, /restart count.*60 seconds/)
   assert.match(workflowSource, /openssl rand -hex 32/)
   assert.match(workflowSource, /subjectAltName=DNS:public-demo-aws-credential-broker/)
-  assert.match(workflowSource, /sport = :4900/)
+  assert.match(workflowSource, /for port in 4787 4788 4900/)
   assert.match(workflowSource, /docker network inspect bridge/)
   assert.match(workflowSource, /MetadataOptions\.HttpTokens == "required"/)
   assert.match(workflowSource, /MetadataOptions\.HttpEndpoint == "enabled"/)

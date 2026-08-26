@@ -202,7 +202,7 @@ describe('sendEmail', () => {
   it('passes the exact HTTPS broker provider to SES without falling back to the default chain', async () => {
     process.env.EMAIL_STRATEGY = 'ses'
     process.env.AWS_SES_REGION = 'eu-west-2'
-    process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI = 'https://broker.internal:4790/credentials'
+    process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI = 'https://broker.internal:4900/credentials'
     process.env.AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE = '/run/broker/token'
 
     await sendEmail({
@@ -212,7 +212,7 @@ describe('sendEmail', () => {
     })
 
     expect(fromHttpMock).toHaveBeenCalledWith({
-      awsContainerCredentialsFullUri: 'https://broker.internal:4790/credentials',
+      awsContainerCredentialsFullUri: 'https://broker.internal:4900/credentials',
       awsContainerAuthorizationTokenFile: '/run/broker/token',
       maxRetries: 0,
       timeout: 3000,
@@ -226,7 +226,7 @@ describe('sendEmail', () => {
   it('fails before creating SES when broker configuration is partial or non-HTTPS', async () => {
     process.env.EMAIL_STRATEGY = 'ses'
     process.env.AWS_SES_REGION = 'eu-west-2'
-    process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI = 'https://broker.internal:4790/credentials'
+    process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI = 'https://broker.internal:4900/credentials'
 
     await expect(sendEmail({
       to: 'user@example.com',
@@ -235,7 +235,7 @@ describe('sendEmail', () => {
     })).rejects.toThrow('SES_CREDENTIAL_BROKER_CONFIG_INVALID')
 
     process.env.AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE = '/run/broker/token'
-    process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI = 'http://broker.internal:4790/credentials'
+    process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI = 'http://broker.internal:4900/credentials'
     await expect(sendEmail({
       to: 'user@example.com',
       subject: 'Hello',

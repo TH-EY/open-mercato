@@ -218,22 +218,27 @@ jobs:
             exit 1
           fi
 
-          for port in 4787 4788; do
-            listeners="$(docker ps --format '{{.Ports}}' | grep -E "(^|[^0-9])${port}->" || true)"
-            if [[ -n "${listeners}" ]] && ! docker ps --format '{{.Names}} {{.Ports}}' | grep -q "^openmercato-public-demo-.*${port}->"; then
-              echo "Host port ${port} is already owned outside the public-demo namespace." >&2
+          workdir=/opt/openmercato-public-demo
+          staged_marker="${workdir}/.first-provision-staged"
+          if [[ -e "${staged_marker}" || -L "${staged_marker}" ]]; then
+            echo "First provisioning has already been staged; this workflow cannot replay or upgrade it." >&2
+            exit 1
+          fi
+
+          existing_containers="$(docker ps -aq --filter label=com.docker.compose.project=openmercato-public-demo)"
+          if [[ -n "${existing_containers}" ]]; then
+            echo "The public-demo Compose project already exists; this workflow is first-provision-only." >&2
+            exit 1
+          fi
+
+          for port in 4787 4788 4900; do
+            if [[ -n "$(ss -H -ltn "sport = :${port}" || true)" ]]; then
+              echo "Host port ${port} is already in use; first provisioning requires an empty namespace." >&2
               exit 1
             fi
           done
 
-          broker_listener="$(ss -H -ltn 'sport = :4900' || true)"
-          broker_container="$(docker ps --filter name='^/openmercato-public-demo-aws-credential-broker$' --format '{{.Names}}')"
-          if [[ -n "${broker_listener}" && "${broker_container}" != "openmercato-public-demo-aws-credential-broker" ]]; then
-            echo "Host port 4900 is already owned outside the public-demo namespace." >&2
-            exit 1
-          fi
-
-          echo "Preflight passed with ${available_gb}GB available and no foreign port collision."
+          echo "First-provision preflight passed with ${available_gb}GB available and an empty runtime namespace."
           SSM
 
       - name: Prepare exact checkout and protected runtime config
@@ -649,6 +654,37 @@ jobs:
           done
           docker compose --env-file .env.public-demo -f docker-compose.public-demo.yml ps
           SSM
+
+      - name: Seal first-provision staging
+        id: seal-first-provision
+        shell: bash
+        env:
+          INSTANCE_ID: ${{ secrets.PUBLIC_DEMO_INSTANCE_ID }}
+          SSM_STEP_NAME: Seal first-provision public-demo staging
+          SSM_TIMEOUT_SECONDS: 240
+        run: |
+          {
+            printf 'deployment_sha=%q\n' "${GITHUB_SHA}"
+            cat <<'SSM'
+          set +x
+          workdir=/opt/openmercato-public-demo
+          marker="${workdir}/.first-provision-staged"
+          temporary="$(mktemp "${workdir}/.first-provision-staged.tmp.XXXXXX")"
+          cleanup_marker_temporary() {
+            rm -f "${temporary}"
+          }
+          trap cleanup_marker_temporary EXIT HUP INT TERM
+          printf '%s\n' "${deployment_sha}" > "${temporary}"
+          chmod 600 "${temporary}"
+          ln "${temporary}" "${marker}"
+          rm -f "${temporary}"
+          trap - EXIT HUP INT TERM
+          [[ -f "${marker}" && ! -L "${marker}" ]]
+          test "$(stat -c '%a' "${marker}")" = 600
+          test "$(cat "${marker}")" = "${deployment_sha}"
+          echo "First-provision staging sealed for the approved immutable candidate."
+          SSM
+          } | bash scripts/public-demo/ssm-run-step.sh
 
       - name: Stop unsuccessful pre-cutover candidate
         id: rollback-candidate

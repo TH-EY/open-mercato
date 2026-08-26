@@ -76,8 +76,39 @@
       "types": "./src/*.tsx",
       "default": "./dist/*.js"
     },
-    "./lib/email/ses": null,
-    "./lib/email/restricted-delivery": null,
+    "./lib/email/send": {
+      "types": "./src/lib/email/send.ts",
+      "default": "./dist/lib/email/send.js"
+    },
+    "./lib/email/send.js": {
+      "types": "./src/lib/email/send.ts",
+      "default": "./dist/lib/email/send.js"
+    },
+    "./lib/email/send.ts": {
+      "types": "./src/lib/email/send.ts",
+      "default": "./dist/lib/email/send.js"
+    },
+    "./lib/email/send.tsx": {
+      "types": "./src/lib/email/send.ts",
+      "default": "./dist/lib/email/send.js"
+    },
+    "./lib/email/config": {
+      "types": "./src/lib/email/config.ts",
+      "default": "./dist/lib/email/config.js"
+    },
+    "./lib/email/config.js": {
+      "types": "./src/lib/email/config.ts",
+      "default": "./dist/lib/email/config.js"
+    },
+    "./lib/email/config.ts": {
+      "types": "./src/lib/email/config.ts",
+      "default": "./dist/lib/email/config.js"
+    },
+    "./lib/email/config.tsx": {
+      "types": "./src/lib/email/config.ts",
+      "default": "./dist/lib/email/config.js"
+    },
+    "./lib/email/*": null,
     "./*": {
       "types": [
         "./src/*.ts",
