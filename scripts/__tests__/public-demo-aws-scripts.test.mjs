@@ -1052,8 +1052,14 @@ esac`)
     assert.match(calls, /create-rule .*--priority 49007 .*127\.0\.0\.1\/32/)
     assert.match(calls, /delete-rule .*arn:test:rule:validation-app/)
     assert.match(calls, /delete-rule .*arn:test:rule:validation-mcp/)
-    assert.match(calls, /deregister-targets .*Id=i-test,Port=4787/)
-    assert.match(calls, /deregister-targets .*Id=i-test,Port=4788/)
+    const deregistrationCalls = calls
+      .split('\n')
+      .filter((call) => call.startsWith('elbv2 deregister-targets '))
+      .sort()
+    assert.deepEqual(deregistrationCalls, [
+      'elbv2 deregister-targets --region test-region-1 --target-group-arn arn:test:tg:app --targets Id=i-test,Port=4787',
+      'elbv2 deregister-targets --region test-region-1 --target-group-arn arn:test:tg:mcp --targets Id=i-test,Port=4788',
+    ])
     assert.doesNotMatch(calls, /create-rule .*--priority 100[78]/)
     assert.doesNotMatch(
       calls,
