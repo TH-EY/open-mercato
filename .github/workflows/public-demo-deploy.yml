@@ -61,6 +61,28 @@ jobs:
           tags: public-demo-candidate:${{ github.sha }}
           outputs: type=docker,dest=/tmp/public-demo-image.tar
 
+      - name: Verify non-root runtime ownership boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="public-demo-candidate:${GITHUB_SHA}"
+          docker load --input /tmp/public-demo-image.tar >/dev/null
+          trap 'docker image rm "${image}" >/dev/null 2>&1 || true' EXIT
+          docker run --rm --entrypoint sh --user 0:0 "${image}" -c \
+            'test "$(stat -c "%u:%g:%a" /app/apps/mercato/.mercato)" = "0:0:1777"'
+          docker run --rm --entrypoint sh "${image}" -c '
+            set -eu
+            lock=/app/apps/mercato/.mercato/server-start.lock
+            generated_probe=/app/apps/mercato/.mercato/generated/.runtime-write-probe
+            : > "${lock}"
+            : > "${generated_probe}"
+            rm -f "${lock}" "${generated_probe}"
+            if mv /app/apps/mercato/.mercato/next /app/apps/mercato/.mercato/next.moved 2>/dev/null; then
+              echo "non-root runtime replaced the immutable Next build" >&2
+              exit 1
+            fi
+          '
+
       - name: Bind image artifact digest
         shell: bash
         run: sha256sum /tmp/public-demo-image.tar > /tmp/public-demo-image.tar.sha256

@@ -67,6 +67,19 @@ test('build is credential-free and deploy receives only narrow permissions after
   assert.doesNotMatch(workflowSource, /AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN/)
 })
 
+test('credential-free build verifies the exact non-root runtime ownership boundary', () => {
+  const ownershipStep = workflow.jobs.build.steps.find(
+    (step) => step.name === 'Verify non-root runtime ownership boundary',
+  )
+
+  assert.ok(ownershipStep)
+  assert.match(ownershipStep.run, /docker load --input \/tmp\/public-demo-image\.tar/)
+  assert.match(ownershipStep.run, /test .*0:0:1777/)
+  assert.match(ownershipStep.run, /server-start\.lock/)
+  assert.match(ownershipStep.run, /\.mercato\/generated\/\.runtime-write-probe/)
+  assert.match(ownershipStep.run, /if mv \/app\/apps\/mercato\/\.mercato\/next/)
+})
+
 test('AWS target guard evaluates the complete EC2 response without jq precedence drift', () => {
   const targetGuard = workflow.jobs.deploy.steps.find(
     (step) => step.name === 'Verify AWS target and host availability',
@@ -485,6 +498,14 @@ test('bootstrap hides credential-bearing output and records completion only afte
   assert.match(
     dockerfileSource,
     /COPY --chown=1001:1001 --from=builder \/app\/apps\/mercato\/\.mercato\/generated \.\/apps\/mercato\/\.mercato\/generated/,
+  )
+  assert.match(
+    dockerfileSource,
+    /chmod 1777 \/app\/apps\/mercato\/\.mercato/,
+  )
+  assert.doesNotMatch(
+    dockerfileSource,
+    /chown (?:-R )?omuser:omuser \/app\/apps\/mercato\/\.mercato/,
   )
 })
 
