@@ -148,6 +148,7 @@
     "@open-mercato/cache": "workspace:*",
     "@react-email/render": "2.0.6",
     "@types/html-to-text": "^9.0.4",
+    "@types/nodemailer": "^8.0.0",
     "@types/sanitize-html": "^2.16.1",
     "dotenv": "^17.4.2",
     "html-to-text": "^10.0.0",
@@ -163,7 +164,6 @@
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
-    "@types/nodemailer": "^8.0.0",
     "@types/react": "^19.2.17",
     "jest": "^30.4.2",
     "react": "19.2.8",
