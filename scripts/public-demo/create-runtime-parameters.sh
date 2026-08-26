@@ -24,19 +24,17 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 parameter_specs=(
-  "postgres-password:PUBLIC_DEMO_POSTGRES_PASSWORD"
-  "jwt-secret:PUBLIC_DEMO_JWT_SECRET"
-  "tenant-data-encryption-key:PUBLIC_DEMO_TENANT_DATA_ENCRYPTION_KEY"
-  "meilisearch-master-key:PUBLIC_DEMO_MEILISEARCH_MASTER_KEY"
-  "initial-admin-password:PUBLIC_DEMO_INITIAL_ADMIN_PASSWORD"
-  "admin-password:PUBLIC_DEMO_ADMIN_PASSWORD"
-  "employee-password:PUBLIC_DEMO_EMPLOYEE_PASSWORD"
-  "om-hub-oauth-state-key:PUBLIC_DEMO_OM_HUB_OAUTH_STATE_KEY"
+  "postgres-password"
+  "jwt-secret"
+  "tenant-data-encryption-key"
+  "meilisearch-master-key"
+  "initial-admin-password"
+  "admin-password"
+  "employee-password"
+  "om-hub-oauth-state-key"
 )
 
-for parameter_spec in "${parameter_specs[@]}"; do
-  parameter_leaf="${parameter_spec%%:*}"
-  value_env="${parameter_spec#*:}"
+for parameter_leaf in "${parameter_specs[@]}"; do
   parameter_name="/openmercato-public-demo/runtime/${parameter_leaf}"
   metadata="$(aws ssm describe-parameters \
     --region "${AWS_REGION}" \
@@ -70,21 +68,24 @@ else:
       ;;
   esac
 
-  require_env "${value_env}"
+  if ! IFS= read -r parameter_value || [[ -z "${parameter_value}" ]]; then
+    echo "One non-empty secret value is required on stdin for absent parameter ${parameter_name}." >&2
+    exit 1
+  fi
   payload_file="${temporary_directory}/${parameter_leaf}.json"
-  export PUBLIC_DEMO_PARAMETER_NAME="${parameter_name}"
-  export PUBLIC_DEMO_PARAMETER_VALUE="${!value_env}"
-  python3 - "${payload_file}" <<'PY'
+  printf '%s' "${parameter_value}" | python3 -c '
 import json
-import os
 import sys
 from pathlib import Path
 
+value = sys.stdin.read()
+if not value or "\n" in value or "\r" in value:
+    raise SystemExit("secret value must be one non-empty line")
 Path(sys.argv[1]).write_text(
     json.dumps(
         {
-            "Name": os.environ["PUBLIC_DEMO_PARAMETER_NAME"],
-            "Value": os.environ["PUBLIC_DEMO_PARAMETER_VALUE"],
+            "Name": sys.argv[2],
+            "Value": value,
             "Type": "SecureString",
             "Tier": "Standard",
             "Overwrite": False,
@@ -92,13 +93,13 @@ Path(sys.argv[1]).write_text(
     ),
     encoding="utf-8",
 )
-PY
+' "${payload_file}" "${parameter_name}"
+  parameter_value=""
   chmod 600 "${payload_file}"
   aws ssm put-parameter \
     --region "${AWS_REGION}" \
     --cli-input-json "file://${payload_file}" \
     --output json >/dev/null
-  unset PUBLIC_DEMO_PARAMETER_VALUE
   rm -f "${payload_file}"
   echo "Created Standard SecureString ${parameter_name}."
 done

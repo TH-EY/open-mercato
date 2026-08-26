@@ -25,9 +25,10 @@ function makeHarness(awsBody) {
   return { root, binDir, callsFile }
 }
 
-function run(script, args, harness, env) {
+function run(script, args, harness, env, input) {
   return spawnSync('bash', [script, ...args], {
     encoding: 'utf8',
+    input,
     env: {
       ...process.env,
       PATH: `${harness.binDir}:${process.env.PATH}`,
@@ -460,10 +461,13 @@ exit 2`)
   }
 
   try {
-    const result = run(parametersScript, [], harness, {
-      AWS_REGION: 'test-region-1',
-      ...protectedValues,
-    })
+    const result = run(
+      parametersScript,
+      [],
+      harness,
+      { AWS_REGION: 'test-region-1' },
+      `${Object.values(protectedValues).join('\n')}\n`,
+    )
     assert.equal(result.status, 0, result.stderr)
 
     const combinedOutput = `${result.stdout}\n${result.stderr}`
@@ -472,6 +476,7 @@ exit 2`)
       assert.doesNotMatch(combinedOutput, new RegExp(value))
       assert.doesNotMatch(calls, new RegExp(value))
     }
+    assert.doesNotMatch(source(parametersScript), /PUBLIC_DEMO_(?:PARAMETER_VALUE|POSTGRES_PASSWORD|JWT_SECRET)/)
 
     const payloads = fs
       .readdirSync(harness.root)
