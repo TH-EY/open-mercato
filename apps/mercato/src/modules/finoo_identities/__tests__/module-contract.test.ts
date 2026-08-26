@@ -60,7 +60,7 @@ describe('FINOO identities module contract', () => {
     })
   })
 
-  it('exposes one localized completeness control through the People toolbar', () => {
+  it('exposes one localized completeness control beside People search', () => {
     expect(completenessFilterWidget).toMatchObject({
       metadata: {
         id: 'finoo_identities.injection.completeness-filter',
@@ -68,10 +68,11 @@ describe('FINOO identities module contract', () => {
       },
       Widget: expect.any(Function),
     })
-    expect(injectionTable['data-table:customers.people.list:toolbar']).toEqual({
+    expect(injectionTable['data-table:customers.people.list:search-trailing']).toEqual({
       widgetId: 'finoo_identities.injection.completeness-filter',
       priority: 20,
     })
+    expect(injectionTable['data-table:customers.people.list:toolbar']).toBeUndefined()
     expect(injectionTable['data-table:customers.people.list:filters']).toBeUndefined()
   })
 

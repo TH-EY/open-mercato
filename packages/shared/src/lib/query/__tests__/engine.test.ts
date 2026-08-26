@@ -516,6 +516,144 @@ describe('BasicQueryEngine (Kysely)', () => {
     expect(baseCall?._ops.wheres).toContainEqual(['todos.search_text', 'ilike', '%avision%'])
   })
 
+  test('compiles empty in and not-in filters without emitting invalid SQL lists', async () => {
+    const fakeDb = createFakeKysely({
+      customer_entities: [],
+      'information_schema.columns': [
+        { table_name: 'customer_entities', column_name: 'id' },
+      ],
+    })
+    const engine = new BasicQueryEngine({} as any, () => fakeDb as any)
+
+    await engine.query('customers:customer_entity', {
+      tenantId: 't1',
+      fields: ['id'],
+      omitAutomaticTenantOrgScope: true,
+      filters: { id: { $in: [] } },
+      page: { page: 1, pageSize: 10 },
+    })
+
+    const inCall = fakeDb._calls.find((builder: any) => builder._ops.table === 'customer_entities')
+    expect(inCall?._ops.wheres).toContainEqual(['expr', { kind: 'val', value: false }])
+
+    const notInDb = createFakeKysely({
+      customer_entities: [],
+      'information_schema.columns': [
+        { table_name: 'customer_entities', column_name: 'id' },
+      ],
+    })
+    const notInEngine = new BasicQueryEngine({} as any, () => notInDb as any)
+
+    await notInEngine.query('customers:customer_entity', {
+      tenantId: 't1',
+      fields: ['id'],
+      omitAutomaticTenantOrgScope: true,
+      filters: { id: { $nin: [] } },
+      page: { page: 1, pageSize: 10 },
+    })
+
+    const notInCall = notInDb._calls.find((builder: any) => builder._ops.table === 'customer_entities')
+    expect(notInCall?._ops.wheres).not.toContainEqual(['customer_entities.id', 'not in', []])
+  })
+
+  test('short-circuits empty set filters for document-backed fields in regular and OR groups', async () => {
+    const fakeDb = createFakeKysely({
+      customer_entities: [],
+      'information_schema.columns': [
+        { table_name: 'customer_entities', column_name: 'id' },
+      ],
+    })
+    const engine = new BasicQueryEngine({} as any, () => fakeDb as any)
+
+    await engine.query('customers:customer_entity', {
+      tenantId: 't1',
+      fields: ['id'],
+      omitAutomaticTenantOrgScope: true,
+      filters: { document_field: { $in: [] } },
+      page: { page: 1, pageSize: 10 },
+    })
+
+    const regularCall = fakeDb._calls.find((builder: any) => builder._ops.table === 'customer_entities')
+    expect(regularCall?._ops.wheres).toContainEqual(['expr', { kind: 'val', value: false }])
+
+    const orDb = createFakeKysely({
+      customer_entities: [],
+      'information_schema.columns': [
+        { table_name: 'customer_entities', column_name: 'id' },
+      ],
+    })
+    const orEngine = new BasicQueryEngine({} as any, () => orDb as any)
+
+    await orEngine.query('customers:customer_entity', {
+      tenantId: 't1',
+      fields: ['id'],
+      omitAutomaticTenantOrgScope: true,
+      filters: {
+        $or: [
+          { document_field: { $in: [] } },
+          { id: { $eq: 'customer-1' } },
+        ],
+      } as any,
+      page: { page: 1, pageSize: 10 },
+    })
+
+    const orCall = orDb._calls.find((builder: any) => builder._ops.table === 'customer_entities')
+    expect(orCall?._ops.wheres).toContainEqual([
+      'or',
+      [
+        { kind: 'val', value: false },
+        { kind: 'cmp', column: 'customer_entities.id', op: '=', value: 'customer-1' },
+      ],
+    ])
+  })
+
+  test('compiles joined-field empty set filters without invalid SQL lists', async () => {
+    const createDb = () => createFakeKysely({
+      customer_entities: [],
+      customer_tag_assignments: [],
+      'information_schema.columns': [
+        { table_name: 'customer_entities', column_name: 'id' },
+        { table_name: 'customer_tag_assignments', column_name: 'tag_id' },
+      ],
+    })
+    const join = {
+      alias: 'tag_assignments',
+      table: 'customer_tag_assignments',
+      from: { field: 'id' },
+      to: { field: 'entity_id' },
+      type: 'left' as const,
+    }
+    const inDb = createDb()
+    const inEngine = new BasicQueryEngine({} as any, () => inDb as any)
+
+    await inEngine.query('customers:customer_entity', {
+      tenantId: 't1',
+      fields: ['id'],
+      omitAutomaticTenantOrgScope: true,
+      joins: [join],
+      filters: { 'tag_assignments.tag_id': { $in: [] } },
+      page: { page: 1, pageSize: 10 },
+    })
+
+    const inJoinCall = inDb._calls.find((builder: any) => builder._ops.table === 'customer_tag_assignments')
+    expect(inJoinCall?._ops.wheres).toContainEqual(['expr', { kind: 'val', value: false }])
+
+    const notInDb = createDb()
+    const notInEngine = new BasicQueryEngine({} as any, () => notInDb as any)
+
+    await notInEngine.query('customers:customer_entity', {
+      tenantId: 't1',
+      fields: ['id'],
+      omitAutomaticTenantOrgScope: true,
+      joins: [join],
+      filters: { 'tag_assignments.tag_id': { $nin: [] } },
+      page: { page: 1, pageSize: 10 },
+    })
+
+    const notInJoinCall = notInDb._calls.find((builder: any) => builder._ops.table === 'customer_tag_assignments')
+    expect(notInJoinCall?._ops.wheres).not.toContainEqual(['tag_assignments.tag_id', 'not in', []])
+  })
+
   test('join filters use whereExists with configured alias', async () => {
     const fakeDb = createFakeKysely({
       customer_entities: [],

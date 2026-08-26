@@ -1137,10 +1137,18 @@ export class BasicQueryEngine implements QueryEngine {
         return builder.where(column as any, '<', value as any)
       case 'lte':
         return builder.where(column as any, '<=', value as any)
-      case 'in':
-        return builder.where(column as any, 'in', Array.isArray(value) ? value : [value])
-      case 'nin':
-        return builder.where(column as any, 'not in', Array.isArray(value) ? value : [value])
+      case 'in': {
+        const values = Array.isArray(value) ? value : [value]
+        return values.length === 0
+          ? builder.where((eb: any) => eb.val(false))
+          : builder.where(column as any, 'in', values)
+      }
+      case 'nin': {
+        const values = Array.isArray(value) ? value : [value]
+        return values.length === 0
+          ? builder
+          : builder.where(column as any, 'not in', values)
+      }
       case 'like':
         return builder.where(column as any, 'like', value as any)
       case 'ilike':
@@ -1162,8 +1170,14 @@ export class BasicQueryEngine implements QueryEngine {
       case 'gte': return eb(column, '>=', value)
       case 'lt': return eb(column, '<', value)
       case 'lte': return eb(column, '<=', value)
-      case 'in': return eb(column, 'in', Array.isArray(value) ? value : [value])
-      case 'nin': return eb(column, 'not in', Array.isArray(value) ? value : [value])
+      case 'in': {
+        const values = Array.isArray(value) ? value : [value]
+        return values.length === 0 ? eb.val(false) : eb(column, 'in', values)
+      }
+      case 'nin': {
+        const values = Array.isArray(value) ? value : [value]
+        return values.length === 0 ? eb.val(true) : eb(column, 'not in', values)
+      }
       case 'like': return eb(column, 'like', value)
       case 'ilike': return eb(column, 'ilike', value)
       case 'exists': return value ? eb(column, 'is not', null) : eb(column, 'is', null)
@@ -1330,6 +1344,10 @@ export class BasicQueryEngine implements QueryEngine {
       withDeleted: boolean
     }
   ): any {
+    if (Array.isArray(opts.value) && opts.value.length === 0) {
+      if (opts.op === 'in') return eb.val(false)
+      if (opts.op === 'nin') return eb.val(true)
+    }
     const alias = `ei_${this.searchAliasSeq++}`
     const engine = this
     return eb.exists((() => {

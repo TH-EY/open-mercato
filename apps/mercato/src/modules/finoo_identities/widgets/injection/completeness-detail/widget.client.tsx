@@ -7,6 +7,10 @@ import { ErrorMessage, LoadingMessage } from '@open-mercato/ui/backend/detail'
 import { readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
 import { StatusBadge, type StatusBadgeVariant } from '@open-mercato/ui/primitives/status-badge'
 import type { IdentityFieldStatus, IdentityFieldStatuses } from '../../../lib/identity-domain'
+import {
+  identityStatusStateKey,
+  readIdentityStatusSharedState,
+} from '../identity-status-sync'
 
 const fields: Array<keyof IdentityFieldStatuses> = [
   'pesel',
@@ -55,35 +59,47 @@ export default function CompletenessDetailWidget({ context, data }: InjectionWid
   const t = useT()
   const embeddedStatuses = readStatuses(data)
   const personId = readPersonId(context, data)
+  const sharedState = readIdentityStatusSharedState(context)
+  const publicationRevision = React.useRef(0)
   const [statuses, setStatuses] = React.useState<IdentityFieldStatuses | null>(embeddedStatuses)
   const [loading, setLoading] = React.useState(!embeddedStatuses)
   const [error, setError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
-    if (embeddedStatuses) {
-      setStatuses(embeddedStatuses)
-      setLoading(false)
-      setError(null)
-      return
-    }
+    if (!personId || !sharedState?.subscribe) return
+    return sharedState.subscribe(identityStatusStateKey(personId), (value) => {
+      if (value && typeof value === 'object') {
+        publicationRevision.current += 1
+        setStatuses(value as IdentityFieldStatuses)
+        setLoading(false)
+        setError(null)
+      }
+    })
+  }, [personId, sharedState])
+
+  React.useEffect(() => {
     if (!personId) {
       setLoading(false)
       setError(t('finoo_identities.errors.invalidPerson'))
       return
     }
     let cancelled = false
-    setLoading(true)
+    const revisionAtRequest = publicationRevision.current
+    setStatuses(embeddedStatuses)
+    setLoading(!embeddedStatuses)
     setError(null)
     void readApiResultOrThrow<{ statuses: IdentityFieldStatuses }>(
       `/api/finoo_identities/people/${encodeURIComponent(personId)}/status`,
       { cache: 'no-store' },
       { errorMessage: t('finoo_identities.errors.loadStatus') },
     ).then((result) => {
-      if (!cancelled) setStatuses(result.statuses)
+      if (!cancelled && publicationRevision.current === revisionAtRequest) setStatuses(result.statuses)
     }).catch((caught) => {
-      if (!cancelled) setError(caught instanceof Error ? caught.message : t('finoo_identities.errors.loadStatus'))
+      if (!cancelled && publicationRevision.current === revisionAtRequest) {
+        setError(caught instanceof Error ? caught.message : t('finoo_identities.errors.loadStatus'))
+      }
     }).finally(() => {
-      if (!cancelled) setLoading(false)
+      if (!cancelled && publicationRevision.current === revisionAtRequest) setLoading(false)
     })
     return () => {
       cancelled = true

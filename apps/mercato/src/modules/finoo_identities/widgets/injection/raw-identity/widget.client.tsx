@@ -13,6 +13,7 @@ import { apiCallOrThrow, readApiResultOrThrow } from '@open-mercato/ui/backend/u
 import { Button } from '@open-mercato/ui/primitives/button'
 import { finooIdentityInputSchema, type FinooIdentityInput } from '../../../data/validators'
 import { IDENTITY_DOCUMENT_TYPES, type IdentityFieldStatuses } from '../../../lib/identity-domain'
+import { publishIdentityStatuses } from '../identity-status-sync'
 
 type RawIdentityView = FinooIdentityInput & {
   id: string
@@ -248,6 +249,9 @@ export default function RawIdentityWidget({ context, data }: InjectionWidgetComp
             }
           : current)
         setFormVersion((current) => current + 1)
+        if (call.result?.statuses && personId) {
+          publishIdentityStatuses(context, personId, call.result.statuses)
+        }
       }
       setConflicts((current) => current.filter((item) => item.id !== conflict.id))
       flash(t(action === 'replace'
@@ -258,7 +262,7 @@ export default function RawIdentityWidget({ context, data }: InjectionWidgetComp
     } finally {
       setResolvingConflictId(null)
     }
-  }, [mutationContextId, retryLastMutation, runMutation, t])
+  }, [context, mutationContextId, personId, retryLastMutation, runMutation, t])
 
   if (loading) return <LoadingMessage label={t('finoo_identities.raw.loading')} />
   if (error) return <ErrorMessage label={error} />
@@ -311,6 +315,7 @@ export default function RawIdentityWidget({ context, data }: InjectionWidgetComp
           if (!call.result) throw new Error('[internal] Missing identity write response')
           setIdentity({ ...values, ...call.result })
           setMissing(false)
+          publishIdentityStatuses(context, personId, call.result.statuses)
         }}
       />
       {conflictsLoading ? <LoadingMessage label={t('finoo_identities.conflicts.loading')} /> : null}

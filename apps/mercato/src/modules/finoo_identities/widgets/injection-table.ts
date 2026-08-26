@@ -9,11 +9,11 @@ export const injectionTable: ModuleInjectionTable = {
     widgetId: 'finoo_identities.injection.completeness-column',
     priority: 20,
   },
-  'data-table:customers.people:toolbar': {
+  'data-table:customers.people:search-trailing': {
     widgetId: 'finoo_identities.injection.completeness-filter',
     priority: 20,
   },
-  'data-table:customers.people.list:toolbar': {
+  'data-table:customers.people.list:search-trailing': {
     widgetId: 'finoo_identities.injection.completeness-filter',
     priority: 20,
   },
