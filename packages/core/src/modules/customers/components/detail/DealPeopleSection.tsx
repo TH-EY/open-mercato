@@ -11,6 +11,7 @@ import {
   type LinkedPeoplePage,
   type LinkedPersonSummary,
 } from './LinkedPeopleSection'
+import { CreatePersonDialog, type CreatedPersonSummary } from './CreatePersonDialog'
 import { createPersonLinkAdapter } from '../linking/adapters/personAdapter'
 import type { LinkEntityConfirmInput } from '../linking/LinkEntityDialog'
 
@@ -27,6 +28,7 @@ export type DealPeopleSectionProps = {
   /** Persists the whole selection through the deal's optimistic-locked update. */
   onSaveSelection: (nextIds: string[]) => Promise<void>
   fallbackPeople?: LinkedPersonSummary[]
+  addActionLabel: string
   disabled?: boolean
   emptyLabel: string
   emptyState: TabEmptyStateConfig
@@ -41,6 +43,7 @@ export function DealPeopleSection({
   selectedIds,
   onSaveSelection,
   fallbackPeople,
+  addActionLabel,
   disabled = false,
   emptyLabel,
   emptyState,
@@ -54,6 +57,9 @@ export function DealPeopleSection({
     [tHook],
   )
   const translate: Translator = translator ?? fallbackTranslator
+  const [createDialogOpen, setCreateDialogOpen] = React.useState(false)
+  const [linkDialogOpen, setLinkDialogOpen] = React.useState(false)
+  const [refreshKey, setRefreshKey] = React.useState(0)
 
   const loadPage = React.useCallback(
     async ({
@@ -103,6 +109,25 @@ export function DealPeopleSection({
     [onSaveSelection],
   )
 
+  // The people CRUD route can auto-link a new person to a company, but not to a deal,
+  // so the deal link is a follow-up write through the same optimistic-locked selection save.
+  const handlePersonCreated = React.useCallback(
+    async (created?: CreatedPersonSummary) => {
+      const createdId = created?.id?.trim()
+      if (!createdId) {
+        setRefreshKey((current) => current + 1)
+        return
+      }
+      if (selectedIds.includes(createdId)) {
+        setRefreshKey((current) => current + 1)
+        return
+      }
+      await onSaveSelection([...selectedIds, createdId])
+      setRefreshKey((current) => current + 1)
+    },
+    [onSaveSelection, selectedIds],
+  )
+
   const personLinkAdapter = React.useMemo(
     () =>
       createPersonLinkAdapter({
@@ -133,39 +158,75 @@ export function DealPeopleSection({
         confirmButtonLabel: translate('customers.linking.person.confirmButton', 'Link person'),
         defaultAvatarIcon: <Users className="size-4" />,
         excludeLinkedDealId: dealId,
+        addNew: {
+          title: translate('customers.linking.person.addNew', 'Add new contact'),
+          subtitle: translate(
+            'customers.deals.detail.people.addNewSubtitle',
+            'The new contact is linked to this deal automatically',
+          ),
+          render: ({ onCancel }) => (
+            <CreatePersonDialog
+              open
+              onClose={onCancel}
+              runGuardedMutation={runGuardedMutation}
+              onPersonCreated={(created) => {
+                void handlePersonCreated(created)
+                setLinkDialogOpen(false)
+                onCancel()
+              }}
+            />
+          ),
+        },
       }),
-    [dealId, dealName, translate],
+    [dealId, dealName, handlePersonCreated, runGuardedMutation, translate],
   )
 
   return (
-    <LinkedPeopleSection
-      scopeId={dealId}
-      fallbackPeople={fallbackPeople}
-      loadPage={loadPage}
-      onUnlink={handleUnlink}
-      linkAdapter={personLinkAdapter}
-      linkedIds={selectedIds}
-      onLinkConfirm={handleLinkConfirm}
-      sectionTitle={translate('customers.deals.detail.people.sectionTitle', 'People')}
-      sectionSubtitle={translate(
-        'customers.deals.detail.people.sectionSubtitle',
-        'Contacts involved in this deal',
-      )}
-      searchPlaceholder={translate(
-        'customers.deals.detail.people.searchPlaceholder',
-        'Search by name, role, email...',
-      )}
-      linkActionLabel={translate(
-        'customers.deals.detail.people.linkAction',
-        'Link existing person',
-      )}
-      emptyLabel={emptyLabel}
-      emptyState={emptyState}
-      disabled={disabled}
-      translator={translate}
-      runGuardedMutation={runGuardedMutation}
-      onLoadingChange={onLoadingChange}
-    />
+    <>
+      <LinkedPeopleSection
+        scopeId={dealId}
+        fallbackPeople={fallbackPeople}
+        loadPage={loadPage}
+        onUnlink={handleUnlink}
+        linkAdapter={personLinkAdapter}
+        linkDialogOpen={linkDialogOpen}
+        onLinkDialogOpenChange={setLinkDialogOpen}
+        linkedIds={selectedIds}
+        onLinkConfirm={handleLinkConfirm}
+        refreshKey={refreshKey}
+        addActionLabel={addActionLabel}
+        onAddPerson={() => setCreateDialogOpen(true)}
+        sectionTitle={translate('customers.deals.detail.people.sectionTitle', 'People')}
+        sectionSubtitle={translate(
+          'customers.deals.detail.people.sectionSubtitle',
+          'Contacts involved in this deal',
+        )}
+        searchPlaceholder={translate(
+          'customers.deals.detail.people.searchPlaceholder',
+          'Search by name, role, email...',
+        )}
+        linkActionLabel={translate(
+          'customers.deals.detail.people.linkAction',
+          'Link existing person',
+        )}
+        emptyLabel={emptyLabel}
+        emptyState={emptyState}
+        disabled={disabled}
+        translator={translate}
+        runGuardedMutation={runGuardedMutation}
+        onLoadingChange={onLoadingChange}
+      />
+
+      <CreatePersonDialog
+        open={createDialogOpen}
+        onClose={() => setCreateDialogOpen(false)}
+        runGuardedMutation={runGuardedMutation}
+        onPersonCreated={(created) => {
+          setCreateDialogOpen(false)
+          void handlePersonCreated(created)
+        }}
+      />
+    </>
   )
 }
 

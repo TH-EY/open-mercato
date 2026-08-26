@@ -18,6 +18,29 @@ jest.mock('@open-mercato/ui/backend/utils/apiCall', () => ({
   readApiResultOrThrow: (...args: unknown[]) => readApiResultOrThrowMock(...args),
 }))
 
+jest.mock('../CreatePersonDialog', () => ({
+  CreatePersonDialog: ({
+    open,
+    companyId,
+    onPersonCreated,
+  }: {
+    open: boolean
+    companyId?: string
+    onPersonCreated?: (created: { id: string; displayName: string }) => void
+  }) =>
+    open ? (
+      <div>
+        <span>{`create-person-dialog:${companyId ?? 'no-company'}`}</span>
+        <button
+          type="button"
+          onClick={() => onPersonCreated?.({ id: 'person-new', displayName: 'New Person' })}
+        >
+          submit-create-person
+        </button>
+      </div>
+    ) : null,
+}))
+
 jest.mock('../PersonCard', () => ({
   PersonCard: ({
     person,
@@ -38,7 +61,7 @@ jest.mock('../PersonCard', () => ({
 describe('DealPeopleSection', () => {
   const emptyState = {
     title: 'Link the people involved',
-    actionLabel: 'Link existing person',
+    actionLabel: 'Add person',
   }
 
   const linkedPeople: LinkedPersonSummary[] = [
@@ -53,6 +76,7 @@ describe('DealPeopleSection', () => {
         dealName="Expansion renewal"
         selectedIds={['person-1', 'person-2']}
         onSaveSelection={onSaveSelection}
+        addActionLabel="Add person"
         emptyLabel="No people linked to this deal yet."
         emptyState={emptyState}
       />,
@@ -144,7 +168,7 @@ describe('DealPeopleSection', () => {
     expect(screen.getByPlaceholderText('Search by name, role, email...')).toBeInTheDocument()
   })
 
-  it('renders the empty state with a link action when nothing is linked', async () => {
+  it('renders the empty state with both link and add actions when nothing is linked', async () => {
     readApiResultOrThrowMock.mockImplementation(async () => ({
       items: [],
       page: 1,
@@ -157,6 +181,7 @@ describe('DealPeopleSection', () => {
         dealId="deal-1"
         selectedIds={[]}
         onSaveSelection={jest.fn(async () => {})}
+        addActionLabel="Add person"
         emptyLabel="No people linked to this deal yet."
         emptyState={emptyState}
       />,
@@ -167,5 +192,60 @@ describe('DealPeopleSection', () => {
     expect(screen.getByText('Link the people involved')).toBeInTheDocument()
     expect(screen.getByText('No people linked to this deal yet.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Link existing person/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add person' })).toBeInTheDocument()
+  })
+
+  it('opens a company-less create dialog from the add-person action', async () => {
+    renderSection(jest.fn(async () => {}))
+    await waitForInitialLoad()
+
+    expect(screen.queryByText(/create-person-dialog/)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Add person/ }))
+
+    expect(screen.getByText('create-person-dialog:no-company')).toBeInTheDocument()
+  })
+
+  it('links the newly created person to the deal', async () => {
+    const onSaveSelection = jest.fn(async () => {})
+    renderSection(onSaveSelection)
+    await waitForInitialLoad()
+
+    fireEvent.click(screen.getByRole('button', { name: /Add person/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'submit-create-person' }))
+
+    await waitFor(() => {
+      expect(onSaveSelection).toHaveBeenCalledWith(['person-1', 'person-2', 'person-new'])
+    })
+  })
+
+  it('offers the add-person action from the empty state', async () => {
+    readApiResultOrThrowMock.mockImplementation(async () => ({
+      items: [],
+      page: 1,
+      total: 0,
+      totalPages: 1,
+    }))
+    const onSaveSelection = jest.fn(async () => {})
+
+    renderWithProviders(
+      <DealPeopleSection
+        dealId="deal-1"
+        selectedIds={[]}
+        onSaveSelection={onSaveSelection}
+        addActionLabel="Add person"
+        emptyLabel="No people linked to this deal yet."
+        emptyState={{ title: 'Link the people involved', actionLabel: 'Add person' }}
+      />,
+    )
+
+    await waitForInitialLoad()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add person' }))
+    fireEvent.click(screen.getByRole('button', { name: 'submit-create-person' }))
+
+    await waitFor(() => {
+      expect(onSaveSelection).toHaveBeenCalledWith(['person-new'])
+    })
   })
 })
