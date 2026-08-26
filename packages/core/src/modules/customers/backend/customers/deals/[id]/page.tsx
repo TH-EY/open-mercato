@@ -533,11 +533,12 @@ export default function DealDetailPage({ params }: { params?: { id?: string } })
               dealName={dealName}
               selectedIds={peopleEditorIds}
               onSaveSelection={(next) => handlePeopleAssociationsChange(next)}
+              addActionLabel={t('customers.deals.detail.peopleAdd', 'Add person')}
               disabled={peopleSaving || isSaving}
               emptyLabel={t('customers.deals.detail.peopleEmpty', 'No people linked to this deal yet.')}
               emptyState={{
                 title: t('customers.deals.detail.peopleEmptyTitle', 'Link the people involved'),
-                actionLabel: t('customers.deals.detail.peopleEmptyAction', 'Link existing person'),
+                actionLabel: t('customers.deals.detail.peopleEmptyAction', 'Add person'),
               }}
               translator={detailTranslator}
               runGuardedMutation={runMutationWithContext}
