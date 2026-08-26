@@ -509,6 +509,13 @@ test('bootstrap hides credential-bearing output and records completion only afte
   )
 })
 
+test('runtime uses readable role-based login identifiers on the demo hostname', () => {
+  assert.match(workflowSource, /OM_INIT_SUPERADMIN_EMAIL=superadmin@public-demo\.om\.they\.dev/)
+  assert.match(workflowSource, /OM_INIT_ADMIN_EMAIL=admin@public-demo\.om\.they\.dev/)
+  assert.match(workflowSource, /OM_INIT_EMPLOYEE_EMAIL=employee@public-demo\.om\.they\.dev/)
+  assert.doesNotMatch(workflowSource, /OM_INIT_(?:SUPERADMIN|ADMIN|EMPLOYEE)_EMAIL=.*\.invalid/)
+})
+
 test('app and worker share the exact fail-closed SES sender and quota policy', () => {
   for (const serviceName of ['app', 'worker']) {
     const environment = compose.services[serviceName].environment

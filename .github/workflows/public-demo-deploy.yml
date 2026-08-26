@@ -489,9 +489,9 @@ jobs:
           JWT_SECRET=${jwt_secret}
           TENANT_DATA_ENCRYPTION_KEY=${tenant_key}
           MEILISEARCH_MASTER_KEY=${meili_key}
-          OM_INIT_SUPERADMIN_EMAIL=success@simulator.amazonses.com
-          OM_INIT_ADMIN_EMAIL=admin@public-demo.invalid
-          OM_INIT_EMPLOYEE_EMAIL=employee@public-demo.invalid
+          OM_INIT_SUPERADMIN_EMAIL=superadmin@public-demo.om.they.dev
+          OM_INIT_ADMIN_EMAIL=admin@public-demo.om.they.dev
+          OM_INIT_EMPLOYEE_EMAIL=employee@public-demo.om.they.dev
           ADMIN_EMAIL=success@simulator.amazonses.com
           EMAIL_FROM=no-reply@they.dev
           AWS_REGION=eu-west-2
