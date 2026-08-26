@@ -637,11 +637,15 @@ test('routing contract is exact and cannot mutate shared DNS, certificates, or s
   const cutoverBlock = script.slice(script.indexOf('  cutover)'), script.indexOf('  readback)'))
   const registerIndex = cutoverBlock.indexOf('register_target "${app_target_group_arn}"')
   const validationRuleIndex = cutoverBlock.indexOf('create_validation_rule "${app_validation_priority}"')
-  const waitIndex = cutoverBlock.indexOf('wait_for_target "${app_target_group_arn}"')
-  const ruleIndex = cutoverBlock.indexOf('create_forward_rule "${app_priority}"')
+  const appWaitIndex = cutoverBlock.indexOf('wait_for_target "${app_target_group_arn}"')
+  const mcpWaitIndex = cutoverBlock.indexOf('wait_for_target "${mcp_target_group_arn}"')
+  const mcpRuleIndex = cutoverBlock.indexOf('create_forward_rule "${mcp_priority}"')
+  const appRuleIndex = cutoverBlock.indexOf('create_forward_rule "${app_priority}"')
   assert.ok(registerIndex >= 0 && registerIndex < validationRuleIndex)
-  assert.ok(validationRuleIndex < waitIndex)
-  assert.ok(waitIndex < ruleIndex)
+  assert.ok(validationRuleIndex < appWaitIndex)
+  assert.ok(appWaitIndex < mcpWaitIndex)
+  assert.ok(mcpWaitIndex < mcpRuleIndex)
+  assert.ok(mcpWaitIndex < appRuleIndex)
 })
 
 test('routing preflight rejects non-TLS listeners, direct ingress, and wildcard or regex host collisions', () => {
@@ -932,7 +936,8 @@ esac`)
   })
 }
 
-test('routing waiter failure never publishes and removes only temporary rules and exact registrations', () => {
+for (const waiterFailurePort of [4787, 4788]) {
+test(`routing waiter failure on ${waiterFailurePort} never publishes and removes only exact attempted state`, () => {
   const harness = makeHarness(String.raw`
 printf '%s\n' "$*" >> "$FAKE_CALLS_FILE"
 case "$1 $2" in
@@ -1003,6 +1008,8 @@ case "$1 $2" in
     ;;
   "elbv2 wait")
     [[ -f "$FAKE_STATE_DIR/validation-app" && -f "$FAKE_STATE_DIR/validation-mcp" ]] || exit 3
+    if [[ "$*" == *"arn:test:tg:mcp"* ]]; then port=4788; else port=4787; fi
+    [[ "$port" == "$FAKE_FAIL_PORT" ]] || exit 0
     echo 'simulated target health waiter failure' >&2
     exit 255
     ;;
@@ -1026,6 +1033,7 @@ esac`)
     LISTENER_SSL_POLICY: 'ELBSecurityPolicy-TLS13-1-2-2021-06',
     LOAD_BALANCER_SECURITY_GROUP_ID: 'sg-alb',
     FAKE_STATE_DIR: harness.root,
+    FAKE_FAIL_PORT: String(waiterFailurePort),
     ...hostReadbackEnv(harness),
   }
 
@@ -1055,3 +1063,4 @@ esac`)
     fs.rmSync(harness.root, { recursive: true, force: true })
   }
 })
+}
