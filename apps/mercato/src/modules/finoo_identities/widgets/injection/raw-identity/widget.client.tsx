@@ -11,7 +11,7 @@ import { useBackendChrome } from '@open-mercato/ui/backend/BackendChromeProvider
 import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
 import { apiCallOrThrow, readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
 import { Button } from '@open-mercato/ui/primitives/button'
-import { finooIdentityInputSchema, type FinooIdentityInput } from '../../../data/validators'
+import { finooIdentityFormSchema, type FinooIdentityInput } from '../../../data/validators'
 import { IDENTITY_DOCUMENT_TYPES, type IdentityFieldStatuses } from '../../../lib/identity-domain'
 import { publishIdentityStatuses } from '../identity-status-sync'
 
@@ -186,6 +186,7 @@ export default function RawIdentityWidget({ context, data }: InjectionWidgetComp
       type: 'text',
       maxLength: 2,
       readOnly: !canManage,
+      visibleWhen: { field: 'documentType', equals: 'passport' },
     },
     {
       id: 'documentNumber',
@@ -295,7 +296,7 @@ export default function RawIdentityWidget({ context, data }: InjectionWidgetComp
       <h3 className="text-sm font-semibold text-foreground">{t('finoo_identities.raw.title')}</h3>
       <CrudForm<FinooIdentityInput>
         key={`${identity?.updatedAt ?? 'missing'}:${formVersion}`}
-        schema={finooIdentityInputSchema}
+        schema={finooIdentityFormSchema}
         fields={fields}
         initialValues={initialValues}
         optimisticLockUpdatedAt={identity?.updatedAt ?? null}

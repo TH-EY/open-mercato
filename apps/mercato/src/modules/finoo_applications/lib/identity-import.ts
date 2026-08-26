@@ -63,10 +63,12 @@ export function buildFinooIdentityImportInput(payload: SanitizedFinooApplication
   const country = normalizedText(payload.idType === 'PASSPORT'
     ? payload.passportCountryCode || payload.country
     : payload.country)
+  const issuingCountryCode = country?.toUpperCase()
+    ?? (documentType === 'identity_card' || documentType === 'digital_identity_card' ? 'PL' : null)
   return {
     pesel: payload.pesel?.replace(/\D/g, '') ?? '',
     documentType,
-    issuingCountryCode: country?.toUpperCase() ?? null,
+    issuingCountryCode,
     documentNumber,
     issuedOn,
     expiresOn,

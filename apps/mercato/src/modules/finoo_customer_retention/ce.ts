@@ -8,6 +8,7 @@ export const FINOO_CUSTOMER_RETENTION_FIELDS = [
     options: [
       { value: 'active', label: 'Active' },
       { value: 'expired', label: 'Expired' },
+      { value: 'excluded', label: 'Not applicable' },
     ],
     filterable: true,
     indexed: true,

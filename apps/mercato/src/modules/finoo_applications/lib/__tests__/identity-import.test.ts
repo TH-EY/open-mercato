@@ -21,4 +21,33 @@ describe('FINOO application identity import mapping', () => {
       expiresOn: '2034-01-10',
     })
   })
+
+  it.each([
+    ['IDCARD', 'idCard', 'identity_card'],
+    ['DIGITCARD', 'digitCard', 'digital_identity_card'],
+  ] as const)('derives Poland for %s when the form omits country', (idType, documentField, documentType) => {
+    const payload = {
+      pesel: '44051401458',
+      idType,
+      [documentField]: 'ABC123456',
+    } as SanitizedFinooApplicationPayload
+
+    expect(buildFinooIdentityImportInput(payload)).toMatchObject({
+      documentType,
+      issuingCountryCode: 'PL',
+    })
+  })
+
+  it('does not derive a country for a passport', () => {
+    const payload = {
+      pesel: '44051401458',
+      idType: 'PASSPORT',
+      passport: 'AB1234567',
+    } as SanitizedFinooApplicationPayload
+
+    expect(buildFinooIdentityImportInput(payload)).toMatchObject({
+      documentType: 'passport',
+      issuingCountryCode: null,
+    })
+  })
 })

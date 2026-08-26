@@ -43,6 +43,51 @@ describe('FINOO identity domain', () => {
     })
   })
 
+  it.each(['identity_card', 'permanent_identity_card', 'digital_identity_card'])(
+    'derives Poland as the issuing country for %s completeness',
+    (documentType) => {
+      expect(computeIdentityCompleteness({
+        pesel: '44051401458',
+        documentType,
+        issuingCountryCode: null,
+        documentNumber: 'ABC 123456',
+        issuedOn: '2024-05-14',
+        expiresOn: documentType === 'permanent_identity_card' ? null : '2034-05-14',
+      })).toMatchObject({
+        isComplete: true,
+        statuses: { issuingCountryCode: 'complete' },
+      })
+    },
+  )
+
+  it('requires an issuing country for passports', () => {
+    expect(computeIdentityCompleteness({
+      pesel: '44051401458',
+      documentType: 'passport',
+      issuingCountryCode: null,
+      documentNumber: 'AB1234567',
+      issuedOn: '2024-05-14',
+      expiresOn: '2034-05-14',
+    })).toMatchObject({
+      isComplete: false,
+      statuses: { issuingCountryCode: 'missing' },
+    })
+  })
+
+  it('does not accept a foreign issuing country for a Polish identity document', () => {
+    expect(computeIdentityCompleteness({
+      pesel: '44051401458',
+      documentType: 'identity_card',
+      issuingCountryCode: 'DE',
+      documentNumber: 'ABC 123456',
+      issuedOn: '2024-05-14',
+      expiresOn: '2034-05-14',
+    })).toMatchObject({
+      isComplete: false,
+      statuses: { issuingCountryCode: 'missing' },
+    })
+  })
+
   it('reports invalid legacy PESEL and impossible dates as missing', () => {
     expect(validatePesel('44023101458')).toMatchObject({ valid: false, reason: 'invalid' })
     expect(computeIdentityCompleteness({

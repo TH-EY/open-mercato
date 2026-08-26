@@ -123,9 +123,9 @@ Nie wysyłać dodatkowego pola prezentacyjnego `turnover`; jego wartość liczbo
 | `pesel` | `pesel` | 11 cyfr |
 | JDG | `position: "Właściciel"` | Wartość istniejącego słownika CRM |
 | stanowisko w spółce | `position` | Jedna z wartości słownika CRM, np. `Prezes zarządu`, `Wiceprezes zarządu`, `Członek zarządu`, `Dyrektor finansowy`, `Prokurent`, `Wspólnik` |
-| dowód osobisty | `idType: "IDCARD"` + `idCard`, `idCardIssued`, `idCardExpiry`, `country` | Daty ISO `YYYY-MM-DD`; `country`, np. `PL` |
+| dowód osobisty | `idType: "IDCARD"` + `idCard`, `idCardIssued`, `idCardExpiry` | Daty ISO `YYYY-MM-DD`; kraj jest wyznaczany jako `PL`, więc `country` można pominąć; jeśli jest przesłany, musi mieć wartość `PL` |
 | paszport | `idType: "PASSPORT"` + `passport`, `passportCountryCode`, `passportIssued`, `passportExpiry` | Kod kraju, np. `PL` albo `UK` |
-| mDowód | `idType: "DIGITCARD"` + `digitCard`, `digitCardIssued`, `digitCardExpiry`, `country` | Daty ISO `YYYY-MM-DD` |
+| mDowód | `idType: "DIGITCARD"` + `digitCard`, `digitCardIssued`, `digitCardExpiry` | Daty ISO `YYYY-MM-DD`; kraj jest wyznaczany jako `PL`, więc `country` można pominąć; jeśli jest przesłany, musi mieć wartość `PL` |
 | `propertyCommunity` dla JDG | `NovaLend-propertyCommunity` | Boolean |
 
 ### Zgody

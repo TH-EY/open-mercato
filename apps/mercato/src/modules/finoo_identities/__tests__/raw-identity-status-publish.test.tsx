@@ -8,6 +8,8 @@ import { apiCallOrThrow, readApiResultOrThrow } from '@open-mercato/ui/backend/u
 import CompletenessDetailWidget from '../widgets/injection/completeness-detail/widget.client'
 import RawIdentityWidget from '../widgets/injection/raw-identity/widget.client'
 
+const mockCrudFormProps = jest.fn()
+
 jest.mock('@open-mercato/shared/lib/i18n/context', () => {
   const translate = jest.fn((key: string) => key)
   return { useT: () => translate }
@@ -32,21 +34,28 @@ jest.mock('@open-mercato/ui/backend/detail', () => ({
   LoadingMessage: ({ label }: { label: string }) => <div>{label}</div>,
 }))
 jest.mock('@open-mercato/ui/backend/CrudForm', () => ({
-  CrudForm: ({ onSubmit }: { onSubmit: (values: Record<string, unknown>) => Promise<void> }) => (
-    <button
-      type="button"
-      onClick={() => void onSubmit({
-        pesel: '00210112344',
-        documentType: 'identity_card',
-        issuingCountryCode: 'PL',
-        documentNumber: 'QA108BEBEA2',
-        issuedOn: '2026-01-01',
-        expiresOn: '2036-01-01',
-      })}
-    >
-      save-identity
-    </button>
-  ),
+  CrudForm: (props: {
+    fields: Array<{ id: string; visibleWhen?: { field: string; equals: unknown } }>
+    onSubmit: (values: Record<string, unknown>) => Promise<void>
+    schema: { parse: (input: unknown) => Record<string, unknown> }
+  }) => {
+    mockCrudFormProps(props)
+    return (
+      <button
+        type="button"
+        onClick={() => void props.onSubmit({
+          pesel: '00210112344',
+          documentType: 'identity_card',
+          issuingCountryCode: 'PL',
+          documentNumber: 'QA108BEBEA2',
+          issuedOn: '2026-01-01',
+          expiresOn: '2036-01-01',
+        })}
+      >
+        save-identity
+      </button>
+    )
+  },
 }))
 jest.mock('@open-mercato/ui/backend/utils/apiCall', () => ({
   apiCallOrThrow: jest.fn(),
@@ -95,6 +104,8 @@ function createSharedState() {
 }
 
 describe('raw identity status publication', () => {
+  beforeEach(() => mockCrudFormProps.mockClear())
+
   it('updates the sibling completeness widget through the real successful save callback', async () => {
     let resolveStatusRequest: ((value: { statuses: typeof missingStatuses }) => void) | undefined
     const statusRequest = new Promise<{ statuses: typeof missingStatuses }>((resolve) => {
@@ -138,7 +149,19 @@ describe('raw identity status publication', () => {
       </>,
     )
 
-    fireEvent.click(await screen.findByRole('button', { name: 'save-identity' }))
+    const saveButton = await screen.findByRole('button', { name: 'save-identity' })
+    const crudFormProps = mockCrudFormProps.mock.calls.at(-1)?.[0]
+    expect(crudFormProps?.fields).toContainEqual(expect.objectContaining({
+      id: 'issuingCountryCode',
+      visibleWhen: { field: 'documentType', equals: 'passport' },
+    }))
+    expect(crudFormProps?.schema.parse({
+      pesel: '44051401458',
+      documentType: 'identity_card',
+      issuingCountryCode: 'DE',
+    })).toMatchObject({ issuingCountryCode: 'PL' })
+
+    fireEvent.click(saveButton)
 
     await waitFor(() => expect(screen.getAllByText('finoo_identities.status.complete')).toHaveLength(6))
     expect(mockedApiCallOrThrow).toHaveBeenCalledWith(

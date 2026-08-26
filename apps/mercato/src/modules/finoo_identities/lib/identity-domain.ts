@@ -3,10 +3,10 @@ export type PeselValidationResult =
   | { valid: false; normalized: string | null; reason: 'missing' | 'invalid' }
 
 export const IDENTITY_DOCUMENT_TYPES = {
-  identity_card: { requiresExpiryDate: true },
-  permanent_identity_card: { requiresExpiryDate: false },
-  passport: { requiresExpiryDate: true },
-  digital_identity_card: { requiresExpiryDate: true },
+  identity_card: { requiresExpiryDate: true, fixedIssuingCountryCode: 'PL' },
+  permanent_identity_card: { requiresExpiryDate: false, fixedIssuingCountryCode: 'PL' },
+  passport: { requiresExpiryDate: true, fixedIssuingCountryCode: null },
+  digital_identity_card: { requiresExpiryDate: true, fixedIssuingCountryCode: 'PL' },
 } as const
 
 export type IdentityDocumentType = keyof typeof IDENTITY_DOCUMENT_TYPES
@@ -75,8 +75,24 @@ export function validatePesel(value: string | null | undefined): PeselValidation
   return { valid: true, normalized }
 }
 
-function isIdentityDocumentType(value: string | null | undefined): value is IdentityDocumentType {
+export function isIdentityDocumentType(value: string | null | undefined): value is IdentityDocumentType {
   return typeof value === 'string' && value in IDENTITY_DOCUMENT_TYPES
+}
+
+export function fixedIdentityIssuingCountryCode(
+  documentType: string | null | undefined,
+): 'PL' | null {
+  return isIdentityDocumentType(documentType)
+    ? IDENTITY_DOCUMENT_TYPES[documentType].fixedIssuingCountryCode
+    : null
+}
+
+export function normalizeIdentityIssuingCountryCode(
+  documentType: string | null | undefined,
+  issuingCountryCode: string | null | undefined,
+): string | null {
+  const normalized = issuingCountryCode?.trim().toUpperCase() || null
+  return normalized ?? fixedIdentityIssuingCountryCode(documentType)
 }
 
 function parseIdentityDate(value: string | Date | null | undefined): Date | null {
@@ -96,12 +112,15 @@ export function computeIdentityCompleteness(input: IdentityDataInput): IdentityC
   const requiresExpiryDate = documentType === null
     ? true
     : IDENTITY_DOCUMENT_TYPES[documentType].requiresExpiryDate
+  const normalizedCountryCode = normalizeIdentityIssuingCountryCode(documentType, input.issuingCountryCode)
+  const fixedCountryCode = fixedIdentityIssuingCountryCode(documentType)
+  const hasValidCountryCode = normalizedCountryCode !== null
+    && /^[A-Z]{2}$/.test(normalizedCountryCode)
+    && (fixedCountryCode === null || normalizedCountryCode === fixedCountryCode)
   const statuses: IdentityFieldStatuses = {
     pesel: validatePesel(input.pesel).valid ? 'complete' : 'missing',
     documentType: documentType ? 'complete' : 'missing',
-    issuingCountryCode: typeof input.issuingCountryCode === 'string' && /^[A-Za-z]{2}$/.test(input.issuingCountryCode.trim())
-      ? 'complete'
-      : 'missing',
+    issuingCountryCode: hasValidCountryCode ? 'complete' : 'missing',
     documentNumber: typeof input.documentNumber === 'string' && input.documentNumber.trim().length > 0 && input.documentNumber.trim().length <= 64
       ? 'complete'
       : 'missing',

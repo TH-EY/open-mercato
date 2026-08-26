@@ -499,9 +499,7 @@ export function createFinooCustomerRetentionProjectionService(input: {
         organizationIdByRecord: { [profile.id]: scope.organizationId },
       })
       const existing = existingMirrors[profile.id] ?? {}
-      const nextStatus = projection.retentionStatus === 'excluded'
-        ? null
-        : projection.retentionStatus
+      const nextStatus = projection.retentionStatus
       const nextExpiry = projection.retentionStatus === 'excluded'
         ? null
         : projection.retentionExpiresAt?.toISOString() ?? null

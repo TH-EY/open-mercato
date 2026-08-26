@@ -143,6 +143,7 @@ describe('FINOO identity existing-organization setup CLI', () => {
       'cutover-legacy',
       'rollback-legacy',
       'purge-legacy',
+      'repair-completeness',
     ])
   })
 

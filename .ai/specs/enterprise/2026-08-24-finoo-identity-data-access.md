@@ -230,7 +230,8 @@ It has no raw values, snapshots, free text, update endpoint, delete endpoint, or
 
 - PESEL normalizes to exactly 11 digits and validates checksum plus 1800–2299 encoded date.
 - New human/import writes reject invalid PESEL. Migration may preserve invalid legacy ciphertext but its status is `missing`; validation detail is visible only in the privileged form.
-- Country code normalizes uppercase and matches two ASCII letters.
+- Passport country code normalizes uppercase and matches two ASCII letters.
+- `identity_card`, `permanent_identity_card`, and `digital_identity_card` are Polish identity documents: their issuing country is derived as `PL` when omitted, and a directly supplied non-`PL` value is rejected as conflicting input.
 - Document number is trimmed/bounded; internal formatting is preserved.
 - Dates are ISO `YYYY-MM-DD`; required expiry cannot precede issue date.
 - Document type is module-catalog metadata; request input cannot set expiry applicability.
@@ -239,7 +240,7 @@ It has no raw values, snapshots, free text, update endpoint, delete endpoint, or
 |---|---|---|---|
 | PESEL | Present and valid | Absent/invalid | Never |
 | Type | Recognized | Absent/unknown | Never |
-| Country | Valid | Absent/invalid | Never |
+| Country | Valid passport country, or derived `PL` for a Polish identity document | Absent/invalid for passport, or conflicting non-`PL` value for a Polish identity document | Never |
 | Number | Non-empty/valid | Absent/invalid | Never |
 | Issue date | Valid | Absent/invalid | Never |
 | Expiry date | Valid and ordered when required | Absent/invalid when required | Type metadata says no expiry |
@@ -354,6 +355,8 @@ Legacy typo `idenitity_card` maps to `identity_card`. Unknown dictionary or dire
 
 Invalid legacy values are copied encrypted and marked missing. New writes remain strict.
 
+After changing document-type completeness rules, run the exact-scope `repair-completeness` command in count-only dry-run mode and then apply mode. It first requires active tenant encryption, a recoverable key, and the complete identity encryption map; then it reads active identities through scoped decryption, derives missing `PL` only for Polish identity documents, writes a value-free system audit for every normalized protected country field, recomputes stored field/aggregate statuses, reports conflicting foreign countries without overwriting them, and is idempotent. Its report contains counters only and never identity IDs or raw values.
+
 ### Phase C — cutover
 
 1. Require valid PESEL for final `finoo_applications` submission and call the write-only identity port.
@@ -420,17 +423,17 @@ Integration tests create/clean their own tenant, org, users/roles, Person, maps,
 | ID | Coverage |
 |---|---|
 | `TC-FINOO-ID-U01` | PESEL normalization/checksum/date. |
-| `TC-FINOO-ID-U02` | Field/aggregate statuses including N/A. |
+| `TC-FINOO-ID-U02` | Field/aggregate statuses including expiry N/A, derived `PL`, passport country requirement, and conflicting domestic country. |
 | `TC-FINOO-ID-U03` | Exact IOD grants and no admin/employee/import grants. |
 | `TC-FINOO-ID-U04` | Encryption map completeness. |
 | `TC-FINOO-ID-U05` | Every raw route uses audited auth; safe routes never decrypt. |
 | `TC-FINOO-ID-U06` | Import create/retry/conflict/no-overwrite. |
 | `TC-FINOO-ID-U07` | Identity/conflict optimistic locks. |
-| `TC-FINOO-ID-U08` | Migration idempotency, count-only output, purge guards. |
+| `TC-FINOO-ID-U08` | Migration and completeness-repair idempotency, count-only output, scope, conflict preservation, and purge guards. |
 | `TC-FINOO-ID-U09` | Retained plaintext/ciphertext rows with inactive definitions are omitted before decryption; strict Person writes reject tombstoned keys. |
 | `TC-FINOO-ID-001` | Ordinary user sees statuses, no protected key/value. |
 | `TC-FINOO-ID-002` | Ordinary raw GET/PUT/conflict returns audited 403 without decrypt/mutate. |
-| `TC-FINOO-ID-003` | IOD read/update and value-free audit. |
+| `TC-FINOO-ID-003` | IOD read/update, derived `PL`, conflicting domestic-country rejection, and value-free audit. |
 | `TC-FINOO-ID-004` | Superadmin standard bypass. |
 | `TC-FINOO-ID-005` | IOD provisioned without assignment; admin/employee denied. |
 | `TC-FINOO-ID-006` | Exact filter and explicit >200 rejection. |
@@ -618,6 +621,11 @@ Fixture PESEL/document canaries are scanned across responses, logs, events, CLI 
 - Recorded the completed FINOO deployment/cutover evidence for commit `6406e161a2a64ab4701550b5672d6d0666def8a9` and the intentionally retained six inactive legacy definitions.
 - Added post-audit remediations for orphaned and aliased custom-field reads/writes, scoped tombstone precedence, cutover/write serialization, historical audit and undo/redo safety, the visible People v2 completeness control, and explicit outer-transaction identity erasure, with regression coverage and redeployment/headed-QA gates.
 - Added independent count-only reconciliation of legacy-linked destination identities while retaining a separate total destination count for native identity records.
+
+### 2026-08-26
+
+- Added the THOM-115 document-type policy: Polish identity documents derive `PL`, passports still require a country for completeness, and explicit conflicting domestic-country input fails validation.
+- Added the exact-scope, count-only `repair-completeness` maintenance path for already stored identity rows and updated the FINOO form/import contracts without changing public Open Mercato behavior.
 
 ### Review — 2026-08-25
 

@@ -82,6 +82,9 @@ describe('finoo_customer_retention foundation', () => {
       expect.objectContaining({
         key: 'finoo_retention_status',
         kind: 'select',
+        options: expect.arrayContaining([
+          { value: 'excluded', label: 'Not applicable' },
+        ]),
         filterable: true,
         indexed: true,
         listVisible: true,

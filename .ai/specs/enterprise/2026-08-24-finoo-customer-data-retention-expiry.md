@@ -83,7 +83,8 @@ A person is excluded while a non-deleted `FinooAffiliate` or `FinooIntermediary`
 When a person becomes an affiliate or intermediary:
 
 - set the retention projection to `excluded` immediately;
-- clear `retentionExpiresAt`, `expiredAt`, and both retention custom-field mirrors.
+- clear `retentionExpiresAt`, `expiredAt`, and the retention-expiry mirror;
+- publish the neutral `excluded` retention-status mirror so the People list shows `Not applicable` instead of a blank cell.
 
 When every excluding relationship is soft-deleted:
 
@@ -231,10 +232,10 @@ The private tables contain no names, contact details, free text, credentials, or
 
 Create read-only definitions on `customers:customer_person_profile`:
 
-- `finoo_retention_status`: select with values `active` and `expired`; filterable, sortable, list-visible, not form-editable;
+- `finoo_retention_status`: select with values `active`, `expired`, and `excluded` (rendered as `Not applicable`); filterable, sortable, list-visible, not form-editable;
 - `finoo_retention_expires_at`: datetime; filterable, sortable, list-visible, not form-editable.
 
-Excluded people have both values cleared. These mirrors deliberately use the existing customer query/custom-field path so filtering, totals, search combinations, perspectives, saved views, and export happen before pagination. Projection updates and mirror updates occur in one unit of work; reconciliation repairs divergence. After commit, the service uses the canonical scoped query-index upsert for the affected person unless the canonical custom-field write service already emitted it; tests prove filters/search observe the new mirror without manual reindexing.
+Excluded people retain the `excluded` status mirror and have only the expiry mirror cleared. This exposes no retention date and distinguishes a deliberate policy exclusion from missing/unreconciled state. These mirrors deliberately use the existing customer query/custom-field path so filtering, totals, search combinations, perspectives, saved views, and export happen before pagination. Projection updates and mirror updates occur in one unit of work; reconciliation repairs divergence. After commit, the service uses the canonical scoped query-index upsert for the affected person unless the canonical custom-field write service already emitted it; tests prove filters/search observe the new mirror without manual reindexing.
 
 Use the standard custom-field column and select-value renderer. This preserves native filtering, sorting, totals, perspectives, saved views, and export without a shared `DataTable` change or a duplicate injected column. A specialized badge is explicitly deferred; it is not required to identify or filter expired people.
 
@@ -403,7 +404,7 @@ Migration sequence:
 
 1. Add the two private tables and indexes with the private module snapshot.
 2. Deploy code with settings disabled by default.
-3. Seed/ensure the two read-only custom-field definitions idempotently.
+3. Seed/ensure the two read-only custom-field definitions idempotently, including the additive `excluded` / `Not applicable` select option.
 4. For Finoo's existing organization, run the exact-scope `ensure-organization-setup` command from the immutable upgrade script to create the disabled settings row and register the hourly schedule idempotently. New organizations use module lifecycle setup.
 5. After all non-mutating candidate gates pass, create/use the dedicated Finoo-only administrator secret and apply it through the private exact-scope transactional command. Verify tenant-bound login and the `Finoo Superadmin` role; do not read, rotate, or modify any existing secret.
 6. Verify the live Finoo customer-status dictionary. Core setup normally idempotently ensures `active`, `inactive`, `pending`, and `archived`; deployment evidence must read back the live instance rather than infer it. Do not seed a CRM `expired` value.
@@ -497,7 +498,7 @@ Required self-contained integration scenarios:
 | --- | --- |
 | `TC-FINOO-RET-001` | Settings GET/preview/confirm; first enable, reduction, increase, disable/re-enable; sticky expiry; exact count races; optimistic-lock/ACL/scope failures. |
 | `TC-FINOO-RET-002` | Manual/imported/applicant/representative people; comment/note/direct interaction/task create and completion through API and command paths; edit non-reset; undo/delete/cancel recomputation; real queue execution. |
-| `TC-FINOO-RET-003` | Affiliate/intermediary exclusion, dual relationship, partner lifecycle signal, soft-delete re-entry including create+delete before the first queued refresh, person delete+undo recovered by payload-free hourly reconciliation, one-shot undo consumption, untrusted queue-field rejection, person-update undo mirror repair, missing-provider fail-closed behavior, and cross-scope isolation. |
+| `TC-FINOO-RET-003` | Affiliate/intermediary exclusion with visible neutral `excluded` mirror and cleared expiry, dual relationship, partner lifecycle signal, soft-delete re-entry including create+delete before the first queued refresh, person delete+undo recovered by payload-free hourly reconciliation, one-shot undo consumption, untrusted queue-field rejection, person-update undo mirror repair, missing-provider fail-closed behavior, and cross-scope isolation. |
 | `TC-FINOO-RET-004` | More than 200 people; page-two retention filter; totals; search plus advanced filter; sort; perspective/saved view; export contains the correct retention values. |
 | `TC-FINOO-RET-005` | Settings hydration, mandatory preview dialog/counts, keyboard behavior, conflict/error/progress states, standard retention columns, default inclusion, and people-list filter. |
 | `TC-FINOO-RET-006` | Rollback safety: disabling increments generation, queued old-generation continuation/retry no-ops, sticky expired people remain expired, and a newly scheduled disabled-policy run is harmless. |
@@ -595,6 +596,10 @@ None.
 **Fully compliant: Implemented and locally verified; private deployment and headed Finoo QA remain pending.**
 
 ## Changelog
+
+### Implementation correction — 2026-08-26
+
+- Added the neutral `excluded` / `Not applicable` People-list mirror for partner records while keeping their retention expiry empty; the existing scoped reconciliation path repairs historical blank mirrors idempotently.
 
 ### Implementation correction — 2026-08-24
 

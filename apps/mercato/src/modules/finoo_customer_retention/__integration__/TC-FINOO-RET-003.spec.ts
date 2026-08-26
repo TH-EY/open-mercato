@@ -184,6 +184,7 @@ test('TC-FINOO-RET-003 affiliate and intermediary exclusion, dual-link re-entry,
 
     await reconcile(scenario, personId, 'excluded')
     expect(await state(personId)).toMatchObject({ retention_status: 'excluded', retention_expires_at: null })
+    expect(await retentionStatusMirror(personId)).toBe('excluded')
     const initiallyExcluded = await partnerFacts(scenario, customerUser.id)
     expect(initiallyExcluded.affiliate.activeCustomerUserIds).toEqual([customerUser.id])
     expect(initiallyExcluded.intermediary.activeCustomerUserIds).toEqual([customerUser.id])
@@ -195,6 +196,7 @@ test('TC-FINOO-RET-003 affiliate and intermediary exclusion, dual-link re-entry,
     expect(affiliateRemoved.intermediary.activeCustomerUserIds).toEqual([customerUser.id])
     await reconcile(scenario, personId, 'excluded')
     expect((await state(personId)).retention_status).toBe('excluded')
+    expect(await retentionStatusMirror(personId)).toBe('excluded')
 
     const intermediaryDeletedAt = new Date().toISOString()
     await queryDatabase('update finoo_intermediaries set deleted_at=$2,updated_at=now() where id=$1', [intermediaryId, intermediaryDeletedAt])
@@ -204,6 +206,7 @@ test('TC-FINOO-RET-003 affiliate and intermediary exclusion, dual-link re-entry,
     await reconcile(scenario, personId, 'active')
     const reentered = await state(personId)
     expect(reentered.retention_status).toBe('active')
+    expect(await retentionStatusMirror(personId)).toBe('active')
     expect(new Date(reentered.eligibility_anchor_at).getTime()).toBeGreaterThanOrEqual(new Date(affiliateDeletedAt).getTime())
 
     const collapsedPartnerPersonId = await createPersonFixture(request, scenario.token, {

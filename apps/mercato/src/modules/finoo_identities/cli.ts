@@ -16,6 +16,7 @@ import {
   setLegacyIdentityCutover,
   verifyLegacyIdentityMigration,
 } from './lib/legacy-migration'
+import { repairIdentityCompleteness } from './lib/completeness-repair'
 import setup, { FINOO_IOD_ROLE, FINOO_SUPERADMIN_ROLE } from './setup'
 
 const scopeSchema = z.object({
@@ -265,6 +266,10 @@ export function parseLegacyMigrationArgs(args: string[]) {
   return { ...scope, mode: dryRun ? 'dry-run' as const : 'apply' as const, batchSize }
 }
 
+export function parseCompletenessRepairArgs(args: string[]) {
+  return parseLegacyMigrationArgs(args)
+}
+
 export function parseLegacyVerifyArgs(args: string[]) {
   if (args.length !== 4
     || !hasExactlyOne(args, 'tenant')
@@ -428,6 +433,24 @@ const purgeLegacy: ModuleCli = {
   },
 }
 
+const repairCompleteness: ModuleCli = {
+  command: 'repair-completeness',
+  async run(args) {
+    const input = parseCompletenessRepairArgs(args)
+    if (!input) {
+      throw new Error('[internal] Usage: mercato finoo_identities repair-completeness --tenant <uuid> --organization <uuid> (--dry-run|--apply) [--batch-size 1..500]')
+    }
+    const result = await withContainer(({ em, encryptionService }) => repairIdentityCompleteness({
+      em,
+      encryptionService,
+      scope: { tenantId: input.tenantId, organizationId: input.organizationId },
+      mode: input.mode,
+      batchSize: input.batchSize,
+    }))
+    console.log(JSON.stringify(result))
+  },
+}
+
 const commands = [
   ensureOrganizationSetup,
   migrateLegacy,
@@ -435,6 +458,7 @@ const commands = [
   cutoverCommand('cutover-legacy', false),
   cutoverCommand('rollback-legacy', true),
   purgeLegacy,
+  repairCompleteness,
 ]
 
 export default commands

@@ -27,7 +27,6 @@ const setupRunner = join(dirname(fileURLToPath(import.meta.url)), 'setup-runner.
 const identityInput = {
   pesel: '44051401458',
   documentType: 'identity_card',
-  issuingCountryCode: 'PL',
   documentNumber: 'ABC123456',
   issuedOn: '2024-01-10',
   expiresOn: '2034-01-10',
@@ -162,6 +161,15 @@ test('TC-FINOO-ID-001-005 enforces status-only, IOD, and superadmin identity acc
     })
     await queryDatabase('update role_acls set is_super_admin=true where role_id=$1', [superRoleId])
     const tenantSuperadmin = await createActor(request, scenario, superRoleId, 'identity-superadmin')
+
+    const conflictingCountryResponse = await scopedApiRequest(
+      request,
+      iod,
+      'PUT',
+      `/api/finoo_identities/people/${personId}`,
+      { ...identityInput, issuingCountryCode: 'DE' },
+    )
+    expect(conflictingCountryResponse.status()).toBe(422)
 
     const writeResponse = await scopedApiRequest(
       request,
@@ -458,7 +466,7 @@ test('TC-FINOO-ID-001-005 enforces status-only, IOD, and superadmin identity acc
       )
       expect(rawRead.status()).toBe(200)
       expect(rawRead.headers()['cache-control']).toBe('private, no-store')
-      expect(await rawRead.json()).toMatchObject(identityInput)
+      expect(await rawRead.json()).toMatchObject({ ...identityInput, issuingCountryCode: 'PL' })
     }
 
     const stored = await queryDatabase<{

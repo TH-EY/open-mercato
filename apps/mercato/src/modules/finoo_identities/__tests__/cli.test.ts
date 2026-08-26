@@ -1,4 +1,5 @@
 import {
+  parseCompletenessRepairArgs,
   parseLegacyCutoverArgs,
   parseLegacyMigrationArgs,
   parseLegacyPurgeArgs,
@@ -18,6 +19,15 @@ describe('FINOO identity legacy CLI argument gates', () => {
     ])).toBeNull()
     expect(parseLegacyMigrationArgs([
       '--tenant', '*', '--organization', organizationId, '--dry-run',
+    ])).toBeNull()
+  })
+
+  it('gates completeness repair to one explicit mode and exact scope', () => {
+    expect(parseCompletenessRepairArgs([
+      '--tenant', tenantId, '--organization', organizationId, '--dry-run', '--batch-size', '50',
+    ])).toEqual({ tenantId, organizationId, mode: 'dry-run', batchSize: 50 })
+    expect(parseCompletenessRepairArgs([
+      '--tenant', tenantId, '--organization', organizationId, '--dry-run', '--apply',
     ])).toBeNull()
   })
 

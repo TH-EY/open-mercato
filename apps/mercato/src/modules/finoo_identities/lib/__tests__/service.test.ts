@@ -132,7 +132,7 @@ describe('FinooIdentityService', () => {
       input: {
         pesel: '44051401458',
         documentType: 'identity_card',
-        issuingCountryCode: 'PL',
+        issuingCountryCode: null,
         documentNumber: 'ABC123456',
         issuedOn: '2024-01-10',
         expiresOn: '2034-01-10',
@@ -368,7 +368,7 @@ describe('FinooIdentityService', () => {
       updatedAt: '2026-08-24T14:00:00.000Z',
     })
     expect(persisted).toHaveLength(2)
-    expect(persisted[0]).toMatchObject({ pesel: '44051401458', isComplete: true,
+    expect(persisted[0]).toMatchObject({ pesel: '44051401458', issuingCountryCode: 'PL', isComplete: true,
     })
     expect(persisted[1]).toMatchObject({
       operation: 'create',
@@ -475,7 +475,7 @@ describe('FinooIdentityService', () => {
       input: {
         pesel: '44051401458',
         documentType: 'identity_card',
-        issuingCountryCode: 'PL',
+        issuingCountryCode: null,
         documentNumber: 'ABC123456',
         issuedOn: '2024-01-10',
         expiresOn: '2034-01-10',
@@ -487,6 +487,7 @@ describe('FinooIdentityService', () => {
       identityId: '4e5f6a45-e7fd-40df-85b5-ad8a6e82d5b5',
       isComplete: true,
     })
+    expect(persisted[0]).toMatchObject({ issuingCountryCode: 'PL', isComplete: true })
     expect(persisted[1]).toMatchObject({
       actorUserId: null,
       actorKind: 'system',

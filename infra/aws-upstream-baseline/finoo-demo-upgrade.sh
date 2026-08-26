@@ -263,6 +263,11 @@ expected_key_sets = {
         'linkedDestinationRecords', 'destinationConflicts',
         'aliasValues', 'activeDefinitions', 'inactiveDefinitions',
     }),
+    frozenset({
+        'mode', 'scanned', 'countryConflicts', 'countriesNormalized',
+        'completenessUpdated', 'wouldNormalizeCountries',
+        'wouldUpdateCompleteness',
+    }),
 }
 matches = []
 for line in sys.argv[1].splitlines():
@@ -297,6 +302,35 @@ if any(type(value) is not int or value < 0 for key, value in report.items() if k
     raise SystemExit('FINOO identity migration report must contain counts only')
 if report['destinationConflicts'] != 0:
     raise SystemExit('FINOO identity migration has destination conflicts')
+PY
+}
+
+assert_identity_completeness_report() {
+  local report="$1"
+  local expected_mode="$2"
+  local expected_state="$3"
+  python3 - "$report" "$expected_mode" "$expected_state" <<'PY'
+import json
+import sys
+
+expected_keys = {
+    'mode', 'scanned', 'countryConflicts', 'countriesNormalized',
+    'completenessUpdated', 'wouldNormalizeCountries',
+    'wouldUpdateCompleteness',
+}
+report = json.loads(sys.argv[1])
+if set(report) != expected_keys or report.get('mode') != sys.argv[2]:
+    raise SystemExit('Unexpected FINOO identity completeness report shape')
+if any(type(value) is not int or value < 0 for key, value in report.items() if key != 'mode'):
+    raise SystemExit('FINOO identity completeness report must contain counts only')
+if report['countryConflicts'] != 0:
+    raise SystemExit('FINOO identity completeness repair found country conflicts')
+if report['mode'] == 'dry-run' and (report['countriesNormalized'] != 0 or report['completenessUpdated'] != 0):
+    raise SystemExit('FINOO identity completeness dry-run performed writes')
+if report['mode'] == 'apply' and (report['wouldNormalizeCountries'] != 0 or report['wouldUpdateCompleteness'] != 0):
+    raise SystemExit('FINOO identity completeness apply report is inconsistent')
+if sys.argv[3] == 'clean' and (report['wouldNormalizeCountries'] != 0 or report['wouldUpdateCompleteness'] != 0):
+    raise SystemExit('FINOO identity completeness verification is not clean')
 PY
 }
 
@@ -770,6 +804,13 @@ identity_dry_run_output="$(docker exec "$candidate_container" yarn mercato finoo
 identity_dry_run_report="$(normalize_identity_json_report "$identity_dry_run_output")"
 assert_identity_migration_report "$identity_dry_run_report" dry-run
 printf '[finoo-identities] migration_dry_run=%s\n' "$identity_dry_run_report"
+identity_completeness_dry_run_output="$(docker exec "$candidate_container" yarn mercato finoo_identities repair-completeness \
+  --tenant "$finoo_tenant_id" \
+  --organization "$finoo_organization_id" \
+  --dry-run)"
+identity_completeness_dry_run_report="$(normalize_identity_json_report "$identity_completeness_dry_run_output")"
+assert_identity_completeness_report "$identity_completeness_dry_run_report" dry-run pending
+printf '[finoo-identities] completeness_dry_run=%s\n' "$identity_completeness_dry_run_report"
 docker exec "$candidate_container" yarn mercato finoo_customer_retention ensure-organization-setup \
   --tenant "$finoo_tenant_id" \
   --organization "$finoo_organization_id" \
@@ -857,6 +898,20 @@ identity_apply_output="$(docker exec "$candidate_container" yarn mercato finoo_i
 identity_apply_report="$(normalize_identity_json_report "$identity_apply_output")"
 assert_identity_migration_report "$identity_apply_report" apply
 printf '[finoo-identities] migration_apply=%s\n' "$identity_apply_report"
+identity_completeness_apply_output="$(docker exec "$candidate_container" yarn mercato finoo_identities repair-completeness \
+  --tenant "$finoo_tenant_id" \
+  --organization "$finoo_organization_id" \
+  --apply)"
+identity_completeness_apply_report="$(normalize_identity_json_report "$identity_completeness_apply_output")"
+assert_identity_completeness_report "$identity_completeness_apply_report" apply clean
+printf '[finoo-identities] completeness_apply=%s\n' "$identity_completeness_apply_report"
+identity_completeness_verify_output="$(docker exec "$candidate_container" yarn mercato finoo_identities repair-completeness \
+  --tenant "$finoo_tenant_id" \
+  --organization "$finoo_organization_id" \
+  --dry-run)"
+identity_completeness_verify_report="$(normalize_identity_json_report "$identity_completeness_verify_output")"
+assert_identity_completeness_report "$identity_completeness_verify_report" dry-run clean
+printf '[finoo-identities] completeness_verify=%s\n' "$identity_completeness_verify_report"
 identity_verification_output="$(docker exec "$candidate_container" yarn mercato finoo_identities verify-legacy \
   --tenant "$finoo_tenant_id" \
   --organization "$finoo_organization_id")"
@@ -1043,6 +1098,11 @@ expected_key_sets = {
         'scanned', 'migrated', 'unmigrated', 'destinationRecords',
         'linkedDestinationRecords', 'destinationConflicts',
         'aliasValues', 'activeDefinitions', 'inactiveDefinitions',
+    }),
+    frozenset({
+        'mode', 'scanned', 'countryConflicts', 'countriesNormalized',
+        'completenessUpdated', 'wouldNormalizeCountries',
+        'wouldUpdateCompleteness',
     }),
 }
 matches = []

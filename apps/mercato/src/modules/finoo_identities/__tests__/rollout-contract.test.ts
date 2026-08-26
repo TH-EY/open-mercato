@@ -36,6 +36,21 @@ function runIdentityDefinitionStateReader(report: Record<string, unknown>) {
   )
 }
 
+function runIdentityCompletenessAssertion(
+  report: Record<string, unknown>,
+  mode: 'dry-run' | 'apply',
+  state: 'pending' | 'clean',
+) {
+  const start = upgradeScript.indexOf('assert_identity_completeness_report() {')
+  const end = upgradeScript.indexOf('assert_identity_verification_report() {', start)
+  const assertion = upgradeScript.slice(start, end)
+  return spawnSync(
+    'bash',
+    ['-c', `${assertion}\nassert_identity_completeness_report "$1" "$2" "$3"`, 'completeness-test', JSON.stringify(report), mode, state],
+    { encoding: 'utf8' },
+  )
+}
+
 describe('FINOO identity private rollout contract', () => {
   it('sets up the exact scope and stops the active writer before final migration and cutover', () => {
     expectOrdered(upgradeScript, [
@@ -43,10 +58,16 @@ describe('FINOO identity private rollout contract', () => {
       'yarn mercato finoo_identities ensure-organization-setup',
       'yarn mercato finoo_identities migrate-legacy',
       '--dry-run)',
+      'yarn mercato finoo_identities repair-completeness',
+      'identity_completeness_dry_run_report=',
       'docker stop --time 30 "$active_container"',
       'identity_apply_output=',
       '--apply)',
       'identity_apply_report=',
+      'identity_completeness_apply_output=',
+      'identity_completeness_apply_report=',
+      'identity_completeness_verify_output=',
+      'identity_completeness_verify_report=',
       'identity_verification_report=',
       'yarn mercato finoo_identities cutover-legacy',
       '--maintenance-window',
@@ -145,9 +166,18 @@ describe('FINOO identity private rollout contract', () => {
       'identity_dry_run_output=',
       'identity_dry_run_report="$(normalize_identity_json_report "$identity_dry_run_output")"',
       'assert_identity_migration_report "$identity_dry_run_report" dry-run',
+      'identity_completeness_dry_run_output=',
+      'identity_completeness_dry_run_report="$(normalize_identity_json_report "$identity_completeness_dry_run_output")"',
+      'assert_identity_completeness_report "$identity_completeness_dry_run_report" dry-run pending',
       'identity_apply_output=',
       'identity_apply_report="$(normalize_identity_json_report "$identity_apply_output")"',
       'assert_identity_migration_report "$identity_apply_report" apply',
+      'identity_completeness_apply_output=',
+      'identity_completeness_apply_report="$(normalize_identity_json_report "$identity_completeness_apply_output")"',
+      'assert_identity_completeness_report "$identity_completeness_apply_report" apply clean',
+      'identity_completeness_verify_output=',
+      'identity_completeness_verify_report="$(normalize_identity_json_report "$identity_completeness_verify_output")"',
+      'assert_identity_completeness_report "$identity_completeness_verify_report" dry-run clean',
       'identity_verification_output=',
       'identity_verification_report="$(normalize_identity_json_report "$identity_verification_output")"',
       'identity_definition_state="$(read_identity_definition_state_from_report "$identity_verification_report")"',
@@ -164,6 +194,30 @@ describe('FINOO identity private rollout contract', () => {
     expect(upgradeScript).not.toContain('verification_report="$(run_preserved_new_cli')
     expect(upgradeScript.match(/--confirm THOM-108 >\/dev\/null/g)).toHaveLength(5)
     expect(upgradeScript).not.toContain('--confirm THOM-108 ||')
+  })
+
+  it('fails closed on completeness conflicts and requires a clean post-apply dry-run', () => {
+    const base = {
+      mode: 'dry-run',
+      scanned: 100,
+      countryConflicts: 0,
+      countriesNormalized: 0,
+      completenessUpdated: 0,
+      wouldNormalizeCountries: 4,
+      wouldUpdateCompleteness: 4,
+    }
+    expect(runIdentityCompletenessAssertion(base, 'dry-run', 'pending').status).toBe(0)
+    expect(runIdentityCompletenessAssertion(
+      { ...base, countryConflicts: 1 },
+      'dry-run',
+      'pending',
+    ).status).not.toBe(0)
+    expect(runIdentityCompletenessAssertion(base, 'dry-run', 'clean').status).not.toBe(0)
+    expect(runIdentityCompletenessAssertion(
+      { ...base, wouldNormalizeCountries: 0, wouldUpdateCompleteness: 0 },
+      'dry-run',
+      'clean',
+    ).status).toBe(0)
   })
 
   it('accepts one exact count-only report and fails closed on ambiguous or foreign JSON', () => {
