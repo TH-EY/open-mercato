@@ -101,6 +101,7 @@ describe('OpenAIAdapter (OpenAI-compatible provider factory)', () => {
     })
     expect(model).toBeDefined()
     expect(model).not.toBeNull()
+    expect((model as { provider: string }).provider).toBe('openai.chat')
   })
 
   it('createModel honors per-call baseURL override', () => {
@@ -131,6 +132,7 @@ describe('OpenAIAdapter (OpenAI-compatible provider factory)', () => {
     // Without override the preset baseURL is undefined (uses AI SDK default).
     const modelDefault = provider.createModel({ apiKey: 'key', modelId: 'gpt-4o-mini' })
     expect(modelDefault).toBeDefined()
+    expect((modelDefault as { provider: string }).provider).toBe('openai.responses')
     // With a per-call baseURL override the adapter must not crash.
     const modelOverride = provider.createModel({
       apiKey: 'key',

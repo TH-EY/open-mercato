@@ -583,7 +583,7 @@ create_target_group() {
     --output text
 }
 
-register_and_wait() {
+register_target() {
   local target_group_arn="$1"
   local port="$2"
   local registered_flag_name="$3"
@@ -601,6 +601,11 @@ register_and_wait() {
   elif [[ "${registration_state}" -ne 0 ]]; then
     return "${registration_state}"
   fi
+}
+
+wait_for_target() {
+  local target_group_arn="$1"
+  local port="$2"
   aws elbv2 wait target-in-service \
     --region "${AWS_REGION}" \
     --target-group-arn "${target_group_arn}" \
@@ -692,16 +697,17 @@ case "${mode}" in
     if [[ -z "${mcp_target_group_arn}" ]]; then
       mcp_target_group_arn="$(create_target_group "${mcp_target_group_name}" "${mcp_port}" "${mcp_health_path}" "${mcp_matcher}")"
     fi
-    register_and_wait "${app_target_group_arn}" "${app_port}" registered_app
-    register_and_wait "${mcp_target_group_arn}" "${mcp_port}" registered_mcp
+    register_target "${app_target_group_arn}" "${app_port}" registered_app
+    register_target "${mcp_target_group_arn}" "${mcp_port}" registered_mcp
 
-    # Both targets are healthy before either listener rule is created; routing is the final mutation.
     rules_json="$(aws elbv2 describe-rules --region "${AWS_REGION}" --listener-arn "${LISTENER_ARN}" --output json)"
     validate_rule_collisions
     validate_rule "${mcp_priority}" "${mcp_target_group_arn}" true || \
       create_forward_rule "${mcp_priority}" "${mcp_target_group_arn}" true mcp_rule_create_attempted
     validate_rule "${app_priority}" "${app_target_group_arn}" false || \
       create_forward_rule "${app_priority}" "${app_target_group_arn}" false app_rule_create_attempted
+    wait_for_target "${app_target_group_arn}" "${app_port}"
+    wait_for_target "${mcp_target_group_arn}" "${mcp_port}"
     validate_public_https
     completed=1
     echo "Cutover created or reused only the exact public-demo target registrations and rules."

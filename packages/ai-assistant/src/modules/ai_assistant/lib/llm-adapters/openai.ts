@@ -166,7 +166,9 @@ export function createOpenAICompatibleProvider(
         apiKey: options.apiKey,
         ...(baseURL ? { baseURL } : {}),
       })
-      return openai(options.modelId)
+      return preset.id === 'openai'
+        ? openai(options.modelId)
+        : openai.chat(options.modelId)
     },
   }
 

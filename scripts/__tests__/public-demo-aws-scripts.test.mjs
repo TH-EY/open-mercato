@@ -630,6 +630,13 @@ test('routing contract is exact and cannot mutate shared DNS, certificates, or s
   assert.match(script, /mcp_status.*== "401"/)
   assert.doesNotMatch(script, /route53|acm (?:delete|request|import|add|remove)|authorize-security-group|revoke-security-group|delete-security-group/)
   assert.doesNotMatch(script, /(?:docker|aws)[^\n]*(?:prune|delete-target-group)/)
+
+  const cutoverBlock = script.slice(script.indexOf('  cutover)'), script.indexOf('  readback)'))
+  const registerIndex = cutoverBlock.indexOf('register_target "${app_target_group_arn}"')
+  const ruleIndex = cutoverBlock.indexOf('create_forward_rule "${app_priority}"')
+  const waitIndex = cutoverBlock.indexOf('wait_for_target "${app_target_group_arn}"')
+  assert.ok(registerIndex >= 0 && registerIndex < ruleIndex)
+  assert.ok(ruleIndex < waitIndex)
 })
 
 test('routing preflight rejects non-TLS listeners, direct ingress, and wildcard or regex host collisions', () => {
