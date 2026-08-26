@@ -609,6 +609,9 @@ test('routing contract is exact and cannot mutate shared DNS, certificates, or s
     '4900',
     '1007',
     '1008',
+    '49007',
+    '49008',
+    '127.0.0.1/32',
     '/login',
     '/health',
     'LOAD_BALANCER_ARN',
@@ -633,10 +636,12 @@ test('routing contract is exact and cannot mutate shared DNS, certificates, or s
 
   const cutoverBlock = script.slice(script.indexOf('  cutover)'), script.indexOf('  readback)'))
   const registerIndex = cutoverBlock.indexOf('register_target "${app_target_group_arn}"')
-  const ruleIndex = cutoverBlock.indexOf('create_forward_rule "${app_priority}"')
+  const validationRuleIndex = cutoverBlock.indexOf('create_validation_rule "${app_validation_priority}"')
   const waitIndex = cutoverBlock.indexOf('wait_for_target "${app_target_group_arn}"')
-  assert.ok(registerIndex >= 0 && registerIndex < ruleIndex)
-  assert.ok(ruleIndex < waitIndex)
+  const ruleIndex = cutoverBlock.indexOf('create_forward_rule "${app_priority}"')
+  assert.ok(registerIndex >= 0 && registerIndex < validationRuleIndex)
+  assert.ok(validationRuleIndex < waitIndex)
+  assert.ok(waitIndex < ruleIndex)
 })
 
 test('routing preflight rejects non-TLS listeners, direct ingress, and wildcard or regex host collisions', () => {
@@ -867,26 +872,26 @@ case "$1 $2" in
     ;;
   "elbv2 wait") ;;
   "elbv2 describe-rules")
-    if [[ -f "$FAKE_STATE_DIR/rule-mcp" && -f "$FAKE_STATE_DIR/rule-mcp.hide-once" ]]; then
-      rm -f "$FAKE_STATE_DIR/rule-mcp.hide-once"
+    if [[ -f "$FAKE_STATE_DIR/rule-validation-app" && -f "$FAKE_STATE_DIR/rule-validation-app.hide-once" ]]; then
+      rm -f "$FAKE_STATE_DIR/rule-validation-app.hide-once"
       printf '%s\n' '{"Rules":[{"RuleArn":"arn:test:default","Priority":"default","Conditions":[],"Actions":[]}]}'
-    elif [[ -f "$FAKE_STATE_DIR/rule-mcp" ]]; then
-      printf '%s\n' '{"Rules":[{"RuleArn":"arn:test:rule:mcp","Priority":"1007","Conditions":[{"Field":"host-header","Values":["public-demo.om.they.dev"]},{"Field":"path-pattern","Values":["/mcp*"]}],"Actions":[{"Type":"forward","TargetGroupArn":"arn:test:tg:mcp"}]},{"RuleArn":"arn:test:default","Priority":"default","Conditions":[],"Actions":[]}]}'
+    elif [[ -f "$FAKE_STATE_DIR/rule-validation-app" ]]; then
+      printf '%s\n' '{"Rules":[{"RuleArn":"arn:test:rule:validation-app","Priority":"49008","Conditions":[{"Field":"source-ip","Values":["127.0.0.1/32"]}],"Actions":[{"Type":"forward","TargetGroupArn":"arn:test:tg:app"}]},{"RuleArn":"arn:test:default","Priority":"default","Conditions":[],"Actions":[]}]}'
     else
       printf '%s\n' '{"Rules":[{"RuleArn":"arn:test:default","Priority":"default","Conditions":[],"Actions":[]}]}'
     fi
     ;;
   "elbv2 create-rule")
-    touch "$FAKE_STATE_DIR/rule-mcp"
+    touch "$FAKE_STATE_DIR/rule-validation-app"
     if [[ "$FAKE_LOST_OPERATION" == "create-rule" ]]; then
-      touch "$FAKE_STATE_DIR/rule-mcp.hide-once"
+      touch "$FAKE_STATE_DIR/rule-validation-app.hide-once"
       echo 'simulated lost create-rule response' >&2
       exit 255
     fi
-    printf '%s\n' 'arn:test:rule:mcp'
+    printf '%s\n' 'arn:test:rule:validation-app'
     ;;
   "elbv2 delete-rule")
-    rm -f "$FAKE_STATE_DIR/rule-mcp"
+    rm -f "$FAKE_STATE_DIR/rule-validation-app"
     ;;
   *) exit 2 ;;
 esac`)
@@ -918,11 +923,135 @@ esac`)
         assert.equal(fs.existsSync(path.join(harness.root, 'target-4787')), false)
         assert.match(calls, /deregister-targets .*Port=4787/)
       } else {
-        assert.equal(fs.existsSync(path.join(harness.root, 'rule-mcp')), false)
-        assert.match(calls, /delete-rule .*arn:test:rule:mcp/)
+        assert.equal(fs.existsSync(path.join(harness.root, 'rule-validation-app')), false)
+        assert.match(calls, /delete-rule .*arn:test:rule:validation-app/)
       }
     } finally {
       fs.rmSync(harness.root, { recursive: true, force: true })
     }
   })
 }
+
+test('routing waiter failure never publishes and removes only temporary rules and exact registrations', () => {
+  const harness = makeHarness(String.raw`
+printf '%s\n' "$*" >> "$FAKE_CALLS_FILE"
+case "$1 $2" in
+  "ec2 describe-instances")
+    printf '%s\n' '{"Reservations":[{"Instances":[{"InstanceId":"i-test","VpcId":"vpc-test","State":{"Name":"running"},"SecurityGroups":[{"GroupId":"sg-instance"}]}]}]}'
+    ;;
+  "ec2 describe-security-group-rules")
+    printf '%s\n' '{"SecurityGroupRules":[{"IsEgress":false,"IpProtocol":"tcp","FromPort":4787,"ToPort":4788,"ReferencedGroupInfo":{"GroupId":"sg-alb"}}]}'
+    ;;
+  "elbv2 describe-listeners")
+    printf '%s\n' '{"Listeners":[{"ListenerArn":"arn:test:listener","LoadBalancerArn":"arn:test:load-balancer","Protocol":"HTTPS","Port":443,"SslPolicy":"ELBSecurityPolicy-TLS13-1-2-2021-06","Certificates":[{"CertificateArn":"arn:test:default-certificate"}]}]}'
+    ;;
+  "elbv2 describe-listener-certificates")
+    printf '%s\n' '{"Certificates":[{"CertificateArn":"arn:test:default-certificate","IsDefault":true},{"CertificateArn":"arn:test:certificate","IsDefault":false}]}'
+    ;;
+  "elbv2 describe-load-balancers")
+    printf '%s\n' '{"LoadBalancers":[{"LoadBalancerArn":"arn:test:load-balancer","VpcId":"vpc-test","Type":"application","Scheme":"internet-facing","State":{"Code":"active"},"SecurityGroups":["sg-alb"]}]}'
+    ;;
+  "acm describe-certificate")
+    printf '%s\n' '{"Certificate":{"DomainName":"*.om.they.dev","SubjectAlternativeNames":["*.om.they.dev"]}}'
+    ;;
+  "elbv2 describe-target-groups")
+    if [[ "$*" == *"om-demo-public-demo-mcp"* ]]; then
+      printf '%s\n' '{"TargetGroups":[{"TargetGroupName":"om-demo-public-demo-mcp","TargetGroupArn":"arn:test:tg:mcp","Protocol":"HTTP","Port":4788,"VpcId":"vpc-test","HealthCheckProtocol":"HTTP","HealthCheckPath":"/health","Matcher":{"HttpCode":"200"},"TargetType":"instance"}]}'
+    else
+      printf '%s\n' '{"TargetGroups":[{"TargetGroupName":"om-demo-public-demo","TargetGroupArn":"arn:test:tg:app","Protocol":"HTTP","Port":4787,"VpcId":"vpc-test","HealthCheckProtocol":"HTTP","HealthCheckPath":"/login","Matcher":{"HttpCode":"200-399"},"TargetType":"instance"}]}'
+    fi
+    ;;
+  "elbv2 describe-target-health")
+    if [[ "$*" == *"arn:test:tg:mcp"* ]]; then port=4788; else port=4787; fi
+    if [[ -f "$FAKE_STATE_DIR/target-$port" ]]; then
+      printf '{"TargetHealthDescriptions":[{"Target":{"Id":"i-test","Port":%s},"TargetHealth":{"State":"initial"}}]}\n' "$port"
+    else
+      printf '%s\n' '{"TargetHealthDescriptions":[]}'
+    fi
+    ;;
+  "elbv2 register-targets")
+    port="$(printf '%s' "$*" | sed -E 's/.*Port=([0-9]+).*/\1/')"
+    touch "$FAKE_STATE_DIR/target-$port"
+    ;;
+  "elbv2 deregister-targets")
+    port="$(printf '%s' "$*" | sed -E 's/.*Port=([0-9]+).*/\1/')"
+    rm -f "$FAKE_STATE_DIR/target-$port"
+    ;;
+  "elbv2 describe-rules")
+    if [[ "$*" == *"--rule-arns"* ]]; then
+      echo 'RuleNotFound' >&2
+      exit 254
+    fi
+    if [[ -f "$FAKE_STATE_DIR/validation-app" && -f "$FAKE_STATE_DIR/validation-mcp" ]]; then
+      printf '%s\n' '{"Rules":[{"RuleArn":"arn:test:rule:validation-app","Priority":"49008","Conditions":[{"Field":"source-ip","Values":["127.0.0.1/32"]}],"Actions":[{"Type":"forward","TargetGroupArn":"arn:test:tg:app"}]},{"RuleArn":"arn:test:rule:validation-mcp","Priority":"49007","Conditions":[{"Field":"source-ip","Values":["127.0.0.1/32"]}],"Actions":[{"Type":"forward","TargetGroupArn":"arn:test:tg:mcp"}]},{"RuleArn":"arn:test:default","Priority":"default","Conditions":[],"Actions":[]}]}'
+    elif [[ -f "$FAKE_STATE_DIR/validation-app" ]]; then
+      printf '%s\n' '{"Rules":[{"RuleArn":"arn:test:rule:validation-app","Priority":"49008","Conditions":[{"Field":"source-ip","Values":["127.0.0.1/32"]}],"Actions":[{"Type":"forward","TargetGroupArn":"arn:test:tg:app"}]},{"RuleArn":"arn:test:default","Priority":"default","Conditions":[],"Actions":[]}]}'
+    elif [[ -f "$FAKE_STATE_DIR/validation-mcp" ]]; then
+      printf '%s\n' '{"Rules":[{"RuleArn":"arn:test:rule:validation-mcp","Priority":"49007","Conditions":[{"Field":"source-ip","Values":["127.0.0.1/32"]}],"Actions":[{"Type":"forward","TargetGroupArn":"arn:test:tg:mcp"}]},{"RuleArn":"arn:test:default","Priority":"default","Conditions":[],"Actions":[]}]}'
+    else
+      printf '%s\n' '{"Rules":[{"RuleArn":"arn:test:default","Priority":"default","Conditions":[],"Actions":[]}]}'
+    fi
+    ;;
+  "elbv2 create-rule")
+    priority="$(printf '%s' "$*" | sed -E 's/.*--priority ([0-9]+).*/\1/')"
+    case "$priority" in
+      49008) touch "$FAKE_STATE_DIR/validation-app"; printf '%s\n' 'arn:test:rule:validation-app' ;;
+      49007) touch "$FAKE_STATE_DIR/validation-mcp"; printf '%s\n' 'arn:test:rule:validation-mcp' ;;
+      1007|1008) touch "$FAKE_STATE_DIR/public-rule-created"; printf '%s\n' "arn:test:rule:public-$priority" ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  "elbv2 wait")
+    [[ -f "$FAKE_STATE_DIR/validation-app" && -f "$FAKE_STATE_DIR/validation-mcp" ]] || exit 3
+    echo 'simulated target health waiter failure' >&2
+    exit 255
+    ;;
+  "elbv2 delete-rule")
+    if [[ "$*" == *"arn:test:rule:validation-app"* ]]; then
+      rm -f "$FAKE_STATE_DIR/validation-app"
+    elif [[ "$*" == *"arn:test:rule:validation-mcp"* ]]; then
+      rm -f "$FAKE_STATE_DIR/validation-mcp"
+    else
+      exit 4
+    fi
+    ;;
+  *) exit 2 ;;
+esac`)
+  const env = {
+    AWS_REGION: 'test-region-1',
+    INSTANCE_ID: 'i-test',
+    VPC_ID: 'vpc-test',
+    LOAD_BALANCER_ARN: 'arn:test:load-balancer',
+    LISTENER_ARN: 'arn:test:listener',
+    LISTENER_SSL_POLICY: 'ELBSecurityPolicy-TLS13-1-2-2021-06',
+    LOAD_BALANCER_SECURITY_GROUP_ID: 'sg-alb',
+    FAKE_STATE_DIR: harness.root,
+    ...hostReadbackEnv(harness),
+  }
+
+  try {
+    const result = run(routingScript, ['cutover'], harness, env)
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /simulated target health waiter failure/)
+    assert.equal(fs.existsSync(path.join(harness.root, 'validation-app')), false)
+    assert.equal(fs.existsSync(path.join(harness.root, 'validation-mcp')), false)
+    assert.equal(fs.existsSync(path.join(harness.root, 'target-4787')), false)
+    assert.equal(fs.existsSync(path.join(harness.root, 'target-4788')), false)
+    assert.equal(fs.existsSync(path.join(harness.root, 'public-rule-created')), false)
+
+    const calls = fs.readFileSync(harness.callsFile, 'utf8')
+    assert.match(calls, /create-rule .*--priority 49008 .*127\.0\.0\.1\/32/)
+    assert.match(calls, /create-rule .*--priority 49007 .*127\.0\.0\.1\/32/)
+    assert.match(calls, /delete-rule .*arn:test:rule:validation-app/)
+    assert.match(calls, /delete-rule .*arn:test:rule:validation-mcp/)
+    assert.match(calls, /deregister-targets .*Id=i-test,Port=4787/)
+    assert.match(calls, /deregister-targets .*Id=i-test,Port=4788/)
+    assert.doesNotMatch(calls, /create-rule .*--priority 100[78]/)
+    assert.doesNotMatch(
+      calls,
+      /delete-target-group|delete-listener|modify-listener|route53|delete-certificate|authorize-security-group|revoke-security-group/,
+    )
+  } finally {
+    fs.rmSync(harness.root, { recursive: true, force: true })
+  }
+})

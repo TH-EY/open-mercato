@@ -119,5 +119,10 @@ login_status="$(curl --silent --show-error --output /dev/null --write-out '%{htt
   echo "Local public-demo MCP health probe failed." >&2
   exit 1
 }
+[[ "$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+  --connect-timeout 5 --max-time 15 http://127.0.0.1:4788/mcp)" == 401 ]] || {
+  echo "Local public-demo MCP authentication boundary probe failed." >&2
+  exit 1
+}
 
 echo "Host read-back confirmed the exact approved SHA, image digest, services, and local probes."

@@ -47,7 +47,7 @@ exit 2
 `, { mode: 0o755 })
   fs.writeFileSync(path.join(binDir, 'curl'), `#!/usr/bin/env bash
 set -euo pipefail
-if [[ "$*" == *":4787/login"* ]]; then printf '%s' 200; else printf '%s' 200; fi
+if [[ "$*" == *":4788/mcp"* ]]; then printf '%s' 401; else printf '%s' 200; fi
 `, { mode: 0o755 })
   fs.writeFileSync(path.join(binDir, 'stat'), `#!/bin/sh
 if [ "$1 $2" = "-c %a" ]; then printf '%s\\n' 600; exit 0; fi

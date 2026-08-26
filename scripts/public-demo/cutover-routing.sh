@@ -61,6 +61,9 @@ mcp_port=4788
 credential_broker_port=4900
 app_priority=1008
 mcp_priority=1007
+app_validation_priority=49008
+mcp_validation_priority=49007
+validation_source_cidr="127.0.0.1/32"
 public_host="public-demo.om.they.dev"
 app_health_path="/login"
 mcp_health_path="/health"
@@ -73,6 +76,8 @@ registered_app=0
 registered_mcp=0
 app_rule_create_attempted=0
 mcp_rule_create_attempted=0
+app_validation_rule_create_attempted=0
+mcp_validation_rule_create_attempted=0
 completed=0
 
 confirm_rule_absent() {
@@ -170,6 +175,54 @@ rollback_attempted_rule() {
   done
 }
 
+validate_validation_rule() {
+  local priority="$1"
+  local target_group_arn="$2"
+  local matching_rules
+  matching_rules="$(rule_json_at_priority "${priority}")"
+  jq -e \
+    --arg target "${target_group_arn}" \
+    --arg source "${validation_source_cidr}" \
+    'length == 1 and
+      (.[0].Actions | length == 1) and
+      .[0].Actions[0].Type == "forward" and
+      .[0].Actions[0].TargetGroupArn == $target and
+      (.[0].Conditions | length == 1) and
+      .[0].Conditions[0].Field == "source-ip" and
+      ((.[0].Conditions[0].Values // .[0].Conditions[0].SourceIpConfig.Values // []) == [$source])' \
+    <<<"${matching_rules}" >/dev/null
+}
+
+rollback_attempted_validation_rule() {
+  local priority="$1"
+  local target_group_arn="$2"
+  local attempted="$3"
+  local attempt rule_arn
+  [[ "${attempted}" -eq 1 ]] || return 0
+  for attempt in 1 2 3 4 5; do
+    if ! rules_json="$(aws elbv2 describe-rules \
+      --region "${AWS_REGION}" \
+      --listener-arn "${LISTENER_ARN}" \
+      --output json 2>"${aws_error_file}")"; then
+      cat "${aws_error_file}" >&2
+      return 1
+    fi
+    if [[ "$(jq --arg priority "${priority}" '[.Rules[] | select(.Priority == $priority)] | length' <<<"${rules_json}")" -eq 0 ]]; then
+      [[ "${attempt}" -eq 5 ]] && return 0
+      sleep 2
+      continue
+    fi
+    if ! validate_validation_rule "${priority}" "${target_group_arn}"; then
+      echo "Rollback preserved validation priority ${priority} because its accepted state drifted from the attempted rule." >&2
+      return 1
+    fi
+    rule_arn="$(jq -r --arg priority "${priority}" '.Rules[] | select(.Priority == $priority) | .RuleArn' <<<"${rules_json}")"
+    aws elbv2 delete-rule --region "${AWS_REGION}" --rule-arn "${rule_arn}" >/dev/null 2>&1 || true
+    confirm_rule_priority_absent "${priority}"
+    return
+  done
+}
+
 cleanup() {
   local original_status=$?
   local rollback_failed=0
@@ -180,6 +233,10 @@ cleanup() {
       "${app_priority}" "${app_target_group_arn:-}" false "${app_rule_create_attempted}" || rollback_failed=1
     rollback_attempted_rule \
       "${mcp_priority}" "${mcp_target_group_arn:-}" true "${mcp_rule_create_attempted}" || rollback_failed=1
+    rollback_attempted_validation_rule \
+      "${app_validation_priority}" "${app_target_group_arn:-}" "${app_validation_rule_create_attempted}" || rollback_failed=1
+    rollback_attempted_validation_rule \
+      "${mcp_validation_priority}" "${mcp_target_group_arn:-}" "${mcp_validation_rule_create_attempted}" || rollback_failed=1
     if [[ "${registered_mcp}" -eq 1 && -n "${mcp_target_group_arn:-}" ]]; then
       aws elbv2 deregister-targets --region "${AWS_REGION}" --target-group-arn "${mcp_target_group_arn}" --targets "Id=${INSTANCE_ID},Port=${mcp_port}" >/dev/null 2>&1 || true
       confirm_target_absent "${mcp_target_group_arn}" "${mcp_port}" || rollback_failed=1
@@ -512,9 +569,15 @@ validate_rule() {
 }
 
 validate_rule_collisions() {
-  local app_rules mcp_rules
+  local app_rules mcp_rules app_validation_rules mcp_validation_rules
   app_rules="$(rule_json_at_priority "${app_priority}")"
   mcp_rules="$(rule_json_at_priority "${mcp_priority}")"
+  app_validation_rules="$(rule_json_at_priority "${app_validation_priority}")"
+  mcp_validation_rules="$(rule_json_at_priority "${mcp_validation_priority}")"
+  if [[ "$(jq 'length' <<<"${app_validation_rules}")" -gt 0 || "$(jq 'length' <<<"${mcp_validation_rules}")" -gt 0 ]]; then
+    echo "A public-demo validation listener priority is already occupied." >&2
+    return 1
+  fi
   if [[ "$(jq 'length' <<<"${app_rules}")" -gt 0 ]]; then
     [[ -n "${app_target_group_arn}" ]] && validate_rule "${app_priority}" "${app_target_group_arn}" false || {
       echo "Listener priority ${app_priority} is occupied by a non-exact rule." >&2
@@ -644,6 +707,21 @@ create_forward_rule() {
   }
 }
 
+create_validation_rule() {
+  local priority="$1"
+  local target_group_arn="$2"
+  local attempted_flag_name="$3"
+  printf -v "${attempted_flag_name}" '%s' 1
+  aws elbv2 create-rule \
+    --region "${AWS_REGION}" \
+    --listener-arn "${LISTENER_ARN}" \
+    --priority "${priority}" \
+    --conditions "Field=source-ip,Values=${validation_source_cidr}" \
+    --actions "Type=forward,TargetGroupArn=${target_group_arn}" \
+    --query 'Rules[0].RuleArn' \
+    --output text >/dev/null
+}
+
 validate_public_https() {
   local login_status mcp_status
   login_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
@@ -702,12 +780,18 @@ case "${mode}" in
 
     rules_json="$(aws elbv2 describe-rules --region "${AWS_REGION}" --listener-arn "${LISTENER_ARN}" --output json)"
     validate_rule_collisions
+    create_validation_rule "${app_validation_priority}" "${app_target_group_arn}" app_validation_rule_create_attempted
+    create_validation_rule "${mcp_validation_priority}" "${mcp_target_group_arn}" mcp_validation_rule_create_attempted
+    wait_for_target "${app_target_group_arn}" "${app_port}"
+    wait_for_target "${mcp_target_group_arn}" "${mcp_port}"
     validate_rule "${mcp_priority}" "${mcp_target_group_arn}" true || \
       create_forward_rule "${mcp_priority}" "${mcp_target_group_arn}" true mcp_rule_create_attempted
     validate_rule "${app_priority}" "${app_target_group_arn}" false || \
       create_forward_rule "${app_priority}" "${app_target_group_arn}" false app_rule_create_attempted
-    wait_for_target "${app_target_group_arn}" "${app_port}"
-    wait_for_target "${mcp_target_group_arn}" "${mcp_port}"
+    rollback_attempted_validation_rule "${app_validation_priority}" "${app_target_group_arn}" "${app_validation_rule_create_attempted}"
+    app_validation_rule_create_attempted=0
+    rollback_attempted_validation_rule "${mcp_validation_priority}" "${mcp_target_group_arn}" "${mcp_validation_rule_create_attempted}"
+    mcp_validation_rule_create_attempted=0
     validate_public_https
     completed=1
     echo "Cutover created or reused only the exact public-demo target registrations and rules."
