@@ -398,11 +398,11 @@ Emit structured, PII-free telemetry for schedule registration, reconciliation pa
 
 ## 10. Migration and backward compatibility
 
-This feature adds only private tables, indexes, custom-field definitions, routes, interceptors, subscribers, commands, and workers. It does not modify an existing public route, event payload, import, DI key, ACL feature, DataTable contract, or database field.
+This feature adds private tables, indexes, custom-field definitions, routes, interceptors, subscribers, commands, and workers. It does not modify an existing public route, event payload, import, DI key, ACL feature, DataTable contract, or database field. Finoo deployment verification found one existing query-index defect that blocked authoritative reconciliation: the two person-profile B-tree indexes included the complete JSONB `doc`, so a reachable large projection exceeded PostgreSQL's B-tree tuple limit. The Finoo delivery keeps both index names, key columns, and predicates stable while removing only the unsafe `INCLUDE (doc)` payload through a transactional migration.
 
 Migration sequence:
 
-1. Add the two private tables and indexes with the private module snapshot.
+1. Add the two private tables and indexes with the private module snapshot, and transactionally rebuild the existing person-profile query indexes without `INCLUDE (doc)` while retaining their names, keys, and predicates.
 2. Deploy code with settings disabled by default.
 3. Seed/ensure the two read-only custom-field definitions idempotently, including the additive `excluded` / `Not applicable` select option.
 4. For Finoo's existing organization, run the exact-scope `ensure-organization-setup` command from the immutable upgrade script to create the disabled settings row and register the hourly schedule idempotently. New organizations use module lifecycle setup.
@@ -415,6 +415,7 @@ Rollback:
 - disable the policy through the settings command, which increments `reconciliationGeneration` and invalidates every queued continuation/retry from an older generation;
 - while the module remains active, leave the stable hourly schedule registered; disabled-policy jobs read the current generation/policy and perform no expiry transition;
 - leave private tables/mirrors intact for recoverability;
+- preserve the corrected person-profile query-index shape during application rollback; the previous runtime uses the same index keys and does not require index-only access to `doc`;
 - before module deactivation, unregister its deterministic schedules, then confirm no jobs are running or pending before removing the private UI/module activation;
 - do not automatically reactivate sticky expired subjects during rollback;
 - the new dedicated Finoo administrator credential and its session revocation intentionally persist if the application image is rolled back, because no prior Finoo-specific secret exists to restore. Both in-stage failure cleanup and the later rollback decision path must poll tenant-scoped login against the restored/retained container before removing pending state, return an explicit failure when the bounded condition is not met, and emit credential-verification evidence only after a proven success.
@@ -458,7 +459,7 @@ Exact filenames may follow discovered module conventions, but ownership and publ
 - implement stable hourly schedule, worker, keyset continuation, idempotency, and progress;
 - test event-driven refresh and authoritative reconciliation.
 
-All orchestration glue remains under `apps/mercato/src/modules/finoo_customer_retention/`; peer-module edits are limited to narrow provider registration. No shared/core producer or contract file is changed.
+All orchestration glue remains under `apps/mercato/src/modules/finoo_customer_retention/`; peer-module edits are limited to narrow provider registration. The only shared/core correction is the person-profile query-index metadata, matching migration/snapshot, and large-document regression test; no public producer, route, event, DI, ACL, or DataTable contract changes.
 
 ### Phase 3: settings API and UI
 
@@ -503,6 +504,7 @@ Required self-contained integration scenarios:
 | `TC-FINOO-RET-005` | Settings hydration, mandatory preview dialog/counts, keyboard behavior, conflict/error/progress states, standard retention columns, default inclusion, and people-list filter. |
 | `TC-FINOO-RET-006` | Rollback safety: disabling increments generation, queued old-generation continuation/retry no-ops, sticky expired people remain expired, and a newly scheduled disabled-policy run is harmless. |
 | `TC-FINOO-RET-007` | Confirmed identity erasure uses the exact tenant/organization retention clock, emits count-only PII-free reports, removes or redacts all Finoo identity copies, preserves active/future/foreign-scope data, and is idempotent on rerun. |
+| `TC-QIDX-THOM-115` | Organization-scoped and tenant-scoped person-profile query-index rows accept large JSONB documents without exceeding the B-tree tuple limit. |
 
 Fixtures are created through API/setup helpers and removed in `finally`; tests cannot depend on seeded/demo records. Verify database state and visible UI state. Headed QA must exercise the deployed Finoo instance, not only local static evidence.
 
@@ -519,6 +521,7 @@ Fixtures are created through API/setup helpers and removed in `finally`; tests c
 | Optional partner provider unavailable | High | Distinguish absent peer from provider failure; fail closed on enabled-peer failure. |
 | CRM status/process regression | High | Never write `CustomerEntity.status`/`isActive`; integration assertions. |
 | Migration or release drift | High | Generated SQL/snapshot review, immutable candidate verification, staged deploy and rollback evidence. |
+| Large person-profile projection blocks reconciliation | High | Keep the lookup index keys/predicates but exclude JSONB `doc` from B-tree storage; exercise both scopes with an incompressible large-document integration fixture. |
 | Administrator credential leaks or crosses scope | High | Stdin-only secret transport, no command log/redo payload, exact row lock and transactional scope revalidation, session revocation, tenant-bound smoke, and rollback re-verification. |
 | Large organization creates long jobs | Medium | 200-row keyset pages, continuation jobs, progress, constant query budget. |
 | Scheduler unavailable or delayed | Medium | Queue health/read-back, structured failure evidence, alert on overdue successful schedule run, and idempotent recovery on the next run. |
@@ -572,9 +575,9 @@ Residual risk remains that direct database writes or a prolonged queue outage de
 | Data integrity | Atomicity and race ownership | Compliant | Advisory subject lock plus customer/state row locks serialize projection writers; projection/mirror commit together; settings lock and durable pending progress intent. Customer activity writers remain eventually consistent by design. |
 | Performance | Indexes, keyset, bounded work | Compliant | Scope/due/keyset indexes, at most 200 people per page, bounded post-lock per-subject reads, and no unbounded foreground scan. |
 | Cache | Explicit strategy and tenant safety | N/A | No cache; indexed DB lookup is the normal path, so no key/TTL/invalidation chain exists. |
-| Migration | Generated migration/snapshot review; no local apply without approval | Compliant | Entity-driven private migration and snapshot are planned; deployment gates apply migration, not implementation preflight. |
-| Integration QA | Self-contained API/UI/queue coverage | Locally compliant | `TC-FINOO-RET-001` through `007` pass with isolated fixtures and teardown; deployed headed QA remains a release gate. |
-| Backward compatibility | No breaking public contract | Compliant | Private additive surfaces only; no public route/event/DI/DataTable change. |
+| Migration | Generated migration/snapshot review; no local apply without approval | Compliant | Private entity migration plus the transactional person-profile index correction are snapshot-aligned; deployment gates apply migrations, not implementation preflight. |
+| Integration QA | Self-contained API/UI/queue coverage | Locally compliant | `TC-FINOO-RET-001` through `007` plus `TC-QIDX-THOM-115` use isolated fixtures and teardown; deployed headed QA remains a release gate. |
+| Backward compatibility | No breaking public contract | Compliant | No public route/event/DI/DataTable change; the corrected indexes retain their public names, key columns, and predicates. |
 
 ### Internal consistency check
 
@@ -600,6 +603,7 @@ None.
 ### Implementation correction — 2026-08-26
 
 - Added the neutral `excluded` / `Not applicable` People-list mirror for partner records while keeping their retention expiry empty; the existing scoped reconciliation path repairs historical blank mirrors idempotently.
+- Corrected the existing person-profile query indexes after Finoo deployment verification proved that `INCLUDE (doc)` rejects reachable large JSONB projections and prevents reconciliation from advancing. The index names, lookup keys, and predicates remain stable; only the unsafe payload storage is removed, with a transactional migration and both-scope integration regression.
 
 ### Implementation correction — 2026-08-24
 
