@@ -78,6 +78,7 @@ test('IAM provisioning contains exact trust and least-privilege resource boundar
   assert.match(script, /secretsmanager:GetSecretValue/)
   assert.match(script, /sts:AssumeRole/)
   assert.match(script, /ses:SendEmail/)
+  assert.match(script, /ses:SendRawEmail/)
   assert.match(script, /ses:FromAddress/)
   assert.match(script, /ses:Recipients/)
   assert.match(script, /success@simulator\.amazonses\.com/)
@@ -274,7 +275,7 @@ esac`)
     assert.deepEqual(workloadPolicy.Statement, [{
       Sid: 'ExactSimulatorDelivery',
       Effect: 'Allow',
-      Action: 'ses:SendEmail',
+      Action: ['ses:SendEmail', 'ses:SendRawEmail'],
       Resource: 'arn:aws:ses:test-region-1:123456789012:identity/they.dev',
       Condition: {
         StringEquals: { 'ses:FromAddress': 'no-reply@they.dev' },

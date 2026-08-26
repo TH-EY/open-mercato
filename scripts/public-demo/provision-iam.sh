@@ -359,7 +359,7 @@ workload = {
     "Statement": [{
         "Sid": "ExactSimulatorDelivery",
         "Effect": "Allow",
-        "Action": "ses:SendEmail",
+        "Action": ["ses:SendEmail", "ses:SendRawEmail"],
         "Resource": os.environ["SES_IDENTITY_ARN"],
         "Condition": {
             "StringEquals": {"ses:FromAddress": "no-reply@they.dev"},
