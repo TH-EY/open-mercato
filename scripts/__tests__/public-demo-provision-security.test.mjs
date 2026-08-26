@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import test from 'node:test'
 import { parse } from 'yaml'
@@ -61,6 +62,40 @@ test('build is credential-free and deploy receives only narrow permissions after
   assert.match(workflowSource, /vars\.PUBLIC_DEMO_APPROVED_SHA/)
   assert.match(workflowSource, /mask-aws-account-id: true/)
   assert.doesNotMatch(workflowSource, /AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN/)
+})
+
+test('AWS target guard evaluates the complete EC2 response without jq precedence drift', () => {
+  const targetGuard = workflow.jobs.deploy.steps.find(
+    (step) => step.name === 'Verify AWS target and host availability',
+  )
+  const jqProgram = targetGuard.run.match(/jq -e '\n([\s\S]*?)\n\s*' <<<"\$\{instance_json\}"/u)?.[1]
+  assert.ok(jqProgram)
+
+  const instance = {
+    State: { Name: 'running' },
+    MetadataOptions: {
+      HttpTokens: 'required',
+      HttpEndpoint: 'enabled',
+      HttpPutResponseHopLimit: 1,
+      State: 'applied',
+    },
+  }
+  const evaluate = (document) => spawnSync('jq', ['-e', jqProgram], {
+    input: JSON.stringify(document),
+    encoding: 'utf8',
+  })
+
+  assert.equal(evaluate({ Reservations: [{ Instances: [instance] }] }).status, 0)
+  assert.notEqual(
+    evaluate({ Reservations: [{ Instances: [instance] }, { Instances: [instance] }] }).status,
+    0,
+  )
+  assert.notEqual(evaluate({
+    Reservations: [{ Instances: [{
+      ...instance,
+      MetadataOptions: { ...instance.MetadataOptions, HttpPutResponseHopLimit: 2 },
+    }] }],
+  }).status, 0)
 })
 
 test('every external action is pinned to a full commit SHA', () => {

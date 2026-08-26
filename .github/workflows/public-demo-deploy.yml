@@ -149,13 +149,13 @@ jobs:
             --instance-ids "${INSTANCE_ID}" \
             --output json)"
           jq -e '
-            .Reservations | length == 1 and
-            .[0].Instances | length == 1 and
-            .[0].Instances[0].State.Name == "running" and
-            .[0].Instances[0].MetadataOptions.HttpTokens == "required" and
-            .[0].Instances[0].MetadataOptions.HttpEndpoint == "enabled" and
-            .[0].Instances[0].MetadataOptions.HttpPutResponseHopLimit == 1 and
-            .[0].Instances[0].MetadataOptions.State == "applied"
+            (.Reservations | length == 1) and
+            (.Reservations[0].Instances | length == 1) and
+            .Reservations[0].Instances[0].State.Name == "running" and
+            .Reservations[0].Instances[0].MetadataOptions.HttpTokens == "required" and
+            .Reservations[0].Instances[0].MetadataOptions.HttpEndpoint == "enabled" and
+            .Reservations[0].Instances[0].MetadataOptions.HttpPutResponseHopLimit == 1 and
+            .Reservations[0].Instances[0].MetadataOptions.State == "applied"
           ' <<<"${instance_json}" >/dev/null
           ping_status="$(aws ssm describe-instance-information \
             --region "${AWS_REGION}" \
