@@ -20,9 +20,14 @@ jest.mock('@open-mercato/shared/lib/logger', () => {
   return { createLogger: jest.fn(() => mocked) }
 })
 
+jest.mock('../tool-loader', () => ({
+  loadAllModuleTools: jest.fn().mockResolvedValue(undefined),
+}))
+
 const testLogger = jest
   .requireMock('@open-mercato/shared/lib/logger')
   .createLogger('test') as Record<'debug' | 'info' | 'warn' | 'error', jest.Mock>
+const loadAllModuleToolsMock = jest.requireMock('../tool-loader').loadAllModuleTools as jest.Mock
 
 
 function makeAgent(
@@ -62,6 +67,7 @@ describe('resolveAiAgentTools', () => {
   beforeEach(() => {
     resetAgentRegistryForTests()
     toolRegistry.clear()
+    loadAllModuleToolsMock.mockClear()
     warnSpy = testLogger.warn
     warnSpy.mockClear()
   })
@@ -85,6 +91,7 @@ describe('resolveAiAgentTools', () => {
       name: 'AgentPolicyError',
       code: 'agent_unknown',
     })
+    expect(loadAllModuleToolsMock).toHaveBeenCalledTimes(1)
   })
 
   it('throws AgentPolicyError when the agent requires features the caller lacks', async () => {

@@ -7,6 +7,7 @@ import type { AiAgentDefinition, AiAgentMutationPolicy } from './ai-agent-defini
 import type { AiChatRequestContext, AiUiPart } from './attachment-bridge-types'
 import type { AiToolDefinition, McpToolContext } from './types'
 import { loadAgentRegistry } from './agent-registry'
+import { loadAllModuleTools } from './tool-loader'
 import {
   checkAgentPolicy,
   resolveEffectiveMutationPolicy,
@@ -308,7 +309,7 @@ function adaptToolToAiSdk(
 export async function resolveAiAgentTools(
   input: ResolveAiAgentToolsInput,
 ): Promise<ResolvedAgentTools> {
-  await loadAgentRegistry()
+  await Promise.all([loadAgentRegistry(), loadAllModuleTools()])
 
   const policyAuth = toPolicyAuthContext(input.authContext)
   const mutationPolicyOverride = input.mutationPolicyOverride ?? null
