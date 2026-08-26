@@ -92,6 +92,13 @@ compose_config="$(docker compose \
   --env-file "${workdir}/.env.public-demo" \
   -f "${workdir}/docker-compose.public-demo.yml" \
   config --format json)"
+for service in app aws-credential-broker mcp worker; do
+  configured_app_image="$(jq -er --arg service "${service}" '.services[$service].image' <<<"${compose_config}")"
+  [[ "${configured_app_image}" == "${EXPECTED_IMAGE_URI}" ]] || {
+    echo "Public-demo Compose config is not bound to the approved application image digest." >&2
+    exit 1
+  }
+done
 for service in app aws-credential-broker mcp meilisearch postgres redis worker; do
   container="openmercato-public-demo-${service}"
   expected_service_image="$(jq -er --arg service "${service}" '.services[$service].image' <<<"${compose_config}")"

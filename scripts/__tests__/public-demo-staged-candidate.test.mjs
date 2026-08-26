@@ -37,7 +37,8 @@ if [[ "$1" == ps ]]; then
   exit 0
 fi
 if [[ "$1" == compose ]]; then
-  printf '%s\\n' '{"services":{"app":{"image":"'"$EXPECTED_IMAGE_URI"'"},"aws-credential-broker":{"image":"'"$EXPECTED_IMAGE_URI"'"},"mcp":{"image":"'"$EXPECTED_IMAGE_URI"'"},"meilisearch":{"image":"'"$EXPECTED_IMAGE_URI"'"},"postgres":{"image":"'"$EXPECTED_IMAGE_URI"'"},"redis":{"image":"'"$EXPECTED_IMAGE_URI"'"},"worker":{"image":"'"$EXPECTED_IMAGE_URI"'"}}}'
+  compose_image="\${FAKE_COMPOSE_IMAGE_URI:-$EXPECTED_IMAGE_URI}"
+  printf '%s\\n' '{"services":{"app":{"image":"'"$compose_image"'"},"aws-credential-broker":{"image":"'"$compose_image"'"},"mcp":{"image":"'"$compose_image"'"},"meilisearch":{"image":"'"$compose_image"'"},"postgres":{"image":"'"$compose_image"'"},"redis":{"image":"'"$compose_image"'"},"worker":{"image":"'"$compose_image"'"}}}'
   exit 0
 fi
 if [[ "$1" == inspect && "$*" == *".State.Running"* ]]; then printf '%s\\n' true; exit 0; fi
@@ -103,6 +104,14 @@ test('host verifier rejects a cross-SHA staged marker and runtime image drift', 
     })
     assert.notEqual(imageDrift.status, 0)
     assert.match(imageDrift.stderr, /does not run the exact reviewed image/)
+
+    const coherentDriftUri = `registry.example/openmercato@sha256:${'e'.repeat(64)}`
+    const coherentConfigAndRuntimeDrift = runVerifier(harness, {
+      FAKE_COMPOSE_IMAGE_URI: coherentDriftUri,
+      FAKE_IMAGE_URI: coherentDriftUri,
+    })
+    assert.notEqual(coherentConfigAndRuntimeDrift.status, 0)
+    assert.match(coherentConfigAndRuntimeDrift.stderr, /Compose config is not bound to the approved/)
   } finally {
     fs.rmSync(harness.root, { recursive: true, force: true })
   }
