@@ -516,7 +516,7 @@ test('app and worker share the exact fail-closed SES sender and quota policy', (
     assert.equal(environment.EMAIL_DELIVERY_POLICY_KEY, 'openmercato-public-demo-v1')
     assert.equal(environment.EMAIL_ALLOWED_RECIPIENT, '*')
     assert.equal(environment.EMAIL_ALLOWED_FROM, '${EMAIL_FROM:?EMAIL_FROM must be set}')
-    assert.equal(environment.EMAIL_DELIVERY_LIMIT, '10')
+    assert.equal(environment.EMAIL_DELIVERY_LIMIT, '100')
     assert.equal(environment.EMAIL_DELIVERY_WINDOW_SECONDS, '86400')
   }
 })

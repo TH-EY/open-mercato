@@ -187,16 +187,19 @@ esac`)
 }
 
 for (const scenario of [
-  { name: 'exact predecessor', initial: senderPolicy('ExactSimulatorDelivery'), expectedPuts: 1 },
-  { name: 'already-upgraded target', initial: senderPolicy(), expectedPuts: 0 },
-  { name: 'lost accepted put response', initial: senderPolicy('ExactSimulatorDelivery'), expectedPuts: 1, extra: { FAKE_LOST_PUT_RESPONSE: '1' } },
+  { name: 'exact predecessor', mode: 'apply', initial: senderPolicy('ExactSimulatorDelivery'), expected: senderPolicy(), expectedPuts: 1 },
+  { name: 'already-upgraded target', mode: 'apply', initial: senderPolicy(), expected: senderPolicy(), expectedPuts: 0 },
+  { name: 'lost accepted put response', mode: 'apply', initial: senderPolicy('ExactSimulatorDelivery'), expected: senderPolicy(), expectedPuts: 1, extra: { FAKE_LOST_PUT_RESPONSE: '1' } },
+  { name: 'sender-bound rollback source', mode: 'rollback', initial: senderPolicy(), expected: senderPolicy('ExactSimulatorDelivery'), expectedPuts: 1 },
+  { name: 'already-rolled-back target', mode: 'rollback', initial: senderPolicy('ExactSimulatorDelivery'), expected: senderPolicy('ExactSimulatorDelivery'), expectedPuts: 0 },
+  { name: 'lost accepted rollback response', mode: 'rollback', initial: senderPolicy(), expected: senderPolicy('ExactSimulatorDelivery'), expectedPuts: 1, extra: { FAKE_LOST_PUT_RESPONSE: '1' } },
 ]) {
   test(`SES recipient policy upgrade converges from ${scenario.name}`, () => {
     const harness = makeSesUpgradeHarness(scenario.initial)
     try {
-      const result = run(sesPolicyUpgradeScript, [], harness, sesUpgradeEnv(harness, scenario.extra))
+      const result = run(sesPolicyUpgradeScript, [scenario.mode], harness, sesUpgradeEnv(harness, scenario.extra))
       assert.equal(result.status, 0, result.stderr)
-      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(harness.root, 'policy-state.json'), 'utf8')), senderPolicy())
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(harness.root, 'policy-state.json'), 'utf8')), scenario.expected)
       const calls = fs.readFileSync(harness.callsFile, 'utf8')
       assert.equal((calls.match(/iam put-role-policy/g) ?? []).length, scenario.expectedPuts)
     } finally {
@@ -208,9 +211,9 @@ for (const scenario of [
 test('SES recipient policy upgrade rejects foreign drift without mutation', () => {
   const harness = makeSesUpgradeHarness(senderPolicy('ForeignPolicy'))
   try {
-    const result = run(sesPolicyUpgradeScript, [], harness, sesUpgradeEnv(harness))
+    const result = run(sesPolicyUpgradeScript, ['apply'], harness, sesUpgradeEnv(harness))
     assert.notEqual(result.status, 0)
-    assert.match(result.stderr, /neither the exact predecessor nor the approved target/)
+    assert.match(result.stderr, /neither the exact apply source nor target/)
     assert.doesNotMatch(fs.readFileSync(harness.callsFile, 'utf8'), /iam put-role-policy/)
   } finally {
     fs.rmSync(harness.root, { recursive: true, force: true })
@@ -221,7 +224,7 @@ test('SES recipient policy upgrade restores the exact predecessor after post-wri
   const predecessor = senderPolicy('ExactSimulatorDelivery')
   const harness = makeSesUpgradeHarness(predecessor)
   try {
-    const result = run(sesPolicyUpgradeScript, [], harness, sesUpgradeEnv(harness, {
+    const result = run(sesPolicyUpgradeScript, ['apply'], harness, sesUpgradeEnv(harness, {
       FAKE_FAIL_READBACK_AFTER_PUT: '1',
     }))
     assert.notEqual(result.status, 0)
