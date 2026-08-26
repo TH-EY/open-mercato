@@ -219,14 +219,13 @@ describe('FinooIdentityService', () => {
     const em = {
       findOne: jest.fn(async () => ({
         personId: 'ee823a18-e50c-4de4-9d71-4f516d7d754e',
-        isComplete: false,
+        isComplete: true,
         fieldStatuses: {
-          pesel: 'complete',
-          documentType: 'complete',
-          issuingCountryCode: 'missing',
+          pesel: 'not_applicable',
+          documentType: 'unexpected',
           documentNumber: 'missing',
           issuedOn: 'complete',
-          expiresOn: 'missing',
+          expiresOn: 'not_applicable',
           rawPesel: '44051401458',
         },
       })),
@@ -248,12 +247,12 @@ describe('FinooIdentityService', () => {
     expect(result).toEqual({
       isComplete: false,
       statuses: {
-        pesel: 'complete',
-        documentType: 'complete',
+        pesel: 'missing',
+        documentType: 'missing',
         issuingCountryCode: 'missing',
         documentNumber: 'missing',
         issuedOn: 'complete',
-        expiresOn: 'missing',
+        expiresOn: 'not_applicable',
       },
     })
     expect(JSON.stringify(result)).not.toContain('44051401458')

@@ -29,8 +29,12 @@ const IDENTITY_FIELD_STATUS_KEYS = [
   'expiresOn',
 ] as const
 
-function safeIdentityFieldStatus(value: unknown): IdentityFieldStatus {
-  return value === 'complete' || value === 'not_applicable' ? value : 'missing'
+function safeIdentityFieldStatus(
+  key: typeof IDENTITY_FIELD_STATUS_KEYS[number],
+  value: unknown,
+): IdentityFieldStatus {
+  if (value === 'complete') return value
+  return key === 'expiresOn' && value === 'not_applicable' ? value : 'missing'
 }
 
 export function sanitizeIdentityFieldStatuses(value: unknown): IdentityFieldStatuses {
@@ -38,8 +42,12 @@ export function sanitizeIdentityFieldStatuses(value: unknown): IdentityFieldStat
     ? value as Record<string, unknown>
     : {}
   return Object.fromEntries(
-    IDENTITY_FIELD_STATUS_KEYS.map((key) => [key, safeIdentityFieldStatus(source[key])]),
+    IDENTITY_FIELD_STATUS_KEYS.map((key) => [key, safeIdentityFieldStatus(key, source[key])]),
   ) as IdentityFieldStatuses
+}
+
+export function areIdentityFieldStatusesComplete(statuses: IdentityFieldStatuses): boolean {
+  return Object.values(statuses).every((status) => status !== 'missing')
 }
 
 export type IdentityDataInput = {
@@ -154,7 +162,7 @@ export function computeIdentityCompleteness(input: IdentityDataInput): IdentityC
         : 'missing',
   }
   return {
-    isComplete: Object.values(statuses).every((status) => status !== 'missing'),
+    isComplete: areIdentityFieldStatusesComplete(statuses),
     statuses,
   }
 }

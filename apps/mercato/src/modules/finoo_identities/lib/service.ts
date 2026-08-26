@@ -22,6 +22,7 @@ import {
   type FinooIdentityInput,
 } from '../data/validators'
 import {
+  areIdentityFieldStatusesComplete,
   computeIdentityCompleteness,
   sanitizeIdentityFieldStatuses,
   type IdentityFieldStatuses,
@@ -404,9 +405,10 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
         { fields: ['personId', 'isComplete', 'fieldStatuses'] },
       )
       const missing = computeIdentityCompleteness({})
+      const statuses = identity ? sanitizeIdentityFieldStatuses(identity.fieldStatuses) : missing.statuses
       return {
-        isComplete: identity?.isComplete ?? false,
-        statuses: identity ? sanitizeIdentityFieldStatuses(identity.fieldStatuses) : missing.statuses,
+        isComplete: areIdentityFieldStatusesComplete(statuses),
+        statuses,
       }
     },
 

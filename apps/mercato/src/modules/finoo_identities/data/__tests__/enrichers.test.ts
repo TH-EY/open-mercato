@@ -7,14 +7,14 @@ describe('FINOO identity completeness enricher', () => {
         expect(options.fields).toEqual(['personId', 'isComplete', 'fieldStatuses'])
         return {
           personId: 'ee823a18-e50c-4de4-9d71-4f516d7d754e',
-          isComplete: false,
+          isComplete: true,
           fieldStatuses: {
-            pesel: 'complete',
+            pesel: 'not_applicable',
             documentType: 'complete',
-            issuingCountryCode: 'missing',
+            issuingCountryCode: 'unexpected',
             documentNumber: 'missing',
             issuedOn: 'complete',
-            expiresOn: 'complete',
+            expiresOn: 'not_applicable',
             rawPesel: '44051401458',
           },
         }
@@ -35,9 +35,10 @@ describe('FINOO identity completeness enricher', () => {
       _finooIdentities: {
         isComplete: false,
         statuses: {
-          pesel: 'complete',
+          pesel: 'missing',
           issuingCountryCode: 'missing',
           documentNumber: 'missing',
+          expiresOn: 'not_applicable',
         },
       },
     })

@@ -62,6 +62,30 @@ function runIdentityPurgeAssertion(report: Record<string, unknown>) {
   )
 }
 
+function runIdentityVerificationAssertion(
+  report: Record<string, unknown>,
+  expectedActive: string,
+  expectedInactive: string,
+  expectedDestinationRecords: string,
+) {
+  const start = upgradeScript.indexOf('assert_identity_verification_report() {')
+  const end = upgradeScript.indexOf('assert_identity_purge_report() {', start)
+  const assertion = upgradeScript.slice(start, end)
+  return spawnSync(
+    'bash',
+    [
+      '-c',
+      `${assertion}\nassert_identity_verification_report "$1" "$2" "$3" "$4"`,
+      'verification-test',
+      JSON.stringify(report),
+      expectedActive,
+      expectedInactive,
+      expectedDestinationRecords,
+    ],
+    { encoding: 'utf8' },
+  )
+}
+
 describe('FINOO identity private rollout contract', () => {
   it('sets up the exact scope and stops the active writer before final migration and cutover', () => {
     expectOrdered(upgradeScript, [
@@ -344,6 +368,36 @@ describe('FINOO identity private rollout contract', () => {
     const residual = runIdentityPurgeAssertion({ ...clean, residualValues: 1 })
     expect(residual.status).not.toBe(0)
     expect(residual.stderr).toContain('FINOO identity purge verification found legacy residue')
+  })
+
+  it('requires the exact approved destination-record count', () => {
+    const report = {
+      scanned: 0,
+      migrated: 0,
+      unmigrated: 0,
+      destinationRecords: 102,
+      linkedDestinationRecords: 0,
+      destinationConflicts: 0,
+      aliasValues: 0,
+      activeDefinitions: 0,
+      inactiveDefinitions: 0,
+    }
+    expect(runIdentityVerificationAssertion(report, '0', '0', '102').status).toBe(0)
+    for (const expected of ['101', '103', '0', 'invalid']) {
+      expect(runIdentityVerificationAssertion(report, '0', '0', expected).status).not.toBe(0)
+    }
+    expect(runIdentityVerificationAssertion(
+      { ...report, destinationRecords: '102' },
+      '0',
+      '0',
+      '102',
+    ).status).not.toBe(0)
+    expect(runIdentityVerificationAssertion(
+      { ...report, scanned: 1 },
+      '0',
+      '0',
+      '102',
+    ).status).not.toBe(0)
   })
 
   it.each([
