@@ -20,6 +20,28 @@ export type IdentityFieldStatuses = {
   expiresOn: IdentityFieldStatus
 }
 
+const IDENTITY_FIELD_STATUS_KEYS = [
+  'pesel',
+  'documentType',
+  'issuingCountryCode',
+  'documentNumber',
+  'issuedOn',
+  'expiresOn',
+] as const
+
+function safeIdentityFieldStatus(value: unknown): IdentityFieldStatus {
+  return value === 'complete' || value === 'not_applicable' ? value : 'missing'
+}
+
+export function sanitizeIdentityFieldStatuses(value: unknown): IdentityFieldStatuses {
+  const source = typeof value === 'object' && value !== null
+    ? value as Record<string, unknown>
+    : {}
+  return Object.fromEntries(
+    IDENTITY_FIELD_STATUS_KEYS.map((key) => [key, safeIdentityFieldStatus(source[key])]),
+  ) as IdentityFieldStatuses
+}
+
 export type IdentityDataInput = {
   pesel?: string | null
   documentType?: string | null

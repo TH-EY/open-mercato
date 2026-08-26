@@ -21,7 +21,11 @@ import {
   type FinooIdentityConflictResolutionInput,
   type FinooIdentityInput,
 } from '../data/validators'
-import { computeIdentityCompleteness, type IdentityFieldStatuses } from './identity-domain'
+import {
+  computeIdentityCompleteness,
+  sanitizeIdentityFieldStatuses,
+  type IdentityFieldStatuses,
+} from './identity-domain'
 import { defaultEncryptionMaps } from '../encryption'
 
 export type FinooIdentitySubjectScope = {
@@ -402,7 +406,7 @@ export function createFinooIdentityService(dependencies: FinooIdentityServiceDep
       const missing = computeIdentityCompleteness({})
       return {
         isComplete: identity?.isComplete ?? false,
-        statuses: identity?.fieldStatuses ?? missing.statuses,
+        statuses: identity ? sanitizeIdentityFieldStatuses(identity.fieldStatuses) : missing.statuses,
       }
     },
 

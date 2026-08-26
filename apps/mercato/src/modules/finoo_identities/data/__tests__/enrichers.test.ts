@@ -15,6 +15,7 @@ describe('FINOO identity completeness enricher', () => {
             documentNumber: 'missing',
             issuedOn: 'complete',
             expiresOn: 'complete',
+            rawPesel: '44051401458',
           },
         }
       }),

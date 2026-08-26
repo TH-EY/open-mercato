@@ -1,7 +1,7 @@
 import type { EntityManager } from '@mikro-orm/postgresql'
 import type { ResponseEnricher } from '@open-mercato/shared/lib/crud/response-enricher'
 import { FinooPersonIdentity } from './entities'
-import type { IdentityFieldStatuses } from '../lib/identity-domain'
+import { sanitizeIdentityFieldStatuses, type IdentityFieldStatuses } from '../lib/identity-domain'
 
 type PersonRecord = Record<string, unknown> & { id: string }
 
@@ -35,7 +35,7 @@ const completenessEnricher: ResponseEnricher<PersonRecord> = {
       ...record,
       _finooIdentities: {
         isComplete: identity?.isComplete ?? false,
-        statuses: identity?.fieldStatuses ?? missingStatuses,
+        statuses: identity ? sanitizeIdentityFieldStatuses(identity.fieldStatuses) : missingStatuses,
       },
     }
   },

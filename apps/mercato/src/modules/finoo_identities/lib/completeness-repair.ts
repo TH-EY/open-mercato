@@ -53,7 +53,8 @@ async function requireIdentityEncryption(
 }
 
 function sameStatuses(left: FinooPersonIdentity['fieldStatuses'], right: FinooPersonIdentity['fieldStatuses']): boolean {
-  return left.pesel === right.pesel
+  return Object.keys(left).length === 6
+    && left.pesel === right.pesel
     && left.documentType === right.documentType
     && left.issuingCountryCode === right.issuingCountryCode
     && left.documentNumber === right.documentNumber

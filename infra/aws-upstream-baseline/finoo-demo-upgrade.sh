@@ -9,6 +9,7 @@ OM_FINOO_AFFILIATE_REDIRECT_HOSTS="${OM_FINOO_AFFILIATE_REDIRECT_HOSTS:-}"
 OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL="${OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL:-}"
 RATE_LIMIT_TRUST_PROXY_DEPTH="${RATE_LIMIT_TRUST_PROXY_DEPTH:-}"
 FINOO_ADMIN_PASSWORD_SECRET_ID="${FINOO_ADMIN_PASSWORD_SECRET_ID:-}"
+FINOO_EXPECTED_IDENTITY_RECORDS="${FINOO_EXPECTED_IDENTITY_RECORDS:-}"
 FINOO_SES_CREDENTIALS_STAGED="${FINOO_SES_CREDENTIALS_STAGED:-false}"
 SYSTEM_EMAIL_PROVIDER=ses
 AWS_SES_REGION=eu-west-2
@@ -42,7 +43,7 @@ for required_name in \
   DEPLOY_COMMIT DEPLOY_APP_IMAGE DEPLOY_APP_DIGEST \
   OM_FINOO_AFFILIATE_REDIRECT_HOSTS OM_FINOO_DEFAULT_AFFILIATE_DESTINATION_URL \
   RATE_LIMIT_TRUST_PROXY_DEPTH \
-  FINOO_ADMIN_PASSWORD_SECRET_ID; do
+  FINOO_ADMIN_PASSWORD_SECRET_ID FINOO_EXPECTED_IDENTITY_RECORDS; do
   require_value "$required_name" "${!required_name}"
 done
 
@@ -60,6 +61,10 @@ if [[ "$DEPLOY_APP_IMAGE" != *":finoo-${DEPLOY_COMMIT}" ]]; then
 fi
 if [[ "$FINOO_ADMIN_PASSWORD_SECRET_ID" != openmercato-upstream-baseline-dokploy/finoo-demo/finoo-admin-password ]]; then
   echo "Finoo upgrade requires the exact approved Finoo admin password secret identifier" >&2
+  exit 1
+fi
+if [[ ! "$FINOO_EXPECTED_IDENTITY_RECORDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Finoo upgrade requires a positive preflight identity-record count" >&2
   exit 1
 fi
 if [[ "$OM_FINOO_AFFILIATE_REDIRECT_HOSTS" != finoo.pl ]]; then
@@ -155,6 +160,7 @@ trap 'rm -f -- "$REMOTE_SCRIPT"' EXIT
   printf 'email_from=%q\n' "$EMAIL_FROM"
   printf 'notifications_email_from=%q\n' "$NOTIFICATIONS_EMAIL_FROM"
   printf 'finoo_admin_secret_id=%q\n' "$FINOO_ADMIN_PASSWORD_SECRET_ID"
+  printf 'finoo_expected_identity_records=%q\n' "$FINOO_EXPECTED_IDENTITY_RECORDS"
   printf 'ses_credentials_staged=%q\n' "$FINOO_SES_CREDENTIALS_STAGED"
   printf 'finoo_tenant_id=%q\n' "$FINOO_TENANT_ID"
   printf 'finoo_organization_id=%q\n' "$FINOO_ORGANIZATION_ID"
@@ -268,6 +274,10 @@ expected_key_sets = {
         'completenessUpdated', 'wouldNormalizeCountries',
         'wouldUpdateCompleteness',
     }),
+    frozenset({
+        'mode', 'values', 'definitions', 'auditLogs',
+        'residualValues', 'residualDefinitions', 'residualAuditLogs',
+    }),
 }
 matches = []
 for line in sys.argv[1].splitlines():
@@ -338,7 +348,8 @@ assert_identity_verification_report() {
   local report="$1"
   local expected_active="$2"
   local expected_inactive="$3"
-  python3 - "$report" "$expected_active" "$expected_inactive" <<'PY'
+  local expected_destination_records="$4"
+  python3 - "$report" "$expected_active" "$expected_inactive" "$expected_destination_records" <<'PY'
 import json
 import sys
 
@@ -364,6 +375,28 @@ if report['destinationRecords'] < report['linkedDestinationRecords']:
     raise SystemExit('FINOO identity destination count is inconsistent')
 if report['activeDefinitions'] != int(sys.argv[2]) or report['inactiveDefinitions'] != int(sys.argv[3]):
     raise SystemExit('FINOO identity legacy definition count is not exact')
+if report['destinationRecords'] != int(sys.argv[4]):
+    raise SystemExit('FINOO identity destination count changed from approved preflight')
+PY
+}
+
+assert_identity_purge_report() {
+  local report="$1"
+  python3 - "$report" <<'PY'
+import json
+import sys
+
+expected_keys = {
+    'mode', 'values', 'definitions', 'auditLogs',
+    'residualValues', 'residualDefinitions', 'residualAuditLogs',
+}
+report = json.loads(sys.argv[1])
+if set(report) != expected_keys or report.get('mode') != 'dry-run':
+    raise SystemExit('Unexpected FINOO identity purge report shape')
+if any(type(value) is not int or value < 0 for key, value in report.items() if key != 'mode'):
+    raise SystemExit('FINOO identity purge report must contain counts only')
+if any(report[key] != 0 for key in expected_keys if key != 'mode'):
+    raise SystemExit('FINOO identity purge verification found legacy residue')
 PY
 }
 
@@ -395,6 +428,8 @@ active = report['activeDefinitions']
 inactive = report['inactiveDefinitions']
 if (active, inactive) not in {(6, 0), (0, 6), (0, 0)}:
     raise SystemExit('FINOO identity definitions are in a partial state')
+if (active, inactive) == (0, 0) and (report['scanned'] != 0 or report['migrated'] != 0 or report['linkedDestinationRecords'] != 0):
+    raise SystemExit('FINOO identity purged definition state still has active legacy values')
 print(f'{active} {inactive}')
 PY
 }
@@ -423,6 +458,18 @@ run_preserved_new_cli() {
   return "$status"
 }
 
+verify_identity_purge_state() {
+  local source_container="$1"
+  local purge_output
+  local purge_report
+  purge_output="$(run_preserved_new_cli "$source_container" finoo_identities purge-legacy \
+    --tenant "$finoo_tenant_id" \
+    --organization "$finoo_organization_id" \
+    --dry-run)" || return 1
+  purge_report="$(normalize_identity_json_report "$purge_output")" || return 1
+  assert_identity_purge_report "$purge_report"
+}
+
 read_identity_definition_state() {
   local source_container="$1"
   local verification_output
@@ -431,7 +478,12 @@ read_identity_definition_state() {
     --tenant "$finoo_tenant_id" \
     --organization "$finoo_organization_id")" || return 1
   verification_report="$(normalize_identity_json_report "$verification_output")" || return 1
-  read_identity_definition_state_from_report "$verification_report"
+  local definition_state
+  definition_state="$(read_identity_definition_state_from_report "$verification_report")" || return 1
+  if [[ "$definition_state" == "0 0" ]]; then
+    verify_identity_purge_state "$source_container" || return 1
+  fi
+  printf '%s\n' "$definition_state"
 }
 
 ensure_legacy_identity_state_for_old() {
@@ -922,6 +974,9 @@ identity_verification_output="$(docker exec "$candidate_container" yarn mercato 
   --organization "$finoo_organization_id")"
 identity_verification_report="$(normalize_identity_json_report "$identity_verification_output")"
 identity_definition_state="$(read_identity_definition_state_from_report "$identity_verification_report")"
+if [[ "$identity_definition_state" == "0 0" ]]; then
+  verify_identity_purge_state "$candidate_container"
+fi
 printf '[finoo-identities] migration_verify=%s\n' "$identity_verification_report"
 expected_inactive_definitions=6
 if [[ "$identity_definition_state" == "6 0" ]]; then
@@ -942,7 +997,7 @@ identity_cutover_output="$(docker exec "$candidate_container" yarn mercato finoo
   --tenant "$finoo_tenant_id" \
   --organization "$finoo_organization_id")"
 identity_cutover_report="$(normalize_identity_json_report "$identity_cutover_output")"
-assert_identity_verification_report "$identity_cutover_report" 0 "$expected_inactive_definitions"
+assert_identity_verification_report "$identity_cutover_report" 0 "$expected_inactive_definitions" "$finoo_expected_identity_records"
 docker exec "$candidate_container" yarn mercato configs cache structural \
   --tenant "$finoo_tenant_id" \
   --json
@@ -1113,6 +1168,10 @@ expected_key_sets = {
         'completenessUpdated', 'wouldNormalizeCountries',
         'wouldUpdateCompleteness',
     }),
+    frozenset({
+        'mode', 'values', 'definitions', 'auditLogs',
+        'residualValues', 'residualDefinitions', 'residualAuditLogs',
+    }),
 }
 matches = []
 for line in sys.argv[1].splitlines():
@@ -1156,7 +1215,29 @@ active = report['activeDefinitions']
 inactive = report['inactiveDefinitions']
 if (active, inactive) not in {(6, 0), (0, 6), (0, 0)}:
     raise SystemExit('FINOO identity definitions are in a partial state')
+if (active, inactive) == (0, 0) and (report['scanned'] != 0 or report['migrated'] != 0 or report['linkedDestinationRecords'] != 0):
+    raise SystemExit('FINOO identity purged definition state still has active legacy values')
 print(f'{active} {inactive}')
+PY
+}
+
+assert_identity_purge_report() {
+  local report="$1"
+  python3 - "$report" <<'PY'
+import json
+import sys
+
+expected_keys = {
+    'mode', 'values', 'definitions', 'auditLogs',
+    'residualValues', 'residualDefinitions', 'residualAuditLogs',
+}
+report = json.loads(sys.argv[1])
+if set(report) != expected_keys or report.get('mode') != 'dry-run':
+    raise SystemExit('Unexpected FINOO identity purge report shape')
+if any(type(value) is not int or value < 0 for key, value in report.items() if key != 'mode'):
+    raise SystemExit('FINOO identity purge report must contain counts only')
+if any(report[key] != 0 for key in expected_keys if key != 'mode'):
+    raise SystemExit('FINOO identity purge verification found legacy residue')
 PY
 }
 
@@ -1252,6 +1333,18 @@ run_preserved_new_cli() {
   rm -f -- "$command_env"
   return "$status"
 }
+
+verify_identity_purge_state() {
+  local source_container="$1"
+  local purge_output
+  local purge_report
+  purge_output="$(run_preserved_new_cli "$source_container" finoo_identities purge-legacy \
+    --tenant "$finoo_tenant_id" \
+    --organization "$finoo_organization_id" \
+    --dry-run)" || return 1
+  purge_report="$(normalize_identity_json_report "$purge_output")" || return 1
+  assert_identity_purge_report "$purge_report"
+}
 read_identity_definition_state() {
   local source_container="$1"
   local verification_output
@@ -1260,7 +1353,12 @@ read_identity_definition_state() {
     --tenant "$finoo_tenant_id" \
     --organization "$finoo_organization_id")" || return 1
   verification_report="$(normalize_identity_json_report "$verification_output")" || return 1
-  read_identity_definition_state_from_report "$verification_report"
+  local definition_state
+  definition_state="$(read_identity_definition_state_from_report "$verification_report")" || return 1
+  if [[ "$definition_state" == "0 0" ]]; then
+    verify_identity_purge_state "$source_container" || return 1
+  fi
+  printf '%s\n' "$definition_state"
 }
 ensure_legacy_identity_state_for_old() {
   local source_container="$1"

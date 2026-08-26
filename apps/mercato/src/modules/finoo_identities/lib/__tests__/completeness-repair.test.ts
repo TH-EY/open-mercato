@@ -169,6 +169,43 @@ describe('FINOO identity completeness repair', () => {
     expect(fixture.persist).not.toHaveBeenCalled()
   })
 
+  it('repairs a status object that contains an unexpected key', async () => {
+    const row = identity({
+      issuingCountryCode: 'PL',
+      isComplete: true,
+      fieldStatuses: {
+        pesel: 'complete',
+        documentType: 'complete',
+        issuingCountryCode: 'complete',
+        documentNumber: 'complete',
+        issuedOn: 'complete',
+        expiresOn: 'complete',
+        rawPesel: '44051401458',
+      } as never,
+    })
+    findWithDecryption.mockResolvedValueOnce([row]).mockResolvedValueOnce([])
+    const fixture = entityManager()
+
+    const report = await repairIdentityCompleteness({
+      em: fixture.em as never,
+      encryptionService: encryptionService as never,
+      scope,
+      mode: 'apply',
+      batchSize: 10,
+    })
+
+    expect(report.completenessUpdated).toBe(1)
+    expect(row.fieldStatuses).toEqual({
+      pesel: 'complete',
+      documentType: 'complete',
+      issuingCountryCode: 'complete',
+      documentNumber: 'complete',
+      issuedOn: 'complete',
+      expiresOn: 'complete',
+    })
+    expect(JSON.stringify(row.fieldStatuses)).not.toContain('44051401458')
+  })
+
   it('reports but does not overwrite a conflicting foreign country on a Polish document', async () => {
     const row = identity({ issuingCountryCode: 'DE' })
     findWithDecryption.mockResolvedValueOnce([row]).mockResolvedValueOnce([])

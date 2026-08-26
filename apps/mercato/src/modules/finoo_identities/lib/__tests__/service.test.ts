@@ -227,6 +227,7 @@ describe('FinooIdentityService', () => {
           documentNumber: 'missing',
           issuedOn: 'complete',
           expiresOn: 'missing',
+          rawPesel: '44051401458',
         },
       })),
     }

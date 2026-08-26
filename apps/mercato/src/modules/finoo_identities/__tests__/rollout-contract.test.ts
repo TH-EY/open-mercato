@@ -51,6 +51,17 @@ function runIdentityCompletenessAssertion(
   )
 }
 
+function runIdentityPurgeAssertion(report: Record<string, unknown>) {
+  const start = upgradeScript.indexOf('assert_identity_purge_report() {')
+  const end = upgradeScript.indexOf('read_identity_definition_state_from_report() {', start)
+  const assertion = upgradeScript.slice(start, end)
+  return spawnSync(
+    'bash',
+    ['-c', `${assertion}\nassert_identity_purge_report "$1"`, 'purge-test', JSON.stringify(report)],
+    { encoding: 'utf8' },
+  )
+}
+
 describe('FINOO identity private rollout contract', () => {
   it('sets up the exact scope and stops the active writer before final migration and cutover', () => {
     expectOrdered(upgradeScript, [
@@ -77,7 +88,8 @@ describe('FINOO identity private rollout contract', () => {
       '--tenant "$finoo_tenant_id"',
       'docker rename "$active_container" "$rollback_container"',
     ])
-    expect(upgradeScript).not.toContain('yarn mercato finoo_identities purge-legacy')
+    expect(upgradeScript.match(/finoo_identities purge-legacy/g)).toHaveLength(2)
+    expect(upgradeScript.match(/finoo_identities purge-legacy \\\n[\s\S]*?--dry-run/g)).toHaveLength(2)
   })
 
   it('restores and verifies the database before either old runtime becomes live', () => {
@@ -120,7 +132,7 @@ describe('FINOO identity private rollout contract', () => {
       'legacy_cutover_attempted=true',
       "printf 'legacy_cutover_attempted=true\\n' >> \"$pending_file\"",
       'yarn mercato finoo_identities cutover-legacy',
-      'assert_identity_verification_report "$identity_cutover_report" 0 "$expected_inactive_definitions"',
+      'assert_identity_verification_report "$identity_cutover_report" 0 "$expected_inactive_definitions" "$finoo_expected_identity_records"',
     ])
     expect(upgradeScript.match(/read_identity_definition_state_from_report\(\) \{/g)).toHaveLength(2)
     expect(upgradeScript.match(/if \[\[ "\$legacy_cutover_attempted" != true \]\]; then/g)).toHaveLength(2)
@@ -186,7 +198,7 @@ describe('FINOO identity private rollout contract', () => {
       'identity_definition_state="$(read_identity_definition_state_from_report "$identity_verification_report")"',
       'identity_cutover_output=',
       'identity_cutover_report="$(normalize_identity_json_report "$identity_cutover_output")"',
-      'assert_identity_verification_report "$identity_cutover_report" 0 "$expected_inactive_definitions"',
+      'assert_identity_verification_report "$identity_cutover_report" 0 "$expected_inactive_definitions" "$finoo_expected_identity_records"',
     ])
     expect(upgradeScript.match(/verification_output="\$\(run_preserved_new_cli/g)).toHaveLength(4)
     expect(upgradeScript.match(/\n\s+verification_report="\$\(normalize_identity_json_report/g)).toHaveLength(4)
@@ -251,16 +263,22 @@ describe('FINOO identity private rollout contract', () => {
   })
 
   it.each([
-    [6, 0, '6 0'],
-    [0, 6, '0 6'],
-    [0, 0, '0 0'],
-  ])('accepts exact definition state %i/%i', (activeDefinitions, inactiveDefinitions, expected) => {
+    [6, 0, 100, 100, '6 0'],
+    [0, 6, 100, 100, '0 6'],
+    [0, 0, 0, 0, '0 0'],
+  ])('accepts exact definition state %i/%i', (
+    activeDefinitions,
+    inactiveDefinitions,
+    scanned,
+    linkedDestinationRecords,
+    expected,
+  ) => {
     const result = runIdentityDefinitionStateReader({
-      scanned: 100,
-      migrated: 100,
+      scanned,
+      migrated: scanned,
       unmigrated: 0,
       destinationRecords: 101,
-      linkedDestinationRecords: 100,
+      linkedDestinationRecords,
       destinationConflicts: 0,
       aliasValues: 0,
       activeDefinitions,
@@ -290,8 +308,42 @@ describe('FINOO identity private rollout contract', () => {
     expect(upgradeScript).toContain('if [[ "$identity_definition_state" == "0 0" ]]')
     expect(upgradeScript).toContain('expected_inactive_definitions=0')
     expect(upgradeScript).toContain(
-      'assert_identity_verification_report "$identity_cutover_report" 0 "$expected_inactive_definitions"',
+      'assert_identity_verification_report "$identity_cutover_report" 0 "$expected_inactive_definitions" "$finoo_expected_identity_records"',
     )
+    expect(upgradeScript.match(/verify_identity_purge_state\(\) \{/g)).toHaveLength(2)
+    expect(upgradeScript.match(/if \[\[ "\$definition_state" == "0 0" \]\]; then/g)).toHaveLength(2)
+  })
+
+  it('rejects a purged definition state with active legacy values', () => {
+    const result = runIdentityDefinitionStateReader({
+      scanned: 1,
+      migrated: 1,
+      unmigrated: 0,
+      destinationRecords: 101,
+      linkedDestinationRecords: 1,
+      destinationConflicts: 0,
+      aliasValues: 0,
+      activeDefinitions: 0,
+      inactiveDefinitions: 0,
+    })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('FINOO identity purged definition state still has active legacy values')
+  })
+
+  it('accepts only a zero-residue count-only purge report', () => {
+    const clean = {
+      mode: 'dry-run',
+      values: 0,
+      definitions: 0,
+      auditLogs: 0,
+      residualValues: 0,
+      residualDefinitions: 0,
+      residualAuditLogs: 0,
+    }
+    expect(runIdentityPurgeAssertion(clean).status).toBe(0)
+    const residual = runIdentityPurgeAssertion({ ...clean, residualValues: 1 })
+    expect(residual.status).not.toBe(0)
+    expect(residual.stderr).toContain('FINOO identity purge verification found legacy residue')
   })
 
   it.each([
