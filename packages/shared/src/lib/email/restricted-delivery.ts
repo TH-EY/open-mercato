@@ -1,7 +1,7 @@
 import Redis from 'ioredis'
 
 type RestrictedDeliveryPolicy = {
-  allowedRecipient: string
+  allowedRecipient: string | null
   allowedFrom: string
   limit: number
   windowSeconds: number
@@ -55,8 +55,10 @@ function resolveRestrictedDeliveryPolicy(): RestrictedDeliveryPolicy | null {
     throw new Error('EMAIL_DELIVERY_POLICY_CONFIG_INVALID')
   }
 
+  const allowedRecipient = normalizeMailbox(readRequiredEnv('EMAIL_ALLOWED_RECIPIENT'))
+
   return {
-    allowedRecipient: normalizeMailbox(readRequiredEnv('EMAIL_ALLOWED_RECIPIENT')),
+    allowedRecipient: allowedRecipient === '*' ? null : allowedRecipient,
     allowedFrom: normalizeMailbox(readRequiredEnv('EMAIL_ALLOWED_FROM')),
     limit: readPositiveInteger('EMAIL_DELIVERY_LIMIT'),
     windowSeconds: readPositiveInteger('EMAIL_DELIVERY_WINDOW_SECONDS'),
@@ -68,7 +70,7 @@ function resolveRestrictedDeliveryPolicy(): RestrictedDeliveryPolicy | null {
 export async function enforceRestrictedEmailDelivery(input: { to: string; from: string }): Promise<void> {
   const policy = resolveRestrictedDeliveryPolicy()
   if (!policy) return
-  if (normalizeMailbox(input.to) !== policy.allowedRecipient) {
+  if (policy.allowedRecipient && normalizeMailbox(input.to) !== policy.allowedRecipient) {
     throw new Error('EMAIL_RECIPIENT_NOT_ALLOWED')
   }
   if (normalizeMailbox(input.from) !== policy.allowedFrom) {

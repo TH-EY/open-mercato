@@ -80,8 +80,8 @@ test('IAM provisioning contains exact trust and least-privilege resource boundar
   assert.match(script, /ses:SendEmail/)
   assert.match(script, /ses:SendRawEmail/)
   assert.match(script, /ses:FromAddress/)
-  assert.match(script, /ses:Recipients/)
-  assert.match(script, /success@simulator\.amazonses\.com/)
+  assert.doesNotMatch(script, /ses:Recipients/)
+  assert.doesNotMatch(script, /success@simulator\.amazonses\.com/)
   assert.match(script, /no-reply@they\.dev/)
   assert.match(script, /ec2 describe-instances/)
   assert.match(script, /iam get-instance-profile/)
@@ -207,7 +207,7 @@ exit 2`)
   }
 })
 
-test('IAM provisioning creates one exact simulator-only workload boundary', () => {
+test('IAM provisioning creates one exact sender-bound workload boundary', () => {
   const harness = makeHarness(String.raw`
 printf '%s\n' "$*" >> "$FAKE_CALLS_FILE"
 case "$1 $2" in
@@ -271,18 +271,14 @@ esac`)
       Action: 'sts:AssumeRole',
     }])
 
-    const workloadPolicy = payloads.find((payload) => payload.Statement?.[0]?.Sid === 'ExactSimulatorDelivery')
+    const workloadPolicy = payloads.find((payload) => payload.Statement?.[0]?.Sid === 'ExactSenderDelivery')
     assert.deepEqual(workloadPolicy.Statement, [{
-      Sid: 'ExactSimulatorDelivery',
+      Sid: 'ExactSenderDelivery',
       Effect: 'Allow',
       Action: ['ses:SendEmail', 'ses:SendRawEmail'],
       Resource: 'arn:aws:ses:test-region-1:123456789012:identity/they.dev',
       Condition: {
         StringEquals: { 'ses:FromAddress': 'no-reply@they.dev' },
-        'ForAllValues:StringEquals': {
-          'ses:Recipients': ['success@simulator.amazonses.com'],
-        },
-        Null: { 'ses:Recipients': 'false' },
       },
     }])
 

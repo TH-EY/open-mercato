@@ -357,16 +357,12 @@ workload_trust = {
 workload = {
     "Version": "2012-10-17",
     "Statement": [{
-        "Sid": "ExactSimulatorDelivery",
+        "Sid": "ExactSenderDelivery",
         "Effect": "Allow",
         "Action": ["ses:SendEmail", "ses:SendRawEmail"],
         "Resource": os.environ["SES_IDENTITY_ARN"],
         "Condition": {
             "StringEquals": {"ses:FromAddress": "no-reply@they.dev"},
-            "ForAllValues:StringEquals": {
-                "ses:Recipients": ["success@simulator.amazonses.com"],
-            },
-            "Null": {"ses:Recipients": "false"},
         },
     }],
 }

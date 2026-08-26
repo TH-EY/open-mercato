@@ -199,6 +199,30 @@ describe('sendEmail', () => {
     expect(sesSendMailMock).not.toHaveBeenCalled()
   })
 
+  it('allows any recipient through the restricted quota when the recipient wildcard is explicit', async () => {
+    process.env.EMAIL_STRATEGY = 'ses'
+    process.env.AWS_SES_REGION = 'eu-west-2'
+    process.env.EMAIL_DELIVERY_POLICY = 'restricted'
+    process.env.EMAIL_DELIVERY_POLICY_KEY = 'public-demo-v1'
+    process.env.EMAIL_ALLOWED_RECIPIENT = '*'
+    process.env.EMAIL_ALLOWED_FROM = 'from@example.com'
+    process.env.EMAIL_DELIVERY_LIMIT = '10'
+    process.env.EMAIL_DELIVERY_WINDOW_SECONDS = '86400'
+    process.env.REDIS_URL = 'redis://redis:6379'
+
+    await sendEmail({
+      to: 'external-recipient@example.com',
+      subject: 'Hello',
+      react: React.createElement('div', null, 'Hi'),
+    })
+
+    expect(redisEvalMock).toHaveBeenCalledTimes(1)
+    expect(sesSendMailMock).toHaveBeenCalledWith(expect.objectContaining({
+      to: 'external-recipient@example.com',
+      from: 'from@example.com',
+    }))
+  })
+
   it('passes the exact HTTPS broker provider to SES without falling back to the default chain', async () => {
     process.env.EMAIL_STRATEGY = 'ses'
     process.env.AWS_SES_REGION = 'eu-west-2'

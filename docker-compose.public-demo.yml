@@ -57,7 +57,7 @@ services:
       EMAIL_STRATEGY: ses
       EMAIL_DELIVERY_POLICY: restricted
       EMAIL_DELIVERY_POLICY_KEY: openmercato-public-demo-v1
-      EMAIL_ALLOWED_RECIPIENT: success@simulator.amazonses.com
+      EMAIL_ALLOWED_RECIPIENT: "*"
       EMAIL_ALLOWED_FROM: ${EMAIL_FROM:?EMAIL_FROM must be set}
       EMAIL_DELIVERY_LIMIT: "10"
       EMAIL_DELIVERY_WINDOW_SECONDS: "86400"
@@ -145,7 +145,7 @@ services:
       EMAIL_STRATEGY: ses
       EMAIL_DELIVERY_POLICY: restricted
       EMAIL_DELIVERY_POLICY_KEY: openmercato-public-demo-v1
-      EMAIL_ALLOWED_RECIPIENT: success@simulator.amazonses.com
+      EMAIL_ALLOWED_RECIPIENT: "*"
       EMAIL_ALLOWED_FROM: ${EMAIL_FROM:?EMAIL_FROM must be set}
       EMAIL_DELIVERY_LIMIT: "10"
       EMAIL_DELIVERY_WINDOW_SECONDS: "86400"

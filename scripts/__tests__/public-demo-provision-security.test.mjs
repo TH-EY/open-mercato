@@ -509,12 +509,12 @@ test('bootstrap hides credential-bearing output and records completion only afte
   )
 })
 
-test('app and worker share the exact fail-closed SES recipient and quota policy', () => {
+test('app and worker share the exact fail-closed SES sender and quota policy', () => {
   for (const serviceName of ['app', 'worker']) {
     const environment = compose.services[serviceName].environment
     assert.equal(environment.EMAIL_DELIVERY_POLICY, 'restricted')
     assert.equal(environment.EMAIL_DELIVERY_POLICY_KEY, 'openmercato-public-demo-v1')
-    assert.equal(environment.EMAIL_ALLOWED_RECIPIENT, 'success@simulator.amazonses.com')
+    assert.equal(environment.EMAIL_ALLOWED_RECIPIENT, '*')
     assert.equal(environment.EMAIL_ALLOWED_FROM, '${EMAIL_FROM:?EMAIL_FROM must be set}')
     assert.equal(environment.EMAIL_DELIVERY_LIMIT, '10')
     assert.equal(environment.EMAIL_DELIVERY_WINDOW_SECONDS, '86400')
