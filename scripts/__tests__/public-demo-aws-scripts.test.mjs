@@ -6,6 +6,7 @@ import path from 'node:path'
 import test from 'node:test'
 
 const iamScript = path.resolve('scripts/public-demo/provision-iam.sh')
+const sesPolicyUpgradeScript = path.resolve('scripts/public-demo/upgrade-ses-recipient-policy.sh')
 const parametersScript = path.resolve('scripts/public-demo/create-runtime-parameters.sh')
 const routingScript = path.resolve('scripts/public-demo/cutover-routing.sh')
 const protectedParameterValues = {
@@ -111,6 +112,126 @@ function iamEnv() {
     SES_IDENTITY_ARN: 'arn:aws:ses:test-region-1:123456789012:identity/they.dev',
   }
 }
+
+function sesUpgradeEnv(harness, extra = {}) {
+  return {
+    AWS_REGION: 'test-region-1',
+    AWS_ACCOUNT_ID: '123456789012',
+    WORKLOAD_ROLE_NAME: 'public-demo-workload',
+    SES_IDENTITY_ARN: 'arn:aws:ses:test-region-1:123456789012:identity/they.dev',
+    FAKE_POLICY_STATE: path.join(harness.root, 'policy-state.json'),
+    FAKE_PUT_MARKER: path.join(harness.root, 'put-marker'),
+    FAKE_READBACK_FAILURE_MARKER: path.join(harness.root, 'readback-failure-marker'),
+    FAKE_FAIL_READBACK_AFTER_PUT: '',
+    FAKE_LOST_PUT_RESPONSE: '',
+    ...extra,
+  }
+}
+
+function senderPolicy(sid = 'ExactSenderDelivery') {
+  const statement = {
+    Sid: sid,
+    Effect: 'Allow',
+    Action: ['ses:SendEmail', 'ses:SendRawEmail'],
+    Resource: 'arn:aws:ses:test-region-1:123456789012:identity/they.dev',
+    Condition: {
+      StringEquals: { 'ses:FromAddress': 'no-reply@they.dev' },
+    },
+  }
+  if (sid === 'ExactSimulatorDelivery') {
+    statement.Condition['ForAllValues:StringEquals'] = {
+      'ses:Recipients': ['success@simulator.amazonses.com'],
+    }
+    statement.Condition.Null = { 'ses:Recipients': 'false' }
+  }
+  return { Version: '2012-10-17', Statement: [statement] }
+}
+
+function makeSesUpgradeHarness(initialPolicy, extraBody = '') {
+  const harness = makeHarness(String.raw`
+printf '%s\n' "$*" >> "$FAKE_CALLS_FILE"
+case "$1 $2" in
+  "sts get-caller-identity") printf '%s\n' '123456789012' ;;
+  "iam list-role-policies") printf '%s\n' '["OpenMercatoPublicDemoSesSend"]' ;;
+  "iam list-attached-role-policies") printf '%s\n' '[]' ;;
+  "iam get-role-policy")
+    if [[ -n "$FAKE_FAIL_READBACK_AFTER_PUT" && -f "$FAKE_PUT_MARKER" && ! -f "$FAKE_READBACK_FAILURE_MARKER" ]]; then
+      : > "$FAKE_READBACK_FAILURE_MARKER"
+      echo 'AccessDenied: injected read-back failure' >&2
+      exit 254
+    fi
+    cat "$FAKE_POLICY_STATE"
+    ;;
+  "iam put-role-policy")
+    input=""
+    while (($#)); do
+      if [[ "$1" == "--policy-document" ]]; then
+        input="$(printf '%s' "$2" | sed 's#^file://##')"
+        break
+      fi
+      shift
+    done
+    test -n "$input"
+    cp "$input" "$FAKE_POLICY_STATE"
+    : > "$FAKE_PUT_MARKER"
+    if [[ -n "$FAKE_LOST_PUT_RESPONSE" && ! -f "$FAKE_CALLS_FILE.lost" ]]; then
+      : > "$FAKE_CALLS_FILE.lost"
+      exit 255
+    fi
+    printf '%s\n' '{}'
+    ;;
+  *) ${extraBody || 'exit 2'} ;;
+esac`)
+  fs.writeFileSync(path.join(harness.root, 'policy-state.json'), JSON.stringify(initialPolicy))
+  return harness
+}
+
+for (const scenario of [
+  { name: 'exact predecessor', initial: senderPolicy('ExactSimulatorDelivery'), expectedPuts: 1 },
+  { name: 'already-upgraded target', initial: senderPolicy(), expectedPuts: 0 },
+  { name: 'lost accepted put response', initial: senderPolicy('ExactSimulatorDelivery'), expectedPuts: 1, extra: { FAKE_LOST_PUT_RESPONSE: '1' } },
+]) {
+  test(`SES recipient policy upgrade converges from ${scenario.name}`, () => {
+    const harness = makeSesUpgradeHarness(scenario.initial)
+    try {
+      const result = run(sesPolicyUpgradeScript, [], harness, sesUpgradeEnv(harness, scenario.extra))
+      assert.equal(result.status, 0, result.stderr)
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(harness.root, 'policy-state.json'), 'utf8')), senderPolicy())
+      const calls = fs.readFileSync(harness.callsFile, 'utf8')
+      assert.equal((calls.match(/iam put-role-policy/g) ?? []).length, scenario.expectedPuts)
+    } finally {
+      fs.rmSync(harness.root, { recursive: true, force: true })
+    }
+  })
+}
+
+test('SES recipient policy upgrade rejects foreign drift without mutation', () => {
+  const harness = makeSesUpgradeHarness(senderPolicy('ForeignPolicy'))
+  try {
+    const result = run(sesPolicyUpgradeScript, [], harness, sesUpgradeEnv(harness))
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /neither the exact predecessor nor the approved target/)
+    assert.doesNotMatch(fs.readFileSync(harness.callsFile, 'utf8'), /iam put-role-policy/)
+  } finally {
+    fs.rmSync(harness.root, { recursive: true, force: true })
+  }
+})
+
+test('SES recipient policy upgrade restores the exact predecessor after post-write failure', () => {
+  const predecessor = senderPolicy('ExactSimulatorDelivery')
+  const harness = makeSesUpgradeHarness(predecessor)
+  try {
+    const result = run(sesPolicyUpgradeScript, [], harness, sesUpgradeEnv(harness, {
+      FAKE_FAIL_READBACK_AFTER_PUT: '1',
+    }))
+    assert.notEqual(result.status, 0)
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(harness.root, 'policy-state.json'), 'utf8')), predecessor)
+    const calls = fs.readFileSync(harness.callsFile, 'utf8')
+    assert.equal((calls.match(/iam put-role-policy/g) ?? []).length, 2)
+  } finally {
+    fs.rmSync(harness.root, { recursive: true, force: true })
+  }
+})
 
 for (const scenario of [
   {
