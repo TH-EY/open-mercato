@@ -373,8 +373,16 @@ test('Compose has seven long-running services plus one secret-scoped bootstrap w
   assert.equal(compose.services.app.environment.OM_INIT_SUPERADMIN_PASSWORD, undefined)
   assert.equal(compose.services.app.environment.OM_INIT_ADMIN_PASSWORD, undefined)
   assert.equal(compose.services.app.environment.OM_INIT_EMPLOYEE_PASSWORD, undefined)
-  assert.match(compose.services.bootstrap.command.at(-1), /scripts\/public-demo\/init-or-migrate\.sh/)
-  assert.match(compose.services.bootstrap.command.at(-1), /su -p omuser/)
+  const bootstrapCommand = compose.services.bootstrap.command.at(-1)
+  assert.match(bootstrapCommand, /mkdir -p \/app\/node_modules\/\.cache/)
+  assert.match(
+    bootstrapCommand,
+    /chown -R 1001:1001 \/tmp\/init-marker \/app\/apps\/mercato\/storage \/run\/mcp-shared \/app\/apps\/mercato\/\.mercato\/generated \/app\/node_modules\/\.cache/,
+  )
+  assert.doesNotMatch(bootstrapCommand, /chown -R 1001:1001 \/app(?:\s|$)/)
+  assert.match(bootstrapCommand, /export HOME=\/home\/omuser/)
+  assert.match(bootstrapCommand, /scripts\/public-demo\/init-or-migrate\.sh/)
+  assert.match(bootstrapCommand, /su -p omuser/)
   assert.deepEqual(compose.services.bootstrap.secrets, [
     'public_demo_superadmin_password',
     'public_demo_admin_password',

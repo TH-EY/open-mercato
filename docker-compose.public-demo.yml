@@ -296,7 +296,9 @@ services:
       - -eu
       - -c
       - |
-        chown -R 1001:1001 /tmp/init-marker /app/apps/mercato/storage /run/mcp-shared
+        mkdir -p /app/node_modules/.cache
+        chown -R 1001:1001 /tmp/init-marker /app/apps/mercato/storage /run/mcp-shared /app/apps/mercato/.mercato/generated /app/node_modules/.cache
+        export HOME=/home/omuser
         export OM_INIT_SUPERADMIN_PASSWORD="$$(tr -d '\r\n' < /run/secrets/public_demo_superadmin_password)"
         export OM_INIT_ADMIN_PASSWORD="$$(tr -d '\r\n' < /run/secrets/public_demo_admin_password)"
         export OM_INIT_EMPLOYEE_PASSWORD="$$(tr -d '\r\n' < /run/secrets/public_demo_employee_password)"
