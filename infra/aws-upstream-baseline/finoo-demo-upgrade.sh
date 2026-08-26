@@ -393,7 +393,7 @@ if report['destinationRecords'] < report['linkedDestinationRecords']:
     raise SystemExit('FINOO identity destination count is inconsistent')
 active = report['activeDefinitions']
 inactive = report['inactiveDefinitions']
-if (active, inactive) not in {(6, 0), (0, 6)}:
+if (active, inactive) not in {(6, 0), (0, 6), (0, 0)}:
     raise SystemExit('FINOO identity definitions are in a partial state')
 print(f'{active} {inactive}')
 PY
@@ -463,17 +463,22 @@ restore_identity_cutover_for_new() {
   local source_container="$1"
   local verification_output
   local verification_report
-  run_preserved_new_cli "$source_container" finoo_identities cutover-legacy \
-    --tenant "$finoo_tenant_id" \
-    --organization "$finoo_organization_id" \
-    --apply \
-    --maintenance-window \
-    --confirm THOM-108 >/dev/null || return 1
-  verification_output="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
-    --tenant "$finoo_tenant_id" \
-    --organization "$finoo_organization_id")" || return 1
-  verification_report="$(normalize_identity_json_report "$verification_output")" || return 1
-  assert_identity_verification_report "$verification_report" 0 6 || return 1
+  local definition_state
+  definition_state="$(read_identity_definition_state "$source_container")" || return 1
+  if [[ "$definition_state" == "6 0" ]]; then
+    run_preserved_new_cli "$source_container" finoo_identities cutover-legacy \
+      --tenant "$finoo_tenant_id" \
+      --organization "$finoo_organization_id" \
+      --apply \
+      --maintenance-window \
+      --confirm THOM-108 >/dev/null || return 1
+    verification_output="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
+      --tenant "$finoo_tenant_id" \
+      --organization "$finoo_organization_id")" || return 1
+    verification_report="$(normalize_identity_json_report "$verification_output")" || return 1
+    definition_state="$(read_identity_definition_state_from_report "$verification_report")" || return 1
+  fi
+  [[ "$definition_state" == "0 6" || "$definition_state" == "0 0" ]] || return 1
   run_preserved_new_cli "$source_container" configs cache structural \
     --tenant "$finoo_tenant_id" \
     --json || return 1
@@ -918,6 +923,7 @@ identity_verification_output="$(docker exec "$candidate_container" yarn mercato 
 identity_verification_report="$(normalize_identity_json_report "$identity_verification_output")"
 identity_definition_state="$(read_identity_definition_state_from_report "$identity_verification_report")"
 printf '[finoo-identities] migration_verify=%s\n' "$identity_verification_report"
+expected_inactive_definitions=6
 if [[ "$identity_definition_state" == "6 0" ]]; then
   legacy_cutover_attempted=true
   printf 'legacy_cutover_attempted=true\n' >> "$pending_file"
@@ -929,11 +935,14 @@ if [[ "$identity_definition_state" == "6 0" ]]; then
     --maintenance-window \
     --confirm THOM-108 >/dev/null
 fi
+if [[ "$identity_definition_state" == "0 0" ]]; then
+  expected_inactive_definitions=0
+fi
 identity_cutover_output="$(docker exec "$candidate_container" yarn mercato finoo_identities verify-legacy \
   --tenant "$finoo_tenant_id" \
   --organization "$finoo_organization_id")"
 identity_cutover_report="$(normalize_identity_json_report "$identity_cutover_output")"
-assert_identity_verification_report "$identity_cutover_report" 0 6
+assert_identity_verification_report "$identity_cutover_report" 0 "$expected_inactive_definitions"
 docker exec "$candidate_container" yarn mercato configs cache structural \
   --tenant "$finoo_tenant_id" \
   --json
@@ -1145,7 +1154,7 @@ if report['destinationRecords'] < report['linkedDestinationRecords']:
     raise SystemExit('FINOO identity destination count is inconsistent')
 active = report['activeDefinitions']
 inactive = report['inactiveDefinitions']
-if (active, inactive) not in {(6, 0), (0, 6)}:
+if (active, inactive) not in {(6, 0), (0, 6), (0, 0)}:
     raise SystemExit('FINOO identity definitions are in a partial state')
 print(f'{active} {inactive}')
 PY
@@ -1282,18 +1291,21 @@ restore_identity_cutover_for_new() {
   local verification_output
   local verification_report
   local definition_state
-  run_preserved_new_cli "$source_container" finoo_identities cutover-legacy \
-    --tenant "$finoo_tenant_id" \
-    --organization "$finoo_organization_id" \
-    --apply \
-    --maintenance-window \
-    --confirm THOM-108 >/dev/null || return 1
-  verification_output="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
-    --tenant "$finoo_tenant_id" \
-    --organization "$finoo_organization_id")" || return 1
-  verification_report="$(normalize_identity_json_report "$verification_output")" || return 1
-  definition_state="$(read_identity_definition_state_from_report "$verification_report")" || return 1
-  [[ "$definition_state" == "0 6" ]] || return 1
+  definition_state="$(read_identity_definition_state "$source_container")" || return 1
+  if [[ "$definition_state" == "6 0" ]]; then
+    run_preserved_new_cli "$source_container" finoo_identities cutover-legacy \
+      --tenant "$finoo_tenant_id" \
+      --organization "$finoo_organization_id" \
+      --apply \
+      --maintenance-window \
+      --confirm THOM-108 >/dev/null || return 1
+    verification_output="$(run_preserved_new_cli "$source_container" finoo_identities verify-legacy \
+      --tenant "$finoo_tenant_id" \
+      --organization "$finoo_organization_id")" || return 1
+    verification_report="$(normalize_identity_json_report "$verification_output")" || return 1
+    definition_state="$(read_identity_definition_state_from_report "$verification_report")" || return 1
+  fi
+  [[ "$definition_state" == "0 6" || "$definition_state" == "0 0" ]] || return 1
   run_preserved_new_cli "$source_container" configs cache structural \
     --tenant "$finoo_tenant_id" \
     --json || return 1

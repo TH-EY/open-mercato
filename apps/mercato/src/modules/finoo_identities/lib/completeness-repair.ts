@@ -53,7 +53,12 @@ async function requireIdentityEncryption(
 }
 
 function sameStatuses(left: FinooPersonIdentity['fieldStatuses'], right: FinooPersonIdentity['fieldStatuses']): boolean {
-  return JSON.stringify(left) === JSON.stringify(right)
+  return left.pesel === right.pesel
+    && left.documentType === right.documentType
+    && left.issuingCountryCode === right.issuingCountryCode
+    && left.documentNumber === right.documentNumber
+    && left.issuedOn === right.issuedOn
+    && left.expiresOn === right.expiresOn
 }
 
 export async function repairIdentityCompleteness(input: {
