@@ -1,4 +1,9 @@
-import { mapCustomFieldKindToFilterType, supportsCustomFieldColumn } from '../utils/customFieldColumns'
+import {
+  mapCustomFieldKindToFilterType,
+  normalizeCustomFieldFilterOptions,
+  resolveCustomFieldDisplayLabel,
+  supportsCustomFieldColumn,
+} from '../utils/customFieldColumns'
 import type { CustomFieldDefDto } from '../utils/customFieldDefs'
 
 describe('mapCustomFieldKindToFilterType', () => {
@@ -24,5 +29,21 @@ describe('supportsCustomFieldColumn', () => {
 
   it('still excludes attachment columns', () => {
     expect(supportsCustomFieldColumn({ key: 'files', kind: 'attachment' } as CustomFieldDefDto)).toBe(false)
+  })
+})
+
+describe('normalizeCustomFieldFilterOptions', () => {
+  it('preserves the configured display label for a select value', () => {
+    expect(normalizeCustomFieldFilterOptions([
+      { value: 'excluded', label: 'Not applicable' },
+    ])).toEqual([
+      { value: 'excluded', label: 'Not applicable' },
+    ])
+  })
+
+  it('resolves a stored select value to its configured display label', () => {
+    expect(resolveCustomFieldDisplayLabel('excluded', [
+      { value: 'excluded', label: 'Not applicable' },
+    ])).toBe('Not applicable')
   })
 })

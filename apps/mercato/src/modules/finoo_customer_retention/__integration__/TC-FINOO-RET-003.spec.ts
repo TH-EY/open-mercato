@@ -10,8 +10,11 @@ import { bootstrapFromAppRoot } from '@open-mercato/shared/lib/bootstrap/dynamic
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import type { FinooAffiliateRetentionEligibilityProvider } from '../../finoo_affiliates/lib/retentionEligibilityProvider'
 import type { FinooIntermediaryRetentionEligibilityProvider } from '../../finoo_intermediaries/lib/retentionEligibilityProvider'
-import { FINOO_CUSTOMER_RETENTION_FIELDS } from '../ce'
 import type { FinooCustomerRetentionProjectionService } from '../services/projectionService'
+import {
+  cleanupRetentionCustomFieldDefinitions,
+  installRetentionCustomFieldDefinitions,
+} from './custom-field-definitions'
 import {
   cleanupScenario, createCustomerUser, createScenario, queryDatabase, type Scenario,
 } from '../../finoo_intermediaries/__integration__/helpers'
@@ -71,31 +74,6 @@ async function retentionStatusMirror(personId: string): Promise<string | null> {
   ))[0]?.value_text ?? null
 }
 
-async function installRetentionCustomFieldDefinitions(
-  request: APIRequestContext,
-  scenario: Scenario,
-): Promise<void> {
-  for (const definition of FINOO_CUSTOMER_RETENTION_FIELDS) {
-    const { key, kind, ...rawConfig } = definition
-    const configJson = {
-      ...rawConfig,
-      ...(Array.isArray(definition.options)
-        ? { options: definition.options.map((option) => option.value) }
-        : {}),
-    }
-    const response = await apiRequest(request, 'POST', '/api/entities/definitions', {
-      token: scenario.token,
-      data: {
-        entityId: 'customers:customer_person_profile',
-        key,
-        kind,
-        configJson,
-      },
-    })
-    expect(response.status(), `retention custom field ${key} should be installed`).toBe(200)
-  }
-}
-
 async function partnerFacts(scenario: Scenario, customerUserId: string) {
   await bootstrapFromAppRoot(APP_ROOT)
   const container = await createRequestContainer()
@@ -146,6 +124,7 @@ async function cleanup(request: APIRequestContext, scenario: Scenario | null): P
     await queryDatabase('delete from finoo_affiliates where tenant_id=$1 and organization_id=$2', [scenario.tenantId, scenario.organizationId])
     await queryDatabase('delete from finoo_customer_retention_states where tenant_id=$1 and organization_id=$2', [scenario.tenantId, scenario.organizationId])
     await queryDatabase('delete from finoo_customer_retention_settings where tenant_id=$1 and organization_id=$2', [scenario.tenantId, scenario.organizationId])
+    await cleanupRetentionCustomFieldDefinitions(scenario)
   }
   await cleanupScenario(request, scenario)
 }
@@ -157,7 +136,7 @@ test('TC-FINOO-RET-003 affiliate and intermediary exclusion, dual-link re-entry,
     scenario = await createScenario(request, 'TC-FINOO-RET-003', FEATURES)
     foreignScenario = await createScenario(request, 'TC-FINOO-RET-003-FOREIGN', FEATURES)
     for (const current of [scenario, foreignScenario]) {
-      await installRetentionCustomFieldDefinitions(request, current)
+      await installRetentionCustomFieldDefinitions(current)
       await queryDatabase(
         `insert into finoo_customer_retention_settings
          (id,tenant_id,organization_id,inactivity_window_days,reconciliation_generation,created_at,updated_at)

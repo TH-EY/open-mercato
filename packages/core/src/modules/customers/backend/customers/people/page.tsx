@@ -39,6 +39,7 @@ import {
 import {
   mapCustomFieldKindToFilterType,
   normalizeCustomFieldFilterOptions,
+  resolveCustomFieldDisplayLabel,
   supportsCustomFieldColumn,
 } from '@open-mercato/ui/backend/utils/customFieldColumns'
 import { useAutoDiscoveredFields } from '@open-mercato/ui/backend/utils/useAutoDiscoveredFields'
@@ -644,14 +645,19 @@ export default function CustomersPeoplePage() {
       />
     )
 
-    const renderCustomFieldCell = (value: unknown) => {
+    const renderCustomFieldCell = (
+      value: unknown,
+      options?: Parameters<typeof resolveCustomFieldDisplayLabel>[1],
+    ) => {
       if (value == null) return noValue
       if (Array.isArray(value)) {
         if (!value.length) return noValue
         const normalized = normalizeCollectionLabels(
           value.map((item) => {
             if (item == null) return ''
-            if (typeof item === 'string') return item
+            if (typeof item === 'string' || typeof item === 'number') {
+              return resolveCustomFieldDisplayLabel(item, options)
+            }
             return String(item)
           }),
         )
@@ -669,7 +675,11 @@ export default function CustomersPeoplePage() {
       }
       const stringValue = typeof value === 'string' ? value.trim() : String(value)
       if (!stringValue) return noValue
-      return <span className="text-sm">{stringValue}</span>
+      return (
+        <span className="text-sm">
+          {resolveCustomFieldDisplayLabel(stringValue, options)}
+        </span>
+      )
     }
 
     const baseColumns: ColumnDef<PersonRow>[] = [
@@ -915,7 +925,7 @@ export default function CustomersPeoplePage() {
           hidden: def.listVisible === false,
           maxWidth: '220px',
         },
-        cell: ({ getValue }) => renderCustomFieldCell(getValue()),
+        cell: ({ getValue }) => renderCustomFieldCell(getValue(), def.options),
       }))
 
     return [...baseColumns, ...customColumns]

@@ -1,4 +1,5 @@
 import type { EntityManager } from '@mikro-orm/postgresql'
+import type { CacheStrategy } from '@open-mercato/cache'
 import { Organization } from '@open-mercato/core/modules/directory/data/entities'
 import type { CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
@@ -15,6 +16,7 @@ import {
   FINOO_IDENTITY_ERASURE_DEFAULT_BATCH_SIZE,
   FINOO_IDENTITY_ERASURE_MAX_BATCH_SIZE,
 } from './services/identityErasureExecutor'
+import { ensureFinooCustomerRetentionCustomFieldDefinitions } from './lib/custom-field-definitions'
 
 const exactScopeSchema = z.object({
   tenantId: z.string().uuid(),
@@ -131,7 +133,7 @@ export function parsePasswordFromStdin(raw: string): string {
   return password
 }
 
-export async function ensureExistingOrganizationSetup(input: OrganizationSetupInput): Promise<void> {
+export async function ensureExistingOrganizationSetup(input: OrganizationSetupInput) {
   const organization = await input.em.findOne(Organization, {
     id: input.organizationId,
     tenant: input.tenantId,
@@ -140,7 +142,14 @@ export async function ensureExistingOrganizationSetup(input: OrganizationSetupIn
   if (!organization) {
     throw new Error('[internal] Organization does not exist in the requested tenant scope')
   }
+  const cache = input.container.resolve<CacheStrategy>('cache')
+  const customFieldDefinitions = await ensureFinooCustomerRetentionCustomFieldDefinitions({
+    em: input.em,
+    cache,
+    tenantId: input.tenantId,
+  })
   await ensureFinooCustomerRetentionOrganizationSetup(input)
+  return customFieldDefinitions
 }
 
 type EnsureAdminCredentialInput = {
@@ -193,12 +202,12 @@ const ensureOrganizationSetup: ModuleCli = {
     const container = await createRequestContainer()
     try {
       const em = (container.resolve('em') as EntityManager).fork()
-      await ensureExistingOrganizationSetup({
+      const customFieldDefinitions = await ensureExistingOrganizationSetup({
         em,
         container,
         ...scope,
       })
-      console.log(JSON.stringify({ ...scope, configured: true }))
+      console.log(JSON.stringify({ ...scope, configured: true, customFieldDefinitions }))
     } finally {
       const disposable = container as unknown as { dispose?: () => Promise<void> }
       await disposable.dispose?.()

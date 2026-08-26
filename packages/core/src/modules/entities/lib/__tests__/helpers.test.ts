@@ -202,6 +202,51 @@ describe('setRecordCustomFields', () => {
     expect(persist).not.toHaveBeenCalled()
   })
 
+  it('queries organization and tenant fallback definitions with explicit null branches', async () => {
+    const definition = {
+      key: 'retention_status',
+      kind: 'select',
+      organizationId: null,
+      tenantId: 'tenant-1',
+      isActive: true,
+      deletedAt: null,
+      updatedAt: new Date('2026-08-26T00:00:00.000Z'),
+      configJson: {},
+    }
+    const emMock = {
+      find: jest.fn(async () => [definition]),
+      findOne: jest.fn(async () => null),
+      create: jest.fn((entity: unknown, data: Record<string, unknown>) => ({ ...data, entity })),
+      persist: jest.fn(),
+      flush: jest.fn(async () => undefined),
+      begin: jest.fn(async () => undefined),
+      commit: jest.fn(async () => undefined),
+      rollback: jest.fn(async () => undefined),
+      isInTransaction: jest.fn(() => false),
+    }
+
+    await setRecordCustomFields(emMock as never, {
+      entityId: 'customers:customer_person_profile',
+      recordId: 'profile-1',
+      organizationId: 'org-1',
+      tenantId: 'tenant-1',
+      values: { retention_status: 'active' },
+      rejectUndeclaredKeys: true,
+    })
+
+    expect(emMock.find).toHaveBeenCalledWith(
+      CustomFieldDef,
+      expect.objectContaining({
+        $and: [
+          { $or: [{ organizationId: 'org-1' }, { organizationId: null }] },
+          { $or: [{ tenantId: 'tenant-1' }, { tenantId: null }] },
+        ],
+      }),
+      expect.any(Object),
+    )
+    expect(emMock.commit).toHaveBeenCalledTimes(1)
+  })
+
   it('replaces multi-value custom fields without deleting the replacement rows', async () => {
     const definition = {
       key: 'segments',

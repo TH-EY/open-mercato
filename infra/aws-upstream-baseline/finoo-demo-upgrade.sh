@@ -815,7 +815,7 @@ docker exec "$candidate_container" yarn mercato finoo_customer_retention ensure-
   --tenant "$finoo_tenant_id" \
   --organization "$finoo_organization_id" \
   --apply
-echo "[finoo-retention] Organization settings and hourly reconciliation schedule verified"
+echo "[finoo-retention] Custom-field definitions, organization settings, and hourly reconciliation schedule verified"
 docker exec "$candidate_container" yarn mercato channel_ses assert-env-preset-exact
 echo "[finoo-email] Existing exact Amazon SES preset preserved"
 docker exec "$candidate_container" yarn mercato channel_ses assert-explicit-credentials \

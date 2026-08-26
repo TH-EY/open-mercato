@@ -7,6 +7,7 @@ import commands, {
   parsePasswordFromStdin,
 } from '../cli'
 import { ensureAdminCredentialCommand } from '../commands/admin-credential'
+import { FINOO_CUSTOMER_RETENTION_FIELDS } from '../ce'
 
 const tenantId = '11111111-1111-4111-8111-111111111111'
 const organizationId = '22222222-2222-4222-8222-222222222222'
@@ -103,13 +104,28 @@ describe('finoo_customer_retention CLI', () => {
 
   it('ensures settings and schedule only after the exact organization scope exists', async () => {
     const register = jest.fn().mockResolvedValue(undefined)
+    const cache = { deleteByTags: jest.fn().mockResolvedValue(undefined) }
+    const customFieldDefinitions = FINOO_CUSTOMER_RETENTION_FIELDS.map((field, priority) => {
+      const { key, kind, ...configJson } = { ...field, priority }
+      return {
+        entityId: 'customers:customer_person_profile',
+        tenantId,
+        organizationId: null,
+        key,
+        kind,
+        configJson,
+        isActive: true,
+        deletedAt: null,
+      }
+    })
     const em = {
       findOne: jest.fn()
         .mockResolvedValueOnce({ id: organizationId })
         .mockResolvedValueOnce({ id: 'settings-id' }),
+      find: jest.fn().mockResolvedValue(customFieldDefinitions),
     }
     const container = {
-      resolve: jest.fn().mockReturnValue({ register }),
+      resolve: jest.fn((name: string) => (name === 'cache' ? cache : { register })),
       hasRegistration: jest.fn().mockReturnValue(true),
     }
 

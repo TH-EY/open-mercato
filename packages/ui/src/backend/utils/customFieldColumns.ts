@@ -48,6 +48,15 @@ export function normalizeCustomFieldFilterOptions(options?: RawCustomFieldOption
   })
 }
 
+export function resolveCustomFieldDisplayLabel(
+  value: string | number,
+  options?: RawCustomFieldOption[],
+): string {
+  const normalizedValue = String(value)
+  return normalizeCustomFieldFilterOptions(options)
+    .find((option) => option.value === normalizedValue)?.label ?? normalizedValue
+}
+
 // Filters and annotates columns with custom-field definitions:
 // - Drops cf_* columns when no definition exists or listVisible === false
 // - Uses definition label as header when header is missing

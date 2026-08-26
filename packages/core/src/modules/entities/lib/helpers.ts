@@ -122,8 +122,10 @@ export async function setRecordCustomFields(
         {
           entityId,
           ...(strict ? { key: { $in: keys } } : { isActive: true, deletedAt: null }),
-          organizationId: { $in: [organizationId, null] as any },
-          tenantId: { $in: [tenantId, null] as any },
+          $and: [
+            { $or: [{ organizationId }, { organizationId: null }] },
+            { $or: [{ tenantId }, { tenantId: null }] },
+          ],
         },
         strict ? { lockMode: LockMode.PESSIMISTIC_WRITE } : undefined,
       )
