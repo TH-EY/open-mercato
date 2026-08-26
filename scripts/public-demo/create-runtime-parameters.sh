@@ -33,6 +33,31 @@ parameter_specs=(
   "employee-password"
   "om-hub-oauth-state-key"
 )
+declare -A provided_values=()
+while IFS= read -r input_line; do
+  [[ -n "${input_line}" ]] || continue
+  if [[ ! "${input_line}" =~ ^([a-z0-9-]+)=([A-Za-z0-9._~-]+)$ ]]; then
+    echo "Secret stdin records must use the exact parameter-leaf=value format." >&2
+    exit 1
+  fi
+  input_leaf="${BASH_REMATCH[1]}"
+  input_value="${BASH_REMATCH[2]}"
+  case " ${parameter_specs[*]} " in
+    *" ${input_leaf} "*) ;;
+    *)
+      echo "Unknown public-demo runtime parameter leaf on stdin." >&2
+      exit 1
+      ;;
+  esac
+  if [[ -n "${provided_values[${input_leaf}]+present}" ]]; then
+    echo "Duplicate public-demo runtime parameter leaf on stdin." >&2
+    exit 1
+  fi
+  provided_values["${input_leaf}"]="${input_value}"
+  input_line=""
+  input_value=""
+done
+[[ x =~ ^(x)$ ]]
 
 for parameter_leaf in "${parameter_specs[@]}"; do
   parameter_name="/openmercato-public-demo/runtime/${parameter_leaf}"
@@ -54,6 +79,7 @@ else:
 
   case "${metadata_state}" in
     exact)
+      unset "provided_values[${parameter_leaf}]"
       echo "Reusing existing Standard SecureString ${parameter_name}."
       continue
       ;;
@@ -68,10 +94,12 @@ else:
       ;;
   esac
 
-  if ! IFS= read -r parameter_value || [[ -z "${parameter_value}" ]]; then
-    echo "One non-empty secret value is required on stdin for absent parameter ${parameter_name}." >&2
+  parameter_value="${provided_values[${parameter_leaf}]:-}"
+  if [[ -z "${parameter_value}" ]]; then
+    echo "A keyed secret value is required on stdin for absent parameter ${parameter_name}." >&2
     exit 1
   fi
+  unset "provided_values[${parameter_leaf}]"
   payload_file="${temporary_directory}/${parameter_leaf}.json"
   printf '%s' "${parameter_value}" | python3 -c '
 import json

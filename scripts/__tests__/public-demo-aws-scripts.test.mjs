@@ -8,6 +8,23 @@ import test from 'node:test'
 const iamScript = path.resolve('scripts/public-demo/provision-iam.sh')
 const parametersScript = path.resolve('scripts/public-demo/create-runtime-parameters.sh')
 const routingScript = path.resolve('scripts/public-demo/cutover-routing.sh')
+const protectedParameterValues = {
+  'postgres-password': 'postgres-secret-value',
+  'jwt-secret': 'jwt-secret-value',
+  'tenant-data-encryption-key': 'tenant-secret-value',
+  'meilisearch-master-key': 'meili-secret-value',
+  'initial-admin-password': 'superadmin-secret-value',
+  'admin-password': 'admin-secret-value',
+  'employee-password': 'employee-secret-value',
+  'om-hub-oauth-state-key': 'oauth-secret-value',
+}
+
+function parameterStdin() {
+  return `${Object.entries(protectedParameterValues)
+    .reverse()
+    .map(([leaf, value]) => `${leaf}=${value}`)
+    .join('\n')}\n`
+}
 
 function source(file) {
   return fs.readFileSync(file, 'utf8')
@@ -449,30 +466,19 @@ if [[ "$1 $2" == "ssm put-parameter" ]]; then
   exit 0
 fi
 exit 2`)
-  const protectedValues = {
-    PUBLIC_DEMO_POSTGRES_PASSWORD: 'postgres-secret-value',
-    PUBLIC_DEMO_JWT_SECRET: 'jwt-secret-value',
-    PUBLIC_DEMO_TENANT_DATA_ENCRYPTION_KEY: 'tenant-secret-value',
-    PUBLIC_DEMO_MEILISEARCH_MASTER_KEY: 'meili-secret-value',
-    PUBLIC_DEMO_INITIAL_ADMIN_PASSWORD: 'superadmin-secret-value',
-    PUBLIC_DEMO_ADMIN_PASSWORD: 'admin-secret-value',
-    PUBLIC_DEMO_EMPLOYEE_PASSWORD: 'employee-secret-value',
-    PUBLIC_DEMO_OM_HUB_OAUTH_STATE_KEY: 'oauth-secret-value',
-  }
-
   try {
     const result = run(
       parametersScript,
       [],
       harness,
       { AWS_REGION: 'test-region-1' },
-      `${Object.values(protectedValues).join('\n')}\n`,
+      parameterStdin(),
     )
     assert.equal(result.status, 0, result.stderr)
 
     const combinedOutput = `${result.stdout}\n${result.stderr}`
     const calls = fs.readFileSync(harness.callsFile, 'utf8')
-    for (const value of Object.values(protectedValues)) {
+    for (const value of Object.values(protectedParameterValues)) {
       assert.doesNotMatch(combinedOutput, new RegExp(value))
       assert.doesNotMatch(calls, new RegExp(value))
     }
@@ -500,8 +506,65 @@ exit 2`)
       assert.equal(payload.Type, 'SecureString')
       assert.equal(payload.Tier, 'Standard')
       assert.equal(payload.Overwrite, false)
+      assert.equal(
+        payload.Value,
+        protectedParameterValues[payload.Name.replace('/openmercato-public-demo/runtime/', '')],
+      )
     }
     assert.equal(calls.match(/^600$/gm)?.length, 8)
+  } finally {
+    fs.rmSync(harness.root, { recursive: true, force: true })
+  }
+})
+
+test('runtime parameter retry preserves keyed values when metadata is partially exact', () => {
+  const harness = makeHarness(String.raw`
+printf '%s\n' "$*" >> "$FAKE_CALLS_FILE"
+if [[ "$1 $2" == "ssm describe-parameters" ]]; then
+  filter=""
+  while (($#)); do
+    if [[ "$1" == "--parameter-filters" ]]; then filter="$2"; break; fi
+    shift
+  done
+  name="$(printf '%s' "$filter" | sed 's/^.*Values=//')"
+  if [[ "$name" == */postgres-password ]]; then
+    printf '{"Parameters":[{"Name":"%s","Type":"SecureString","Tier":"Standard"}]}\n' "$name"
+  else
+    printf '%s\n' '{"Parameters":[]}'
+  fi
+  exit 0
+fi
+if [[ "$1 $2" == "ssm put-parameter" ]]; then
+  while (($#)); do
+    if [[ "$1" == "--cli-input-json" ]]; then
+      input="$(printf '%s' "$2" | sed 's#^file://##')"
+      cp "$input" "$FAKE_CALLS_FILE.payload.$(find "$(dirname "$FAKE_CALLS_FILE")" -name 'calls.log.payload.*' | wc -l)"
+      exit 0
+    fi
+    shift
+  done
+fi
+exit 2`)
+
+  try {
+    const result = run(
+      parametersScript,
+      [],
+      harness,
+      { AWS_REGION: 'test-region-1' },
+      parameterStdin(),
+    )
+    assert.equal(result.status, 0, result.stderr)
+    const payloads = fs
+      .readdirSync(harness.root)
+      .filter((name) => name.startsWith('calls.log.payload.'))
+      .map((name) => JSON.parse(fs.readFileSync(path.join(harness.root, name), 'utf8')))
+    assert.equal(payloads.length, 7)
+    assert.equal(payloads.some((payload) => payload.Name.endsWith('/postgres-password')), false)
+    for (const payload of payloads) {
+      const leaf = payload.Name.replace('/openmercato-public-demo/runtime/', '')
+      assert.equal(payload.Value, protectedParameterValues[leaf])
+    }
   } finally {
     fs.rmSync(harness.root, { recursive: true, force: true })
   }
