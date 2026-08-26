@@ -4,6 +4,7 @@ import CompletenessFilterWidget, { type PeopleTableQueryFilterContext } from './
 const widget: InjectionWidgetModule<PeopleTableQueryFilterContext> = {
   metadata: {
     id: 'finoo_identities.injection.completeness-filter',
+    title: 'finoo_identities.filter.label',
     priority: 20,
     requiredModules: ['customers'],
   },

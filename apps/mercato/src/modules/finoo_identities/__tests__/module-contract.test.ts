@@ -64,6 +64,7 @@ describe('FINOO identities module contract', () => {
     expect(completenessFilterWidget).toMatchObject({
       metadata: {
         id: 'finoo_identities.injection.completeness-filter',
+        title: 'finoo_identities.filter.label',
         requiredModules: ['customers'],
       },
       Widget: expect.any(Function),
