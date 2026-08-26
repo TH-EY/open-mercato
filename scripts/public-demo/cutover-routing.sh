@@ -3,6 +3,9 @@ set -euo pipefail
 
 umask 077
 export AWS_PAGER=""
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ssm_runner="${PUBLIC_DEMO_SSM_RUNNER:-${script_dir}/ssm-run-step.sh}"
+host_verifier="${script_dir}/verify-staged-candidate.sh"
 
 usage() {
   echo "Usage: $0 preflight|cutover|readback|rollback" >&2
@@ -33,6 +36,23 @@ done
 for required_name in AWS_REGION INSTANCE_ID VPC_ID LOAD_BALANCER_ARN LISTENER_ARN LISTENER_SSL_POLICY LOAD_BALANCER_SECURITY_GROUP_ID; do
   require_env "${required_name}"
 done
+if [[ "${mode}" == cutover || "${mode}" == readback ]]; then
+  for required_name in EXPECTED_DEPLOYMENT_SHA EXPECTED_IMAGE_URI EXPECTED_IMAGE_DIGEST; do
+    require_env "${required_name}"
+  done
+  [[ "${EXPECTED_DEPLOYMENT_SHA}" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "EXPECTED_DEPLOYMENT_SHA must be one lowercase full commit SHA." >&2
+    exit 1
+  }
+  [[ "${EXPECTED_IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "EXPECTED_IMAGE_DIGEST must be one SHA-256 image digest." >&2
+    exit 1
+  }
+  [[ "${EXPECTED_IMAGE_URI}" == *@"${EXPECTED_IMAGE_DIGEST}" ]] || {
+    echo "EXPECTED_IMAGE_URI is not bound to EXPECTED_IMAGE_DIGEST." >&2
+    exit 1
+  }
+fi
 
 app_target_group_name="om-demo-public-demo"
 mcp_target_group_name="om-demo-public-demo-mcp"
@@ -637,6 +657,23 @@ validate_public_https() {
   }
 }
 
+validate_host_candidate() {
+  [[ -f "${ssm_runner}" && -f "${host_verifier}" ]] || {
+    echo "Public-demo SSM runner or host verifier is missing." >&2
+    return 1
+  }
+  {
+    printf 'EXPECTED_DEPLOYMENT_SHA=%q\n' "${EXPECTED_DEPLOYMENT_SHA}"
+    printf 'EXPECTED_IMAGE_URI=%q\n' "${EXPECTED_IMAGE_URI}"
+    printf 'EXPECTED_IMAGE_DIGEST=%q\n' "${EXPECTED_IMAGE_DIGEST}"
+    cat "${host_verifier}"
+  } | AWS_REGION="${AWS_REGION}" \
+    INSTANCE_ID="${INSTANCE_ID}" \
+    SSM_STEP_NAME="Read back exact public-demo staged candidate" \
+    SSM_TIMEOUT_SECONDS=240 \
+    bash "${ssm_runner}"
+}
+
 case "${mode}" in
   preflight)
     load_state true
@@ -645,6 +682,7 @@ case "${mode}" in
     echo "Routing preflight passed; exact resources are absent or match the public-demo contract."
     ;;
   cutover)
+    validate_host_candidate
     load_state true
     validate_instance_ingress
     validate_rule_collisions
@@ -669,6 +707,7 @@ case "${mode}" in
     echo "Cutover created or reused only the exact public-demo target registrations and rules."
     ;;
   readback)
+    validate_host_candidate
     load_state true
     validate_instance_ingress
     [[ -n "${app_target_group_arn}" && -n "${mcp_target_group_arn}" ]] || {

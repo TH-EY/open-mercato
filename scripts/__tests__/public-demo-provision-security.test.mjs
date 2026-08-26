@@ -9,6 +9,7 @@ const workflow = parse(workflowSource)
 const composeSource = fs.readFileSync('docker-compose.public-demo.yml', 'utf8')
 const compose = parse(composeSource)
 const ssmRunnerSource = fs.readFileSync('scripts/public-demo/ssm-run-step.sh', 'utf8')
+const reservationSource = fs.readFileSync('scripts/public-demo/reserve-first-provision.sh', 'utf8')
 const bootstrapSource = fs.readFileSync('scripts/public-demo/init-or-migrate.sh', 'utf8')
 const bootstrapStateSource = fs.readFileSync('scripts/public-demo/bootstrap-state.mjs', 'utf8')
 const credentialBrokerSource = fs.readFileSync('scripts/public-demo/aws-credential-broker.mjs', 'utf8')
@@ -158,18 +159,17 @@ test('deployment is first-provision-only and seals the immutable staged candidat
 
   assert.ok(preflight)
   assert.ok(seal)
-  assert.match(preflight.run, /\.first-provision-staged/)
-  assert.match(
-    preflight.run,
-    /docker ps -aq --filter label=com\.docker\.compose\.project=openmercato-public-demo/,
-  )
-  assert.match(preflight.run, /for port in 4787 4788 4900/)
+  assert.match(preflight.run, /printf 'DEPLOYMENT_SHA=%q\\n'/)
+  assert.match(preflight.run, /cat scripts\/public-demo\/reserve-first-provision\.sh/)
   assert.doesNotMatch(preflight.run, /openmercato-public-demo-\.\*\$\{port\}->|broker_container/)
   assert.match(seal.run, /printf 'deployment_sha=%q\\n' "\$\{GITHUB_SHA\}"/)
+  assert.match(seal.run, /printf 'image_digest=%q\\n' "\$\{IMAGE_DIGEST\}"/)
+  assert.match(seal.run, /printf 'image_uri=%q\\n' "\$\{IMAGE_URI\}"/)
   assert.match(seal.run, /mktemp "\$\{workdir\}\/\.first-provision-staged\.tmp\.XXXXXX"/)
   assert.match(seal.run, /chmod 600 "\$\{temporary\}"/)
   assert.match(seal.run, /ln "\$\{temporary\}" "\$\{marker\}"/)
-  assert.match(seal.run, /test "\$\(cat "\$\{marker\}"\)" = "\$\{deployment_sha\}"/)
+  assert.match(seal.run, /image_digest=%s/)
+  assert.match(seal.run, /test "\$\(cat "\$\{marker\}"\)" = "\$\{expected_manifest\}"/)
   assert.ok(
     stepNames.indexOf('Probe candidate services in parallel') <
       stepNames.indexOf('Seal first-provision staging'),
@@ -319,7 +319,7 @@ test('public workflow contains references, never secret values or private infras
   assert.match(workflowSource, /restart count.*60 seconds/)
   assert.match(workflowSource, /openssl rand -hex 32/)
   assert.match(workflowSource, /subjectAltName=DNS:public-demo-aws-credential-broker/)
-  assert.match(workflowSource, /for port in 4787 4788 4900/)
+  assert.match(reservationSource, /for port in 4787 4788 4900/)
   assert.match(workflowSource, /docker network inspect bridge/)
   assert.match(workflowSource, /MetadataOptions\.HttpTokens == "required"/)
   assert.match(workflowSource, /MetadataOptions\.HttpEndpoint == "enabled"/)

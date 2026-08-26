@@ -37,6 +37,18 @@ function run(script, args, harness, env) {
   })
 }
 
+function hostReadbackEnv(harness) {
+  const runner = path.join(harness.root, 'passing-ssm-runner')
+  fs.writeFileSync(runner, '#!/bin/sh\ncat >/dev/null\nexit 0\n', { mode: 0o755 })
+  const digest = `sha256:${'b'.repeat(64)}`
+  return {
+    PUBLIC_DEMO_SSM_RUNNER: runner,
+    EXPECTED_DEPLOYMENT_SHA: 'a'.repeat(40),
+    EXPECTED_IMAGE_URI: `registry.example/openmercato@${digest}`,
+    EXPECTED_IMAGE_DIGEST: digest,
+  }
+}
+
 test('IAM provisioning contains exact trust and least-privilege resource boundaries', () => {
   const script = source(iamScript)
 
@@ -706,6 +718,7 @@ esac
     LISTENER_ARN: 'arn:test:listener',
     LISTENER_SSL_POLICY: 'ELBSecurityPolicy-TLS13-1-2-2021-06',
     LOAD_BALANCER_SECURITY_GROUP_ID: 'sg-alb',
+    ...hostReadbackEnv(harness),
   }
 
   try {
@@ -813,6 +826,7 @@ esac`)
       LOAD_BALANCER_SECURITY_GROUP_ID: 'sg-alb',
       FAKE_STATE_DIR: harness.root,
       FAKE_LOST_OPERATION: lostOperation,
+      ...hostReadbackEnv(harness),
     }
     if (lostOperation === 'create-rule') {
       fs.writeFileSync(path.join(harness.root, 'target-4787'), '')

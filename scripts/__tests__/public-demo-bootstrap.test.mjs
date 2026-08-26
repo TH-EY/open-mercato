@@ -159,6 +159,21 @@ test('a post-init failure resumes from migrations without rerunning init', () =>
   }
 })
 
+test('a different deployment SHA cannot resume initialized data', () => {
+  const harness = makeHarness()
+  try {
+    const first = runBootstrap(harness)
+    assert.equal(first.status, 0, first.stderr)
+
+    const crossSha = runBootstrap(harness, { DEPLOYMENT_SHA: 'b'.repeat(40) })
+    assert.notEqual(crossSha.status, 0)
+    assert.match(crossSha.stderr, /belongs to a different deployment SHA/)
+    assert.equal(fs.readFileSync(harness.callsFile, 'utf8').match(/^db:migrate$/gm)?.length, 1)
+  } finally {
+    fs.rmSync(harness.root, { recursive: true, force: true })
+  }
+})
+
 test('a failed init that committed the exact identities resumes without resetting data', () => {
   const harness = makeHarness()
   try {

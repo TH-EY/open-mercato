@@ -12,6 +12,17 @@ state_helper="${PUBLIC_DEMO_BOOTSTRAP_STATE_HELPER:-/app/scripts/public-demo/boo
 lock_pid=""
 
 umask 077
+DEPLOYMENT_SHA="${DEPLOYMENT_SHA:-}"
+if [ "${#DEPLOYMENT_SHA}" -ne 40 ]; then
+  echo "DEPLOYMENT_SHA must be one lowercase full commit SHA." >&2
+  exit 1
+fi
+case "${DEPLOYMENT_SHA}" in
+  *[!0-9a-f]*)
+    echo "DEPLOYMENT_SHA must be one lowercase full commit SHA." >&2
+    exit 1
+    ;;
+esac
 mkdir -p "${marker_dir}"
 : > "${log_file}"
 chmod 600 "${log_file}"
@@ -65,6 +76,10 @@ fi
 
 bootstrap_state="$(node "${state_helper}" probe "${database_guard}" 2>>"${log_file}")"
 if [ -f "${initialized_file}" ]; then
+  if [ "$(tr -d '\r\n' < "${initialized_file}")" != "${DEPLOYMENT_SHA}" ]; then
+    echo "Public-demo initialization marker belongs to a different deployment SHA." >&2
+    exit 1
+  fi
   if [ "${bootstrap_state}" != "initialized" ]; then
     echo "Public-demo initialization marker does not match current database identities." >&2
     exit 1
@@ -90,7 +105,7 @@ else
     echo "Public-demo initialization found partial or ambiguous identity drift; data was preserved." >&2
     exit 1
   fi
-  printf '%s\n' "${DEPLOYMENT_SHA:-unknown}" > "${initialized_file}"
+  printf '%s\n' "${DEPLOYMENT_SHA}" > "${initialized_file}"
   chmod 600 "${initialized_file}"
 fi
 
@@ -187,6 +202,6 @@ if [ "${final_bootstrap_state}" != "initialized" ]; then
   exit 1
 fi
 
-printf '%s\n' "${DEPLOYMENT_SHA:-unknown}" > "${marker_file}"
+printf '%s\n' "${DEPLOYMENT_SHA}" > "${marker_file}"
 chmod 600 "${marker_file}"
 echo "Public-demo bootstrap and read-back passed."

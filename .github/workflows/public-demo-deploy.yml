@@ -199,11 +199,14 @@ jobs:
       - name: Preflight isolated host namespace
         shell: bash
         env:
+          DEPLOYMENT_SHA: ${{ github.sha }}
           INSTANCE_ID: ${{ secrets.PUBLIC_DEMO_INSTANCE_ID }}
           SSM_STEP_NAME: Preflight isolated public-demo namespace
           SSM_TIMEOUT_SECONDS: 240
         run: |
-          bash scripts/public-demo/ssm-run-step.sh <<'SSM'
+          {
+            printf 'DEPLOYMENT_SHA=%q\n' "${DEPLOYMENT_SHA}"
+            cat <<'SSM'
           set +x
           required_commands=(aws curl docker git openssl python3 ss)
           for command_name in "${required_commands[@]}"; do
@@ -218,28 +221,9 @@ jobs:
             exit 1
           fi
 
-          workdir=/opt/openmercato-public-demo
-          staged_marker="${workdir}/.first-provision-staged"
-          if [[ -e "${staged_marker}" || -L "${staged_marker}" ]]; then
-            echo "First provisioning has already been staged; this workflow cannot replay or upgrade it." >&2
-            exit 1
-          fi
-
-          existing_containers="$(docker ps -aq --filter label=com.docker.compose.project=openmercato-public-demo)"
-          if [[ -n "${existing_containers}" ]]; then
-            echo "The public-demo Compose project already exists; this workflow is first-provision-only." >&2
-            exit 1
-          fi
-
-          for port in 4787 4788 4900; do
-            if [[ -n "$(ss -H -ltn "sport = :${port}" || true)" ]]; then
-              echo "Host port ${port} is already in use; first provisioning requires an empty namespace." >&2
-              exit 1
-            fi
-          done
-
-          echo "First-provision preflight passed with ${available_gb}GB available and an empty runtime namespace."
           SSM
+            cat scripts/public-demo/reserve-first-provision.sh
+          } | bash scripts/public-demo/ssm-run-step.sh
 
       - name: Prepare exact checkout and protected runtime config
         id: prepare-runtime
@@ -265,12 +249,18 @@ jobs:
           repo_url=https://github.com/TH-EY/open-mercato.git
           source_branch="${source_ref#refs/heads/}"
 
-          if [[ -e "${workdir}" && ! -d "${workdir}/.git" ]]; then
-            echo "Refusing to replace non-Git path ${workdir}." >&2
-            exit 1
-          fi
           if [[ ! -d "${workdir}/.git" ]]; then
-            git clone --no-checkout "${repo_url}" "${workdir}"
+            owner_marker="${workdir}/.first-provision-owner"
+            [[ -f "${owner_marker}" && ! -L "${owner_marker}" ]]
+            test "$(stat -c '%a' "${owner_marker}")" = 600
+            test "$(cat "${owner_marker}")" = "${deployment_sha}"
+            unexpected_entry="$(find "${workdir}" -mindepth 1 -maxdepth 1 ! -name .first-provision-owner -print -quit)"
+            if [[ -n "${unexpected_entry}" ]]; then
+              echo "Owner-reserved workdir contains unexpected pre-checkout state." >&2
+              exit 1
+            fi
+            git -C "${workdir}" init
+            git -C "${workdir}" remote add origin "${repo_url}"
           fi
 
           git -C "${workdir}" remote set-url origin "${repo_url}"
@@ -279,7 +269,11 @@ jobs:
           test "${remote_sha}" = "${deployment_sha}"
           git -C "${workdir}" checkout -B "${source_branch}" "${deployment_sha}"
           git -C "${workdir}" reset --hard "${deployment_sha}"
-          git -C "${workdir}" clean -fdx -e .env.public-demo -e .credential-broker
+          git -C "${workdir}" clean -fdx \
+            -e .env.public-demo \
+            -e .credential-broker \
+            -e .first-provision-owner \
+            -e .first-provision-staged
           secrets_dir="${workdir}/.secrets"
           install -d -m 700 "${secrets_dir}"
           broker_root="${workdir}/.credential-broker"
@@ -659,29 +653,43 @@ jobs:
         id: seal-first-provision
         shell: bash
         env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.image_digest }}
+          IMAGE_URI: ${{ steps.image.outputs.image_uri }}
           INSTANCE_ID: ${{ secrets.PUBLIC_DEMO_INSTANCE_ID }}
           SSM_STEP_NAME: Seal first-provision public-demo staging
           SSM_TIMEOUT_SECONDS: 240
         run: |
           {
             printf 'deployment_sha=%q\n' "${GITHUB_SHA}"
+            printf 'image_digest=%q\n' "${IMAGE_DIGEST}"
+            printf 'image_uri=%q\n' "${IMAGE_URI}"
             cat <<'SSM'
           set +x
           workdir=/opt/openmercato-public-demo
+          owner_marker="${workdir}/.first-provision-owner"
           marker="${workdir}/.first-provision-staged"
+          [[ "${deployment_sha}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${image_uri}" == *@"${image_digest}" ]]
+          [[ -f "${owner_marker}" && ! -L "${owner_marker}" ]]
+          test "$(stat -c '%a' "${owner_marker}")" = 600
+          test "$(cat "${owner_marker}")" = "${deployment_sha}"
           temporary="$(mktemp "${workdir}/.first-provision-staged.tmp.XXXXXX")"
           cleanup_marker_temporary() {
             rm -f "${temporary}"
           }
           trap cleanup_marker_temporary EXIT HUP INT TERM
-          printf '%s\n' "${deployment_sha}" > "${temporary}"
+          printf 'deployment_sha=%s\nimage_uri=%s\nimage_digest=%s\n' \
+            "${deployment_sha}" "${image_uri}" "${image_digest}" > "${temporary}"
           chmod 600 "${temporary}"
           ln "${temporary}" "${marker}"
           rm -f "${temporary}"
           trap - EXIT HUP INT TERM
           [[ -f "${marker}" && ! -L "${marker}" ]]
           test "$(stat -c '%a' "${marker}")" = 600
-          test "$(cat "${marker}")" = "${deployment_sha}"
+          expected_manifest="$(printf 'deployment_sha=%s\nimage_uri=%s\nimage_digest=%s' \
+            "${deployment_sha}" "${image_uri}" "${image_digest}")"
+          test "$(cat "${marker}")" = "${expected_manifest}"
           echo "First-provision staging sealed for the approved immutable candidate."
           SSM
           } | bash scripts/public-demo/ssm-run-step.sh
