@@ -4,9 +4,11 @@ provider "aws" {
   default_tags {
     tags = {
       Project     = "open-mercato"
-      Environment = "crm-they-dev"
+      Environment = "production"
+      Workload    = "crm"
+      Owner       = "they.dev"
       ManagedBy   = "terraform"
-      Owner       = "THEY"
+      Lifecycle   = "permanent"
     }
   }
 }
