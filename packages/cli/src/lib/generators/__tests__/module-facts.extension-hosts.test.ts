@@ -26,6 +26,7 @@ describe('module-facts extension host extraction', () => {
       attachments: ['attachments:attachment'],
       catalog: [
         'catalog:catalog_product',
+        'catalog:catalog_service',
         'catalog:catalog_product_variant',
         'catalog:catalog_product_price',
       ],
@@ -100,9 +101,10 @@ describe('module-facts extension host extraction', () => {
     expect(catalog.hostTokens.tableIds).toEqual([
       'catalog.categories.list',
       'catalog.products.list',
+      'catalog.services.list',
     ])
 
     const sales = extractModuleFacts({ moduleId: 'sales', coreSrcRoot })
-    expect(sales.hostTokens.tableIds).toEqual(['sales.orders', 'sales.quotes'])
+    expect(sales.hostTokens.tableIds).toEqual(['sales.orders', 'sales.payments', 'sales.quotes'])
   })
 })

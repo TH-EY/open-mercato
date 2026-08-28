@@ -34,6 +34,9 @@ const plannedActivitiesSectionMock = jest.fn(
   ),
 )
 const dealFormMock = jest.fn(() => <div>form</div>)
+const collapsibleZoneLayoutMock = jest.fn(
+  ({ zone1, zone2 }: { zone1: React.ReactNode; zone2: React.ReactNode }) => <div>{zone1}{zone2}</div>,
+)
 let activeTabParam: string | null = 'activities'
 let detailRequestCount = 0
 let injectedTabWidgets: Array<Record<string, unknown>> = []
@@ -85,7 +88,7 @@ jest.mock('@open-mercato/ui/primitives/button', () => ({
 }))
 
 jest.mock('@open-mercato/ui/backend/crud/CollapsibleZoneLayout', () => ({
-  CollapsibleZoneLayout: ({ zone1, zone2 }: { zone1: React.ReactNode; zone2: React.ReactNode }) => <div>{zone1}{zone2}</div>,
+  CollapsibleZoneLayout: (props: { zone1: React.ReactNode; zone2: React.ReactNode }) => collapsibleZoneLayoutMock(props),
 }))
 
 jest.mock('@open-mercato/ui/backend/FlashMessages', () => ({
@@ -196,6 +199,29 @@ jest.mock('../../../../../components/detail/DealLinkedEntitiesTab', () => ({
         onClick={() => onSaveSelection(entityLabelPlural === 'People' ? ['person-2'] : ['company-2'])}
       >
         {entityLabelPlural === 'People' ? 'manage-people-links' : 'manage-company-links'}
+      </button>
+    </div>
+  ),
+}))
+
+jest.mock('../../../../../components/detail/DealPeopleSection', () => ({
+  DealPeopleSection: ({
+    selectedIds,
+    onSaveSelection,
+  }: {
+    selectedIds: string[]
+    onSaveSelection: (next: string[]) => void
+  }) => (
+    <div>
+      <div>People</div>
+      <button type="button" onClick={() => onSaveSelection(['person-2'])}>
+        manage-people-links
+      </button>
+      <button
+        type="button"
+        onClick={() => onSaveSelection(selectedIds.filter((id) => id !== 'person-1'))}
+      >
+        unlink-person-1
       </button>
     </div>
   ),
@@ -375,6 +401,7 @@ describe('DealDetailPage', () => {
     inlineActivityComposerMock.mockClear()
     plannedActivitiesSectionMock.mockClear()
     dealFormMock.mockClear()
+    collapsibleZoneLayoutMock.mockClear()
 
     updateCrudMock.mockResolvedValue(undefined)
     deleteCrudMock.mockResolvedValue(undefined)
@@ -515,6 +542,22 @@ describe('DealDetailPage', () => {
       ],
       initialPipelineStageOptions: [
         { id: 'stage-1', label: 'Discovery', order: 1, color: '#2563eb', icon: 'search' },
+      ],
+    }))
+  })
+
+  it('provides deal form sections to the collapsible sidebar rail (#5101)', async () => {
+    renderWithProviders(<DealDetailPage params={{ id: 'deal-123' }} />)
+
+    await waitFor(() => {
+      expect(collapsibleZoneLayoutMock).toHaveBeenCalled()
+    })
+
+    expect(collapsibleZoneLayoutMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      pageType: 'deal-detail-v3',
+      sections: [
+        expect.objectContaining({ id: 'details' }),
+        expect.objectContaining({ id: 'custom' }),
       ],
     }))
   })

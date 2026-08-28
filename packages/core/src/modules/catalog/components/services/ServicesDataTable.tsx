@@ -9,8 +9,10 @@ import type { FilterValues } from '@open-mercato/ui/backend/FilterBar'
 import { RowActions } from '@open-mercato/ui/backend/RowActions'
 import { Button } from '@open-mercato/ui/primitives/button'
 import { BooleanIcon } from '@open-mercato/ui/backend/ValueIcons'
-import { apiCall, readApiResultOrThrow } from '@open-mercato/ui/backend/utils/apiCall'
+import { apiCall, readApiResultOrThrow, withScopedApiRequestHeaders } from '@open-mercato/ui/backend/utils/apiCall'
 import { deleteCrud } from '@open-mercato/ui/backend/utils/crud'
+import { buildOptimisticLockHeader } from '@open-mercato/ui/backend/utils/optimisticLock'
+import { surfaceRecordConflict } from '@open-mercato/ui/backend/conflicts'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { useConfirmDialog } from '@open-mercato/ui/backend/confirm-dialog'
 import { useOrganizationScopeVersion } from '@open-mercato/shared/lib/frontend/useOrganizationScope'
@@ -27,6 +29,7 @@ type ServiceRow = {
   defaultPriceCurrencyCode?: string | null
   workRequirements?: unknown[]
   isActive: boolean
+  updatedAt?: string | null
   updated_at?: string | null
 }
 
@@ -54,6 +57,7 @@ function normalizeServiceRow(row: ServiceResponseItem): ServiceRow {
     defaultPriceAmount: row.defaultPriceAmount ?? row.default_price_amount ?? null,
     defaultPriceCurrencyCode: row.defaultPriceCurrencyCode ?? row.default_price_currency_code ?? null,
     isActive: row.isActive ?? row.is_active ?? true,
+    updatedAt: row.updatedAt ?? row.updated_at ?? null,
   }
 }
 
@@ -218,12 +222,16 @@ export default function ServicesDataTable() {
     })
     if (!confirmed) return
     try {
-      await deleteCrud('catalog/services', service.id, {
-        errorMessage: t('catalog.services.list.error.delete', 'Failed to delete service'),
-      })
+      await withScopedApiRequestHeaders(
+        buildOptimisticLockHeader(service.updatedAt),
+        () => deleteCrud('catalog/services', service.id, {
+          errorMessage: t('catalog.services.list.error.delete', 'Failed to delete service'),
+        }),
+      )
       await queryClient.invalidateQueries({ queryKey: ['catalog-services'] })
       flash(t('catalog.services.flash.deleted', 'Service archived'), 'success')
     } catch (err: unknown) {
+      if (surfaceRecordConflict(err, t, { onRefresh: () => queryClient.invalidateQueries({ queryKey: ['catalog-services'] }) })) return
       const fallback = t('catalog.services.list.error.delete', 'Failed to delete service')
       flash(err instanceof Error ? err.message : fallback, 'error')
     }
