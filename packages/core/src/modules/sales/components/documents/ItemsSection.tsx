@@ -16,7 +16,7 @@ import {
   createDictionaryMap,
   normalizeDictionaryEntries,
 } from "@open-mercato/core/modules/dictionaries/components/dictionaryAppearance";
-import { useT } from "@open-mercato/shared/lib/i18n/context";
+import { useT, useLocale } from "@open-mercato/shared/lib/i18n/context";
 import { useOrganizationScopeDetail } from "@open-mercato/shared/lib/frontend/useOrganizationScope";
 import { useConfirmDialog } from "@open-mercato/ui/backend/confirm-dialog";
 import { emitSalesDocumentTotalsRefresh } from "@open-mercato/core/modules/sales/lib/frontend/documentTotalsEvents";
@@ -131,6 +131,11 @@ function resolveInjectedColumnValue(
   return current;
 }
 
+const SHIPMENTS_PAGE_SIZE = 100;
+// A single order beyond this many shipment pages is pathological; stopping there
+// keeps the shipped state explicitly unresolved rather than silently partial.
+const SHIPMENTS_MAX_PAGES = 50;
+
 type SalesDocumentItemsSectionProps = {
   documentId: string;
   kind: "order" | "quote";
@@ -153,6 +158,7 @@ export function SalesDocumentItemsSection({
   onItemsChange,
 }: SalesDocumentItemsSectionProps) {
   const t = useT();
+  const locale = useLocale();
   const { organizationId, tenantId } = useOrganizationScopeDetail();
   const { confirm, ConfirmDialogElement } = useConfirmDialog();
   const resolvedOrganizationId = orgFromProps ?? organizationId ?? null;
@@ -167,6 +173,12 @@ export function SalesDocumentItemsSection({
   const [lineStatusMap, setLineStatusMap] = React.useState<DictionaryMap>({});
   const [shippedTotals, setShippedTotals] = React.useState<Map<string, number>>(
     new Map(),
+  );
+  // Quotes have no shipments at all, so their shipped state is known up front.
+  // For orders it stays unknown until every shipment page has been read — an
+  // empty map from a pending or failed load must never read as "nothing shipped".
+  const [shippedTotalsResolved, setShippedTotalsResolved] = React.useState(
+    kind !== "order",
   );
 
   const { widgets: allColumnWidgets } = useInjectionDataWidgets(
@@ -381,22 +393,31 @@ export function SalesDocumentItemsSection({
   const loadShippedTotals = React.useCallback(async () => {
     if (kind !== "order") {
       setShippedTotals(new Map());
+      setShippedTotalsResolved(true);
       return;
     }
+    setShippedTotals(new Map());
+    setShippedTotalsResolved(false);
     try {
-      const params = new URLSearchParams({
-        page: "1",
-        pageSize: "100",
-        orderId: documentId,
-      });
-      const response = await apiCall<{
-        items?: Array<Record<string, unknown>>;
-      }>(`/api/sales/shipments?${params.toString()}`, undefined, {
-        fallback: { items: [] },
-      });
-      if (response.ok && Array.isArray(response.result?.items)) {
-        const totals = new Map<string, number>();
-        response.result.items.forEach((shipment) => {
+      const totals = new Map<string, number>();
+      let page = 1;
+      let collected = 0;
+      let complete = false;
+      while (page <= SHIPMENTS_MAX_PAGES) {
+        const params = new URLSearchParams({
+          page: String(page),
+          pageSize: String(SHIPMENTS_PAGE_SIZE),
+          orderId: documentId,
+        });
+        const response = await apiCall<{
+          items?: Array<Record<string, unknown>>;
+          total?: unknown;
+        }>(`/api/sales/shipments?${params.toString()}`, undefined, {
+          fallback: { items: [] },
+        });
+        if (!response.ok || !Array.isArray(response.result?.items)) return;
+        const shipments = response.result.items;
+        shipments.forEach((shipment) => {
           const entries = Array.isArray(shipment.items)
             ? (shipment.items as Array<Record<string, unknown>>)
             : [];
@@ -414,13 +435,22 @@ export function SalesDocumentItemsSection({
             totals.set(lineId, current + quantity);
           });
         });
-        setShippedTotals(totals);
-      } else {
-        setShippedTotals(new Map());
+        collected += shipments.length;
+        const reportedTotal = normalizeNumber(response.result?.total, Number.NaN);
+        const hasMore =
+          shipments.length >= SHIPMENTS_PAGE_SIZE &&
+          (!Number.isFinite(reportedTotal) || collected < reportedTotal);
+        if (!hasMore) {
+          complete = true;
+          break;
+        }
+        page += 1;
       }
+      if (!complete) return;
+      setShippedTotals(totals);
+      setShippedTotalsResolved(true);
     } catch (err) {
       logger.error('sales.document.shipments.load', { err });
-      setShippedTotals(new Map());
     }
   }, [documentId, kind]);
 
@@ -441,6 +471,7 @@ export function SalesDocumentItemsSection({
     if (kind !== "order") {
       shipmentsLoadedForDocument.current = null;
       setShippedTotals(new Map());
+      setShippedTotalsResolved(true);
       return;
     }
     const key = `${kind}:${documentId}`;
@@ -799,6 +830,7 @@ export function SalesDocumentItemsSection({
                           {formatMoney(
                             item.unitPriceGross,
                             item.currencyCode ?? currencyCode ?? undefined,
+                            locale,
                           )}{" "}
                           <span className="text-xs text-muted-foreground">
                             {t("sales.documents.items.table.gross", "gross")}
@@ -808,6 +840,7 @@ export function SalesDocumentItemsSection({
                           {formatMoney(
                             item.unitPriceNet,
                             item.currencyCode ?? currencyCode ?? undefined,
+                            locale,
                           )}{" "}
                           {t("sales.documents.items.table.net", "net")}
                         </span>
@@ -822,6 +855,7 @@ export function SalesDocumentItemsSection({
                                   item.currencyCode ??
                                     currencyCode ??
                                     undefined,
+                                  locale,
                                 ),
                                 unit: unitPriceReference.referenceUnitCode,
                               },
@@ -845,6 +879,7 @@ export function SalesDocumentItemsSection({
                                       item.currencyCode ??
                                         currencyCode ??
                                         undefined,
+                                      locale,
                                     ),
                                   },
                                 )}
@@ -875,6 +910,7 @@ export function SalesDocumentItemsSection({
                           {formatMoney(
                             item.totalGross,
                             item.currencyCode ?? currencyCode ?? undefined,
+                            locale,
                           )}{" "}
                           <span className="text-xs font-normal text-muted-foreground">
                             {t("sales.documents.items.table.gross", "gross")}
@@ -884,6 +920,7 @@ export function SalesDocumentItemsSection({
                           {formatMoney(
                             item.totalNet,
                             item.currencyCode ?? currencyCode ?? undefined,
+                            locale,
                           )}{" "}
                           {t("sales.documents.items.table.net", "net")}
                         </span>
@@ -966,6 +1003,7 @@ export function SalesDocumentItemsSection({
             ? Math.max(0, shippedTotals.get(lineForEdit.id) ?? 0)
             : 0
         }
+        shippedQuantityResolved={shippedTotalsResolved}
         onSaved={async () => {
           await loadItems();
           emitSalesDocumentTotalsRefresh({ documentId, kind });

@@ -28,15 +28,16 @@ type GuardedMutationRunner = <T,>(
 export type CreatedPersonSummary = {
   id: string
   displayName: string
-  companyId: string
-  companyName: string
+  companyId?: string
+  companyName?: string
 }
 
 interface CreatePersonDialogProps {
   open: boolean
   onClose: () => void
-  companyId: string
-  companyName: string
+  /** When set, the company field is locked and the person is auto-linked to it on create. */
+  companyId?: string
+  companyName?: string
   runGuardedMutation?: GuardedMutationRunner
   onPersonCreated?: (created?: CreatedPersonSummary) => void
 }
@@ -65,7 +66,7 @@ export function CreatePersonDialog({
     return createPersonFormFields(t)
       .filter((field) => field.id !== 'addresses')
       .map((field) => {
-        if (field.id !== 'companyEntityId') {
+        if (field.id !== 'companyEntityId' || !companyId) {
           return field
         }
         return {
@@ -90,7 +91,7 @@ export function CreatePersonDialog({
           ),
         } satisfies CrudField
       })
-  }, [companyName, t])
+  }, [companyId, companyName, t])
 
   const groups = React.useMemo(
     () => createPersonFormGroups(t).filter((group) => group.id !== 'addresses'),
@@ -98,9 +99,7 @@ export function CreatePersonDialog({
   )
 
   const initialValues = React.useMemo<Partial<PersonFormValues>>(
-    () => ({
-      companyEntityId: companyId,
-    }),
+    () => (companyId ? { companyEntityId: companyId } : {}),
     [companyId],
   )
 
@@ -121,7 +120,12 @@ export function CreatePersonDialog({
       ? await runGuardedMutation(operation, payload)
       : await operation()
 
-    flash(t('customers.people.createDialog.success', 'Person created and linked to company'), 'success')
+    flash(
+      companyId
+        ? t('customers.people.createDialog.success', 'Person created and linked to company')
+        : t('customers.people.createDialog.successPlain', 'Person created'),
+      'success',
+    )
     const newId = response?.result?.id ?? response?.result?.entityId ?? ''
     const displayNameFromPayload = typeof payload.displayName === 'string' ? payload.displayName : ''
     onPersonCreated?.({
@@ -148,16 +152,18 @@ export function CreatePersonDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[1028px]" onKeyDown={handleKeyDown}>
         <DialogHeader>
           <DialogTitle>{t('customers.people.createDialog.title', 'Add new person')}</DialogTitle>
-          <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-            <Building2 className="size-3.5" />
-            <span>{companyName}</span>
-            <span className="text-xs">·</span>
-            <span>{t('customers.people.createDialog.autoLink', 'auto-linked to company')}</span>
-          </div>
+          {companyId ? (
+            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+              <Building2 className="size-3.5" />
+              <span>{companyName}</span>
+              <span className="text-xs">·</span>
+              <span>{t('customers.people.createDialog.autoLink', 'auto-linked to company')}</span>
+            </div>
+          ) : null}
         </DialogHeader>
 
         <CrudForm<PersonFormValues>
-          key={`${companyId}:${formInstanceKey}`}
+          key={`${companyId ?? 'no-company'}:${formInstanceKey}`}
           embedded
           entityIds={[E.customers.customer_entity, E.customers.customer_person_profile]}
           fields={fields}

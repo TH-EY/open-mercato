@@ -34,6 +34,9 @@ const TENANT_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 const ORDER_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
 const LINE_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
 const SHIPMENT_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff'
+const PRODUCT_ID = '11111111-1111-4111-8111-111111111111'
+const PRODUCT_VARIANT_ID = '22222222-2222-4222-8222-222222222222'
+const SERVICE_ID = '33333333-3333-4333-8333-333333333333'
 
 const UNIT_PRICE_NET = 100
 const UNIT_PRICE_GROSS = 123
@@ -46,6 +49,10 @@ function setWorld(options: {
   shipments: Array<{ id: string }>
   shipmentItems: ShipmentItem[]
   quantityUnit?: string | null
+  kind?: 'product' | 'service' | 'custom'
+  productId?: string | null
+  productVariantId?: string | null
+  serviceId?: string | null
 }) {
   const order = {
     id: ORDER_ID,
@@ -58,9 +65,10 @@ function setWorld(options: {
   const orderLine = {
     id: LINE_ID,
     lineNumber: 1,
-    kind: 'product',
-    productId: null,
-    productVariantId: null,
+    kind: options.kind ?? 'product',
+    productId: options.productId ?? null,
+    productVariantId: options.productVariantId ?? null,
+    serviceId: options.serviceId ?? null,
     name: 'Shipped line',
     quantity: String(ORDERED_QUANTITY),
     quantityUnit: options.quantityUnit ?? null,
@@ -236,6 +244,43 @@ describe('sales.orders.lines.upsert shipment guard (issue #3993)', () => {
       quantityUnit: 'pcs',
     })
     const { caught, em } = await runUpsert(editInput({ quantityUnit: 'box' }))
+    expect(isCrudHttpError(caught)).toBe(true)
+    expect((caught as CrudHttpError).status).toBe(409)
+    expect(em.flush).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['kind', { kind: 'shipping' }],
+    ['product', { productId: '44444444-4444-4444-8444-444444444444' }],
+    ['product variant', { productVariantId: '55555555-5555-4555-8555-555555555555' }],
+  ])('rejects changing the shipped line %s identity', async (_label, overrides) => {
+    setWorld({
+      shipments: [{ id: SHIPMENT_ID }],
+      shipmentItems: [{ shipment: { id: SHIPMENT_ID }, orderLine: { id: LINE_ID }, quantity: '2' }],
+      productId: PRODUCT_ID,
+      productVariantId: PRODUCT_VARIANT_ID,
+    })
+    const { caught, em } = await runUpsert(editInput({
+      productId: PRODUCT_ID,
+      productVariantId: PRODUCT_VARIANT_ID,
+      ...overrides,
+    }))
+    expect(isCrudHttpError(caught)).toBe(true)
+    expect((caught as CrudHttpError).status).toBe(409)
+    expect(em.flush).not.toHaveBeenCalled()
+  })
+
+  it('rejects changing the service assigned to a shipped service line', async () => {
+    setWorld({
+      shipments: [{ id: SHIPMENT_ID }],
+      shipmentItems: [{ shipment: { id: SHIPMENT_ID }, orderLine: { id: LINE_ID }, quantity: '2' }],
+      kind: 'service',
+      serviceId: SERVICE_ID,
+    })
+    const { caught, em } = await runUpsert(editInput({
+      kind: 'service',
+      serviceId: '66666666-6666-4666-8666-666666666666',
+    }))
     expect(isCrudHttpError(caught)).toBe(true)
     expect((caught as CrudHttpError).status).toBe(409)
     expect(em.flush).not.toHaveBeenCalled()

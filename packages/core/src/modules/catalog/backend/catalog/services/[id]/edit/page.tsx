@@ -2,8 +2,9 @@
 
 import * as React from 'react'
 import { Page, PageBody } from '@open-mercato/ui/backend/Page'
-import { apiCall } from '@open-mercato/ui/backend/utils/apiCall'
+import { apiCall, withScopedApiRequestHeaders } from '@open-mercato/ui/backend/utils/apiCall'
 import { deleteCrud, updateCrud } from '@open-mercato/ui/backend/utils/crud'
+import { buildOptimisticLockHeader } from '@open-mercato/ui/backend/utils/optimisticLock'
 import { ErrorMessage, RecordNotFoundState } from '@open-mercato/ui/backend/detail'
 import { useT } from '@open-mercato/shared/lib/i18n/context'
 import { extractCustomFieldEntries } from '@open-mercato/shared/lib/crud/custom-fields-client'
@@ -189,12 +190,18 @@ export default function EditCatalogServicePage({ params }: { params?: { id?: str
           successRedirect={`/backend/catalog/services?flash=${encodeURIComponent(t('catalog.services.flash.updated', 'Service updated'))}&type=success`}
           deleteRedirect={`/backend/catalog/services?flash=${encodeURIComponent(t('catalog.services.flash.deleted', 'Service archived'))}&type=success`}
           onSubmit={async (formValues) => {
-            await updateCrud('catalog/services', buildServicePayload({ ...formValues, id: serviceId }, t))
+            await withScopedApiRequestHeaders(
+              buildOptimisticLockHeader(values.updatedAt),
+              () => updateCrud('catalog/services', buildServicePayload({ ...formValues, id: serviceId }, t)),
+            )
           }}
           onDelete={async () => {
-            await deleteCrud('catalog/services', serviceId, {
-              errorMessage: t('catalog.services.form.errors.delete', 'Failed to delete service'),
-            })
+            await withScopedApiRequestHeaders(
+              buildOptimisticLockHeader(values.updatedAt),
+              () => deleteCrud('catalog/services', serviceId, {
+                errorMessage: t('catalog.services.form.errors.delete', 'Failed to delete service'),
+              }),
+            )
           }}
         />
       </PageBody>
