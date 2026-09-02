@@ -30,7 +30,7 @@ PREVIEW_RULE_PRIORITY_MIN="${PREVIEW_RULE_PRIORITY_MIN:-1000}"
 PREVIEW_RULE_PRIORITY_MAX="${PREVIEW_RULE_PRIORITY_MAX:-49999}"
 PREVIEW_REMOTE_ROOT="${PREVIEW_REMOTE_ROOT:-/opt/openmercato-previews}"
 DEMO_REMOTE_ROOT="${DEMO_REMOTE_ROOT:-/opt/openmercato-demos}"
-PREVIEW_REPO_URL="${PREVIEW_REPO_URL:-https://github.com/TH-EY/open-mercato.git}"
+PREVIEW_REPO_URL="${PREVIEW_REPO_URL:-git@github.com-openmercato:TH-EY/open-mercato.git}"
 BASELINE_ENV_FILE_REMOTE="${BASELINE_ENV_FILE_REMOTE:-/etc/dokploy/compose/baseline-zjkhnl/code/.env}"
 
 json_escape() {
