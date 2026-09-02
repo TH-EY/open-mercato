@@ -211,7 +211,7 @@ jobs:
           {
             printf 'aws_region=%q\n' "${AWS_REGION}"
             printf 'branch=%q\n' '${{ steps.preview.outputs.branch }}'
-            printf 'repo_url=%q\n' 'https://github.com/TH-EY/open-mercato.git'
+            printf 'repo_url=%q\n' 'git@github.com-openmercato:TH-EY/open-mercato.git'
             printf 'preview_env=%q\n' '${{ steps.preview.outputs.preview_runtime_env }}'
             printf 'preview_hostname=%q\n' '${{ steps.preview.outputs.preview_hostname }}'
             printf 'preview_slug=%q\n' '${{ steps.preview.outputs.preview_slug }}'
