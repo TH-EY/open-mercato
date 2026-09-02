@@ -137,7 +137,7 @@ variable "ssm_log_retention_days" {
 variable "deploy_repo_url" {
   type        = string
   description = "Git repository cloned by the CRM host deploy script."
-  default     = "https://github.com/TH-EY/open-mercato.git"
+  default     = "git@github.com-openmercato:TH-EY/open-mercato.git"
 }
 
 variable "deploy_branch" {

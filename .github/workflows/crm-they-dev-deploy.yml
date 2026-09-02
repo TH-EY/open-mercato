@@ -166,7 +166,7 @@ jobs:
             cat <<'SSM'
           aws_region="${AWS_REGION:-eu-west-2}"
           name_prefix="${NAME_PREFIX:-openmercato-crm-they-dev}"
-          repo_url="https://github.com/TH-EY/open-mercato.git"
+          repo_url="git@github.com-openmercato:TH-EY/open-mercato.git"
           workdir=/opt/openmercato-crm
           mkdir -p "${workdir}"
 
