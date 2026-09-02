@@ -268,7 +268,7 @@ jobs:
           set +x
           umask 077
           workdir=/opt/openmercato-public-demo
-          repo_url=https://github.com/TH-EY/open-mercato.git
+          repo_url=git@github.com-openmercato:TH-EY/open-mercato.git
           source_branch="${source_ref#refs/heads/}"
 
           if [[ ! -d "${workdir}/.git" ]]; then

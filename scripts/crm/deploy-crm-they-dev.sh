@@ -18,7 +18,7 @@ SSM_CLOUDWATCH_LOG_GROUP="${SSM_CLOUDWATCH_LOG_GROUP:-/aws/ssm/${NAME_PREFIX}/de
 BRANCH="${BRANCH:-fork/crm-they-dev}"
 DEPLOY_MODE="${DEPLOY_MODE:-full}"
 APP_IMAGE="${APP_IMAGE:-}"
-REPO_URL="${REPO_URL:-https://github.com/TH-EY/open-mercato.git}"
+REPO_URL="${REPO_URL:-git@github.com-openmercato:TH-EY/open-mercato.git}"
 APP_URL="${APP_URL:-https://crm.they.dev}"
 APP_PORT="${APP_PORT:-3001}"
 
