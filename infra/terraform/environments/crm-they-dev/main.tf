@@ -27,9 +27,11 @@ module "crm" {
   alb_zone_id                   = var.alb_zone_id
   https_listener_arn            = var.https_listener_arn
   listener_rule_priority        = var.listener_rule_priority
+  mcp_listener_rule_priority    = var.mcp_listener_rule_priority
   instance_type                 = var.instance_type
   root_volume_size_gb           = var.root_volume_size_gb
   app_port                      = var.app_port
+  mcp_port                      = var.mcp_port
   db_instance_class             = var.db_instance_class
   db_allocated_storage_gb       = var.db_allocated_storage_gb
   db_backup_retention_days      = var.db_backup_retention_days

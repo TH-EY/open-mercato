@@ -13,6 +13,7 @@ company instance, not previews or multi-tenant capacity.
 - Container stdout/stderr, host syslog/auth, SSM command output, and RDS engine
   logs are centralized in AWS with explicit retention.
 - Ingress reuses the existing `they-lb` HTTPS listener and wildcard `*.they.dev` certificate.
+- The application fallback uses listener priority `1003`; the authenticated `/mcp` endpoint uses priority `1002` and a dedicated port `3002` target group.
 
 ## Operational logs
 
@@ -51,6 +52,22 @@ current environment has unrelated live drift, including an EC2 AMI replacement.
 Approved observability changes must use a saved, reviewed targeted plan or an
 exact AWS API operation that does not touch EC2, the shared ALB, DNS, database
 networking, or unrelated IAM statements.
+
+The MCP target group, listener rule, and app security-group ingress were created
+before their Terraform declaration. Import the exact target group and listener
+rule before any targeted plan; never let Terraform propose replacements for them.
+The existing EC2 target attachment on port `3002` remains a documented exception:
+the provider resource does not support import, so this change does not recreate
+the registered live attachment. Freshly verify it becomes `healthy` while the
+scheduled instance is running before any apply; a stopped instance is not valid
+health evidence. Do not assume a provider upgrade will make it importable.
+
+Any plan that replaces `module.crm.aws_instance.app` is blocked until a separately
+reviewed MCP attachment runbook is part of that change. The runbook must register
+the new instance in `om-crm-mcp-they-tg` on port `3002`, wait for `healthy`, verify
+authenticated and unauthenticated `/mcp`, and only then deregister the old target.
+Rollback must keep or re-register the old target and reverify health. Terraform
+state owns the MCP target group and listener rule, but not this target registration.
 
 After Terraform creates the EC2 host and ECR repository, deploy the app image with:
 
