@@ -270,6 +270,38 @@ async function resolvePageContext(
   return hydrateCustomersAccountContext(input)
 }
 
+function hasAccountAssistantDomainToolCall(state: unknown): boolean {
+  const steps = (state as { steps?: unknown })?.steps
+  if (!Array.isArray(steps)) return false
+  return steps.some((step) => {
+    const toolCalls = (step as { toolCalls?: unknown })?.toolCalls
+    if (!Array.isArray(toolCalls)) return false
+    return toolCalls.some((toolCall) => {
+      const toolName = (toolCall as { toolName?: unknown })?.toolName
+      return (
+        typeof toolName === 'string' &&
+        toolName.replace(/__/g, '.') !== 'meta.update_task_plan'
+      )
+    })
+  })
+}
+
+function buildAccountAssistantPrepareStep() {
+  return async function accountAssistantPrepareStep(state: unknown) {
+    const stepNumber = (state as { stepNumber?: unknown })?.stepNumber
+    if (stepNumber === 0) {
+      return { toolChoice: 'required' as const }
+    }
+    if (!hasAccountAssistantDomainToolCall(state)) {
+      return {
+        activeTools: [...ALLOWED_TOOLS],
+        toolChoice: 'required' as const,
+      }
+    }
+    return undefined
+  }
+}
+
 const agent: AiAgentDefinition = {
   id: AGENT_ID,
   moduleId: MODULE_ID,
@@ -287,6 +319,10 @@ const agent: AiAgentDefinition = {
   // the operator. Per-tenant override can downgrade to `read-only` to lock
   // writes back down without redeploying.
   mutationPolicy: 'confirm-required',
+  loop: {
+    prepareStep:
+      buildAccountAssistantPrepareStep() as NonNullable<AiAgentDefinition['loop']>['prepareStep'],
+  },
   keywords: ['customers', 'crm', 'accounts', 'people', 'companies', 'deals'],
   domain: 'customers',
   dataCapabilities: {

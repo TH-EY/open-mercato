@@ -82,7 +82,7 @@ if [[ ! -d "$workdir/.git" ]]; then
 else
   if [[ "$deploy_mode" == "full" ]]; then
     git -C "$workdir" remote set-url origin "$repo_url"
-    git -C "$workdir" fetch origin "$branch" --prune
+    git -C "$workdir" fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" --prune
     git -C "$workdir" checkout -B "$branch" "origin/$branch"
     git -C "$workdir" reset --hard "origin/$branch"
     git -C "$workdir" clean -fdx -e .env.crm
@@ -128,10 +128,8 @@ DB_POOL_IDLE_TIMEOUT=30000
 DB_POOL_ACQUIRE_TIMEOUT=60000
 DATA_SYNC_QUEUE_CONCURRENCY=1
 OPENROUTER_API_KEY=$openrouter_api_key
-OM_AI_CUSTOMERS_PROVIDER=openrouter
-OM_AI_CUSTOMERS_MODEL=meta-llama/llama-3.3-70b-instruct
-OM_AI_CATALOG_PROVIDER=openrouter
-OM_AI_CATALOG_MODEL=meta-llama/llama-3.3-70b-instruct
+OM_AI_PROVIDER=openrouter
+OM_AI_MODEL=meta-llama/llama-3.3-70b-instruct
 ENV_CRM
 
 cd "$workdir"

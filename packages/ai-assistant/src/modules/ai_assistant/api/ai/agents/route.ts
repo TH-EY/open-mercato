@@ -7,6 +7,7 @@ import type { RbacService } from '@open-mercato/core/modules/auth/services/rbacS
 import { llmProviderRegistry } from '@open-mercato/shared/lib/ai/llm-provider-registry'
 import { isAgentTaskPlanEnabled, listAgents, loadAgentRegistry } from '../../../lib/agent-registry'
 import { hasRequiredFeatures } from '../../../lib/auth'
+import { registerBuiltInLlmProviders } from '../../../lib/llm-bootstrap'
 import { toolRegistry } from '../../../lib/tool-registry'
 import type { AiToolDefinition } from '../../../lib/types'
 
@@ -56,6 +57,8 @@ export async function GET(req: NextRequest) {
       tenantId: auth.tenantId,
       organizationId: auth.orgId,
     })
+
+    registerBuiltInLlmProviders()
 
     // No LLM provider configured (no API keys set). The launcher uses the
     // `aiConfigured` flag to show a setup prompt; explicit `<AiChat>` mounts

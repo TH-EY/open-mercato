@@ -85,6 +85,38 @@ describe('customers.account_assistant agent definition', () => {
     expect(agent.acceptedMediaTypes).toEqual(['image', 'pdf', 'file'])
   })
 
+  it('requires a domain tool before allowing a final answer', async () => {
+    expect(typeof agent.loop?.prepareStep).toBe('function')
+
+    const stepZero = await agent.loop!.prepareStep!({ stepNumber: 0, steps: [] } as any)
+    const afterTaskPlan = await agent.loop!.prepareStep!({
+      stepNumber: 1,
+      steps: [
+        {
+          toolCalls: [{ toolName: 'meta__update_task_plan' }],
+        },
+      ],
+    } as any)
+    const afterDomainTool = await agent.loop!.prepareStep!({
+      stepNumber: 2,
+      steps: [
+        {
+          toolCalls: [{ toolName: 'meta__update_task_plan' }],
+        },
+        {
+          toolCalls: [{ toolName: 'customers__list_companies' }],
+        },
+      ],
+    } as any)
+
+    expect(stepZero).toEqual({ toolChoice: 'required' })
+    expect(afterTaskPlan).toMatchObject({ toolChoice: 'required' })
+    expect((afterTaskPlan as { activeTools?: string[] }).activeTools).not.toContain(
+      'meta.update_task_plan',
+    )
+    expect(afterDomainTool).toBeUndefined()
+  })
+
   it('enables the visible task-plan helper by agent configuration', () => {
     expect(agent.taskPlan).toEqual({ enabled: true })
     expect(agent.allowedTools).not.toContain('meta.update_task_plan')

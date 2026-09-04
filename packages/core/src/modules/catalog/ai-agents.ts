@@ -298,6 +298,10 @@ function buildCatalogAssistantPrepareStep() {
     if (isCatalogMetaHelpPrompt(latestUserText)) {
       return { activeTools: [] }
     }
+    const stepNumber = (state as { stepNumber?: unknown })?.stepNumber
+    if (stepNumber === 0) {
+      return { toolChoice: 'required' as const }
+    }
     return undefined
   }
 }
